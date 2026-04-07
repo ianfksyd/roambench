@@ -193,3 +193,23 @@ Current primary docs:
 - release notes mention Codex / Claude Code style workflows
 - quickstart path works without editing multiple config fields
 - one concrete "lightweight" proof point is ready
+
+## Launch Automation
+
+Use this helper to generate community drafts and (optionally) post to X when credentials are configured:
+
+- Script: `scripts/publish-roambench.sh`
+- Default behavior: `--dry-run` style output (no API write)
+- X send mode: add `--send` and set `ROAMBENCH_X_BEARER_TOKEN`
+- Example:
+
+```bash
+scripts/publish-roambench.sh --tag v0.2.1 --targets x,reddit,hn,ph,v2ex,cn --dry-run
+```
+
+Script output includes:
+- X copy (ready to post, two-part text)
+- Reddit draft
+- Hacker News draft
+- Product Hunt draft
+- Chinese community draft for V2EX / Chinese channels
