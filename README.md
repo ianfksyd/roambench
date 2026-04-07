@@ -11,8 +11,6 @@
 
 > Reconnect to Codex, Claude Code, and other terminal-first coding workflows from your phone.
 
-![RoamBench product preview](docs/branding/roambench-social-preview.png)
-
 - Keep terminal sessions alive with `tmux`
 - Run `2 / 4`-pane workspaces for Codex, Claude Code, Kimi-CLI, OpenCode, and other terminal-first tools
 - Start, supervise, resume, and lightly edit long-running work with low overhead from anywhere
