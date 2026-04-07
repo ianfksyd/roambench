@@ -118,26 +118,11 @@ post_x() {
 	fi
 	local payload
 	payload=$(jq -nc --arg text "${text}" '{text:$text}')
-	local response
-	response=$(curl -sS \
+	curl -sS \
 		-H "Authorization: Bearer ${ROAMBENCH_X_BEARER_TOKEN}" \
 		-H "Content-Type: application/json" \
 		-d "${payload}" \
-		"https://api.twitter.com/2/tweets")
-
-	if echo "${response}" | jq -e '.status == 403 and .title == "Unsupported Authentication"' >/dev/null; then
-		echo "X 发布失败：当前 token 是 App-only token，不支持发帖。请替换为 OAuth2 User Context 或 OAuth1.0a 用户 token。"
-		echo "${response}"
-		exit 1
-	fi
-
-	if ! echo "${response}" | jq -e '.data.id | length > 0' >/dev/null; then
-		echo "X 发布失败："
-		echo "${response}"
-		exit 1
-	fi
-
-	echo "${response}"
+		"https://api.twitter.com/2/tweets"
 }
 
 post_if_enabled() {
