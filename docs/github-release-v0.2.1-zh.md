@@ -1,0 +1,46 @@
+# RoamBench v0.2.1 发布说明（中文）
+
+## 变更概述
+
+`v0.2.1` 完成了 RoamBench 的命名收口与兼容过渡：  
+- 对外统一使用 `roambench`（命令、产物、示例配置与服务模板）。  
+- 对旧参数保留兼容层，旧用户无需立刻重建所有环境：  
+  - 优先读取 `ROAMBENCH_*`，仍支持 `LITETERM_*` 作为兼容回退。  
+  - Cookie 名称优先使用 `roambench_session`，仍兼容旧 `liteterm_session`。  
+- 默认配置搜索路径与持久化目录已指向 `roambench`，并保留 legacy 路径兼容。  
+
+## 发布包
+
+本次发布附带两个架构的静态包：
+
+- Linux `amd64`
+  - `roambench-release-a3a1cf1-20260407-linux-amd64.tar.gz`
+  - `SHA256: 18f3fc6901cf2ed1aecc93eebfb4c84d5685359c256d4ac0bf8b9ab13c1c84c1`
+- Linux `arm64`
+  - `roambench-release-a3a1cf1-20260407-linux-arm64.tar.gz`
+  - `SHA256: fbcd6462428972c7d89c54895389b3c1822ebeb7c88a538eb509fe778fd768da`
+
+## 安装与运行
+
+```bash
+# 下载并解压（按你的机器架构选择对应文件）
+tar -xzf roambench-release-a3a1cf1-20260407-linux-<arch>.tar.gz
+
+# 进入解压目录后
+chmod +x roambench
+cp roambench.example.toml roambench.toml
+./roambench --password-hash
+./roambench --config roambench.toml
+```
+
+## 快速部署建议
+
+- 生产/公网推荐使用 `configs/roambench.example.toml`。  
+- 如使用 quickstart（`configs/roambench.quickstart.toml`），请仅用于本机/内网快速体验。  
+- 密码使用 `--password-hash` 生成后放入配置文件或安全的环境变量中。  
+
+## 兼容与清理
+
+- 本次发布保留 `liteterm` 兼容入口，后续版本可按既定路线逐步去除。  
+- 建议在发布说明中提示用户验证 sha256 后再部署。  
+
