@@ -3,7 +3,10 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
 <p align="center">
-  <img src="docs/branding/roambench-lockup.svg" alt="RoamBench lockup" width="720">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/branding/roambench-lockup-dark.svg">
+    <img src="docs/branding/roambench-lockup.svg" alt="RoamBench lockup" width="720">
+  </picture>
 </p>
 
 > Reconnect to Codex, Claude Code, and other terminal-first coding workflows from your phone.

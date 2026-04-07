@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="360" viewBox="0 0 1400 360" role="img" aria-labelledby="title desc">
+  <title id="title">RoamBench Lockup Dark</title>
+  <desc id="desc">RoamBench wordmark with the selected grid-loop icon for dark backgrounds.</desc>
+  <defs>
+    <linearGradient id="lockup-loop" x1="54" y1="52" x2="254" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#36d399"/>
+      <stop offset="1" stop-color="#2dd4bf"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(40 40)">
+    <rect x="0" y="0" width="280" height="280" rx="68" fill="#0f172a"/>
+    <rect x="38" y="38" width="86" height="86" rx="20" fill="#163047"/>
+    <rect x="156" y="38" width="86" height="86" rx="20" fill="#163047"/>
+    <rect x="38" y="156" width="86" height="86" rx="20" fill="#163047"/>
+    <rect x="156" y="156" width="86" height="86" rx="20" fill="#163047"/>
+
+    <path d="M69 193C69 131 119 87 180 87C216 87 243 107 243 143C243 171 225 192 195 196C170 200 153 187 153 168C153 150 168 137 187 137C203 137 215 145 221 158"
+          fill="none"
+          stroke="url(#lockup-loop)"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="14"/>
+    <circle cx="69" cy="193" r="11" fill="#36d399"/>
+    <path d="M212 149L229 160L215 177" fill="none" stroke="#2dd4bf" stroke-linecap="round" stroke-linejoin="round" stroke-width="11"/>
+    <circle cx="213" cy="214" r="9" fill="#f59e0b"/>
+  </g>
+
+  <g transform="translate(388 110)">
+    <text x="0" y="78" fill="#e2e8f0" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="104" font-weight="700" letter-spacing="-2.4">RoamBench</text>
+    <text x="4" y="132" fill="#94a3b8" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="28" font-weight="600" letter-spacing="2.6">RECONNECT. SPLIT. RESUME.</text>
+  </g>
+</svg>
