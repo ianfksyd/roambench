@@ -33,6 +33,12 @@ cp roambench.example.toml roambench.toml
 ./roambench --config roambench.toml
 ```
 
+或者直接使用仓库内附带的中文安装脚本（会从 GitHub API 自动匹配该版本正确文件名）：
+
+```bash
+bash scripts/install-roambench-v0.2.1.sh v0.2.1 /usr/local/bin
+```
+
 ## 快速部署建议
 
 - 生产/公网推荐使用 `configs/roambench.example.toml`。  
@@ -43,4 +49,3 @@ cp roambench.example.toml roambench.toml
 
 - 本次发布保留 `liteterm` 兼容入口，后续版本可按既定路线逐步去除。  
 - 建议在发布说明中提示用户验证 sha256 后再部署。  
-
