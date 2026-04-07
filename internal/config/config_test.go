@@ -20,9 +20,9 @@ func TestServerConfigGetBasePathNormalizesValues(t *testing.T) {
 	}{
 		{name: "empty", raw: "", want: "/"},
 		{name: "root", raw: "/", want: "/"},
-		{name: "missing leading slash", raw: "home/ianf339", want: "/home/ianf339"},
-		{name: "trailing slash", raw: "/home/ianf339/", want: "/home/ianf339"},
-		{name: "double slashes", raw: "//home//ianf339//", want: "/home/ianf339"},
+		{name: "missing leading slash", raw: "home/exampleuser", want: "/home/exampleuser"},
+		{name: "trailing slash", raw: "/home/exampleuser/", want: "/home/exampleuser"},
+		{name: "double slashes", raw: "//home//exampleuser//", want: "/home/exampleuser"},
 	}
 
 	for _, tt := range tests {
