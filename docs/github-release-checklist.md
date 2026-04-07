@@ -22,7 +22,7 @@ These pieces are already present in the repo:
 - Contributing guide: [CONTRIBUTING.md](../CONTRIBUTING.md)
 - Security policy: [SECURITY.md](../SECURITY.md)
 - Issue templates and PR template: [.github](../.github)
-- Quickstart config for trusted local/LAN trials: [configs/liteterm.quickstart.toml](../configs/liteterm.quickstart.toml)
+- Quickstart config for trusted local/LAN trials: [configs/roambench.quickstart.toml](../configs/roambench.quickstart.toml)
 
 ## Blockers Before Public Push
 
@@ -34,9 +34,9 @@ Do not publish machine-specific or secret-bearing local files.
 
 Must stay local:
 
-- `liteterm.lan.toml`
-- built binary `liteterm`
-- local binary variants such as `liteterm.new` and `liteterm.next`
+- `roambench.lan.toml`
+- built binary `roambench`
+- local binary variants such as `roambench.new` and `roambench.next`
 - `.claude/`
 - editor scratch files such as `editor-test.txt`
 - draft screenshots and issue-triage assets under `issues/`
@@ -73,7 +73,7 @@ Before the public screenshots and release text are considered final, verify:
 - the file browser, viewer, and editor behave correctly after a hard refresh
 - mobile access still works for the current layout rules
 
-### 4. Decide whether to publish under `liteterm-web` or rename the repo now
+### 4. Decide whether to publish under `roambench-web` or rename the repo now
 
 Current product name:
 
@@ -81,12 +81,12 @@ Current product name:
 
 Current technical identifiers still in code/config:
 
-- `liteterm`
+- `roambench`
 
 Recommendation:
 
 - repo display name can be `RoamBench`
-- repo slug can stay `liteterm-web` temporarily if you want less churn
+- repo slug can stay `roambench-web` temporarily if you want less churn
 - if you want cleaner public branding, rename the GitHub repo to `roambench`
 
 ### 5. Decide whether `CODE_OF_CONDUCT.md` is needed now
@@ -97,7 +97,7 @@ Not a blocker for a small founder-led release, but worth adding if you want the 
 
 Set these in the GitHub repository settings:
 
-- Repository name: `roambench` if you are ready to rename, otherwise keep `liteterm-web`
+- Repository name: `roambench` if you are ready to rename, otherwise keep `roambench-web`
 - Description: use the recommended line from [docs/github-publishing.md](github-publishing.md)
 - Website: optional, only if you have a project homepage
 - Topics:
@@ -142,7 +142,7 @@ Recommended sequence:
 
 - add `CODE_OF_CONDUCT.md`
 - add a favicon `.ico` variant for broader browser compatibility
-- finish the code-level rename from `liteterm` to `RoamBench`
+- finish the code-level rename from `roambench` to `RoamBench`
 - add a short demo GIF or video after the static screenshots
 
 ## Final Recommendation

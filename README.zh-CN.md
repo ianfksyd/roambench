@@ -10,7 +10,7 @@
 
 RoamBench 是一个面向单人自托管场景的轻量远程工作台。
 
-`RoamBench` 是对外产品名。当前仓库名、二进制名、配置名和环境变量名暂时仍然使用 `liteterm`，直到后续完成代码层改名。
+`RoamBench` 是对外产品名。配置和启动命令请按你的本地二进制与配置路径替换为实际名称。
 
 你可以把它理解成 SSH 和完整浏览器 IDE 之间“刚刚好”的那一层：无论在电脑还是手机上，都能进入自己的机器，接回 terminal，会看文件、复制文件、做小修改，并发起或盯住长时间运行的任务，而不必背上一个很重的浏览器 IDE。
 
@@ -83,7 +83,7 @@ RoamBench 参考了 `rstudio-server` 这类远程工作环境的思路，但做�
 RoamBench 是一个刻意保持简单的项目：
 
 - 一个服务进程只服务一个 Unix 用户
-- 登录用户名必须等于运行 `liteterm` 的 Unix 账户
+- 登录用户名必须等于运行 RoamBench 进程的 Unix 账户
 - terminal 会话状态保存在服务端
 - workspace 标签状态保存在服务端，并在浏览器里做本地缓存
 - UI 偏好仍保存在浏览器本地
@@ -108,17 +108,20 @@ RoamBench 是一个刻意保持简单的项目：
 
 ```bash
 make build
-cp configs/liteterm.quickstart.toml liteterm.toml
-./liteterm --password-hash
+cp configs/roambench.quickstart.toml roambench.toml
+APP_BIN=<path-to-binary>         # e.g. ./roambench
+APP_CONFIG=<path-to-config-file>  # e.g. ./roambench.toml
+"$APP_BIN" --password-hash
 export LITETERM_USER="$(whoami)"
 export LITETERM_PASSWORD_HASH='<填入刚生成的 hash>'
-./liteterm --config liteterm.toml
+APP_CONFIG=${APP_CONFIG:-roambench.toml}
+"$APP_BIN" --config "$APP_CONFIG"
 ```
 
 说明：
 
 - 这条路径优先追求“几分钟跑起来”，不是安全加固版
-- `configs/liteterm.quickstart.toml` 会开启不安全 HTTP，并关闭 IP 白名单
+- `configs/roambench.quickstart.toml` 会开启不安全 HTTP，并关闭 IP 白名单
 - 只适合可信的本地或局域网环境
 - 如果你要正式部署，按下面的完整配置流程来
 
@@ -133,30 +136,37 @@ export LITETERM_PASSWORD_HASH='<填入刚生成的 hash>'
 2. 复制示例配置：
 
    ```bash
-   cp configs/liteterm.example.toml liteterm.toml
+   cp configs/roambench.example.toml roambench.toml
    ```
 
-3. 编辑 `liteterm.toml`：
+3. 导出你本地启动时使用的二进制和配置：
 
-   - 把 `[auth].single_user` 改成当前通过 `./liteterm` 启动服务的 Unix 用户
+   ```bash
+   APP_BIN=<path-to-binary>         # e.g. ./roambench
+   APP_CONFIG=${APP_CONFIG:-roambench.toml}
+   ```
+
+4. 编辑 `roambench.toml`：
+
+   - 把 `[auth].single_user` 改成当前通过 `$APP_BIN` 启动服务的 Unix 用户
    - 设置 `[server].allowed_ips`，或者只在可信测试环境下启用 `allow_all_ips = true`
    - 检查 terminal 持久化相关配置
 
-4. 生成密码哈希：
+5. 生成密码哈希：
 
    ```bash
-   ./liteterm --password-hash
+   "$APP_BIN" --password-hash
    ```
 
-5. 把生成出来的哈希填入 `liteterm.toml` 的 `password_hash`
+6. 把生成出来的哈希填入 `roambench.toml` 的 `password_hash`
 
-6. 启动 RoamBench：
+7. 启动 RoamBench：
 
    ```bash
-   ./liteterm --config liteterm.toml
+   "$APP_BIN" --config "$APP_CONFIG"
    ```
 
-7. 在浏览器中打开服务地址
+8. 在浏览器中打开服务地址
 
 ## 构建与运行
 
@@ -182,14 +192,14 @@ make build-pam
 
 RoamBench 当前默认按这个顺序查找配置文件：
 
-1. `./liteterm.toml`
-2. `~/.config/liteterm/liteterm.toml`
-3. `/etc/liteterm/liteterm.toml`
+1. `./roambench.toml`
+2. `~/.config/roambench/roambench.toml`
+3. `/etc/roambench/roambench.toml`
 
 也可以显式指定：
 
 ```bash
-./liteterm --config /path/to/liteterm.toml
+./roambench --config /path/to/roambench.toml
 ```
 
 常用 CLI 参数：
@@ -223,7 +233,7 @@ RoamBench 当前默认按这个顺序查找配置文件：
 - terminal 元数据会写入磁盘
 - 空闲 session 会按 `terminal.idle_timeout` 自动清理
 - 元数据总量会受 `terminal.persist_max_bytes` 限制
-- 默认存储目录是 `~/.local/state/liteterm/terminals`
+- 默认存储目录是 `~/.local/state/roambench/terminals`
 
 这种方式可以在节省内存的同时，保留服务重启后的 session 恢复能力。
 
@@ -259,7 +269,7 @@ RoamBench 自带一个轻量的文件工作区：
 
 ## 项目结构
 
-- [cmd/liteterm](cmd/liteterm) - CLI 入口
+- [cmd/roambench](cmd/roambench) - CLI 入口
 - [internal/auth](internal/auth) - 认证与会话
 - [internal/server](internal/server) - HTTP 服务与 API
 - [internal/terminal](internal/terminal) - terminal 会话管理

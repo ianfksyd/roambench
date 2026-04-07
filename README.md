@@ -17,7 +17,7 @@
 
 RoamBench is a compact self-hosted remote workbench for one person.
 
-RoamBench is the public-facing product name. The current repo, binary, config, and environment variable identifiers still use `liteterm` until the code-level rename is completed.
+RoamBench is the public-facing product name.
 
 Think of it as the "enough" layer between SSH and a full browser IDE: open your machine from anywhere, keep terminal sessions alive, inspect files, copy and edit files, and kick off long-running work from a laptop or phone without dragging in a heavy stack.
 
@@ -89,7 +89,7 @@ That tradeoff matters on phones and small screens, where a "full IDE in the brow
 RoamBench is intentionally simple:
 
 - it is designed for one Unix user per server process
-- the login username must match the Unix account running `liteterm`
+- the login username must match the Unix account running the RoamBench process
 - terminal sessions live on the server
 - workspace tabs are stored on the server and cached in the browser
 - UI preferences remain browser-local
@@ -114,17 +114,20 @@ Fastest setup for trusted local or LAN testing:
 
 ```bash
 make build
-cp configs/liteterm.quickstart.toml liteterm.toml
-./liteterm --password-hash
+cp configs/roambench.quickstart.toml roambench.toml
+APP_BIN=<path-to-binary>         # e.g. ./roambench
+APP_CONFIG=<path-to-config-file>  # e.g. ./roambench.toml
+"$APP_BIN" --password-hash
 export LITETERM_USER="$(whoami)"
 export LITETERM_PASSWORD_HASH='<paste the generated hash>'
-./liteterm --config liteterm.toml
+APP_CONFIG=${APP_CONFIG:-roambench.toml}
+"$APP_BIN" --config "$APP_CONFIG"
 ```
 
 Notes:
 
 - this path is intentionally optimized for setup speed, not hardening
-- `configs/liteterm.quickstart.toml` enables insecure HTTP and disables IP filtering
+- `configs/roambench.quickstart.toml` enables insecure HTTP and disables IP filtering
 - use it only on trusted local or LAN environments
 - for a safer deployment, follow the full setup below
 
@@ -139,30 +142,37 @@ Notes:
 2. Copy the example config:
 
    ```bash
-   cp configs/liteterm.example.toml liteterm.toml
+   cp configs/roambench.example.toml roambench.toml
    ```
 
-3. Edit `liteterm.toml`:
+3. Export the binary and config you are using for this setup:
 
-   - set `[auth].single_user` to the Unix account that runs the service today via `./liteterm`
+   ```bash
+   APP_BIN=<path-to-binary>         # e.g. ./roambench
+   APP_CONFIG=${APP_CONFIG:-roambench.toml}
+   ```
+
+4. Edit `roambench.toml`:
+
+   - set `[auth].single_user` to the Unix account that runs the service today via `"$APP_BIN"`
    - set `[server].allowed_ips` or enable `allow_all_ips = true` for trusted testing
    - review the terminal persistence settings
 
-4. Generate a password hash:
+5. Generate a password hash:
 
    ```bash
-   ./liteterm --password-hash
+   "$APP_BIN" --password-hash
    ```
 
-5. Put the generated hash into `password_hash` in `liteterm.toml`.
+6. Put the generated hash into `password_hash` in `roambench.toml`.
 
-6. Start RoamBench:
+7. Start RoamBench:
 
    ```bash
-   ./liteterm --config liteterm.toml
+   "$APP_BIN" --config "$APP_CONFIG"
    ```
 
-7. Open the server in your browser.
+8. Open the server in your browser.
 
 ## Build And Run
 
@@ -188,14 +198,16 @@ make build-pam
 
 RoamBench currently looks for config files in this order:
 
-1. `./liteterm.toml`
-2. `~/.config/liteterm/liteterm.toml`
-3. `/etc/liteterm/liteterm.toml`
+1. `./roambench.toml`
+2. `~/.config/roambench/roambench.toml`
+3. `/etc/roambench/roambench.toml`
 
 You can also pass an explicit config path:
 
 ```bash
-./liteterm --config /path/to/liteterm.toml
+./roambench --config /path/to/roambench.toml
+APP_BIN=<path-to-binary> # e.g. ./roambench
+"$APP_BIN" --config /path/to/roambench.toml
 ```
 
 Useful CLI flags:
@@ -229,7 +241,7 @@ When `tmux` is available, RoamBench uses it as the terminal backend.
 - terminal metadata is persisted to disk
 - idle sessions are removed after `terminal.idle_timeout`
 - persisted metadata is capped by `terminal.persist_max_bytes`
-- by default the metadata directory is `~/.local/state/liteterm/terminals`
+- by default the metadata directory is `~/.local/state/roambench/terminals`
 
 This keeps memory usage low while still allowing session recovery after restart.
 
@@ -265,7 +277,7 @@ The file browser is rooted in the authenticated user's home directory.
 
 ## Project Layout
 
-- [cmd/liteterm](cmd/liteterm) - CLI entrypoint
+- [cmd/roambench](cmd/roambench) - CLI entrypoint
 - [internal/auth](internal/auth) - authentication and sessions
 - [internal/server](internal/server) - HTTP server and API
 - [internal/terminal](internal/terminal) - terminal session manager

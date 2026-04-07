@@ -4,7 +4,7 @@ Thanks for contributing.
 
 RoamBench is intentionally small and opinionated: single-user, self-hosted, terminal-first, and usable from mobile browsers. Contributions that preserve that focus are the best fit for the project.
 
-`RoamBench` is the public-facing product name. Current code, binary, config, and environment variable identifiers still use `liteterm`.
+`RoamBench` is the public-facing product name. See setup snippets below for how to point docs at your local binary and config paths during the current transition.
 
 ## Before You Start
 
@@ -18,9 +18,11 @@ Typical setup:
 
 ```bash
 make build
-cp configs/liteterm.example.toml liteterm.toml
-./liteterm --password-hash
-./liteterm --config liteterm.toml
+APP_BIN=<path-to-binary>         # e.g. ./roambench
+APP_CONFIG=<path-to-config-file>  # e.g. ./roambench.toml
+cp configs/roambench.example.toml "$APP_CONFIG"
+"$APP_BIN" --password-hash
+"$APP_BIN" --config "$APP_CONFIG"
 ```
 
 Useful commands:

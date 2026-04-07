@@ -1,7 +1,7 @@
 # RoamBench Configuration
 
 Public product name: `RoamBench`
-Current technical identifiers: `liteterm`
+Current technical identifiers: `roambench`
 
 This document describes how RoamBench loads configuration, what each section does, and which settings matter most for deployment.
 
@@ -9,14 +9,14 @@ This document describes how RoamBench loads configuration, what each section doe
 
 If you do not pass `--config`, RoamBench checks these paths in order:
 
-1. `./liteterm.toml`
-2. `~/.config/liteterm/liteterm.toml`
-3. `/etc/liteterm/liteterm.toml`
+1. `./roambench.toml`
+2. `~/.config/roambench/roambench.toml`
+3. `/etc/roambench/roambench.toml`
 
 You can always override this:
 
 ```bash
-./liteterm --config /path/to/liteterm.toml
+./roambench --config /path/to/roambench.toml
 ```
 
 ## Example
@@ -24,13 +24,13 @@ You can always override this:
 Start from:
 
 ```bash
-cp configs/liteterm.example.toml liteterm.toml
+cp configs/roambench.example.toml roambench.toml
 ```
 
 Fast local/LAN demo path:
 
 ```bash
-cp configs/liteterm.quickstart.toml liteterm.toml
+cp configs/roambench.quickstart.toml roambench.toml
 ```
 
 Use the quickstart file only for trusted local or LAN testing. It enables insecure HTTP and disables IP filtering to minimize setup friction.
@@ -91,7 +91,7 @@ max_sessions = 0
 scrollback = 10000
 idle_timeout = "72h"
 persist_max_bytes = 67108864
-persist_dir = "/home/your-user/.local/state/liteterm/terminals"
+persist_dir = "/home/your-user/.local/state/roambench/terminals"
 ```
 
 Important behavior:
@@ -105,7 +105,7 @@ Important behavior:
 
 Default metadata directory:
 
-- `~/.local/state/liteterm/terminals`
+- `~/.local/state/roambench/terminals`
 
 Persistence model:
 
@@ -152,7 +152,7 @@ For a typical personal deployment:
 
 - keep `method = "password"`
 - set `single_user` to the Unix account running the service
-- generate a `bcrypt` password hash with `./liteterm --password-hash`
+- generate a `bcrypt` password hash with `./roambench --password-hash`
 - keep IP filtering enabled unless you are behind another trusted layer
 - use TLS directly or terminate TLS at a trusted reverse proxy
 - install `tmux` so terminal sessions survive refresh and restart

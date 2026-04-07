@@ -49,7 +49,7 @@ body:
       label: Environment
       description: Fill in what you know.
       value: |
-        RoamBench version, commit, or `liteterm` build identifier:
+        RoamBench version, commit, or `roambench` build identifier:
         Browser:
         OS:
         Terminal backend (tmux or pty):

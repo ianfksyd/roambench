@@ -10,7 +10,7 @@
 
 RoamBench は、単一ユーザー向けのセルフホスト型リモート作業台です。
 
-`RoamBench` は公開向けの製品名です。現在のリポジトリ名、バイナリ名、設定名、環境変数名は、コードレベルの改名が終わるまで引き続き `liteterm` を使います。
+`RoamBench` は公開向けの製品名です。起動コマンドと設定パスは、ローカルの実体名に置き換えてください。
 
 `rstudio-server` のようなリモート作業環境から発想を得ていますが、かなり大胆に機能を絞っています。目的はフル IDE をブラウザへ持ち込むことではなく、本当に必要な部分だけを残すことです。
 
@@ -50,11 +50,14 @@ RoamBench は、単一ユーザー向けのセルフホスト型リモート作�
 
 ```bash
 make build
-cp configs/liteterm.quickstart.toml liteterm.toml
-./liteterm --password-hash
+cp configs/roambench.quickstart.toml roambench.toml
+APP_BIN=<path-to-binary>         # e.g. ./roambench
+APP_CONFIG=<path-to-config-file>  # e.g. ./roambench.toml
+"$APP_BIN" --password-hash
 export LITETERM_USER="$(whoami)"
 export LITETERM_PASSWORD_HASH='<generated hash>'
-./liteterm --config liteterm.toml
+APP_CONFIG=${APP_CONFIG:-roambench.toml}
+"$APP_BIN" --config "$APP_CONFIG"
 ```
 
 この quickstart はローカル / LAN 向けの最短経路です。`allow_all_ips = true` と `allow_insecure_http = true` を使うため、安全な公開運用には英語版 README のフルセットアップと [Deployment Hardening](docs/deployment-hardening.md) を使ってください: [README.md](README.md)

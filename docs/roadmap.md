@@ -4,7 +4,7 @@ This roadmap tracks the next practical improvements for RoamBench after the
 current `v0.1.x` baseline.
 
 Public product name: `RoamBench`
-Current technical identifiers: `liteterm`
+Current technical identifiers: `roambench`
 
 Guiding constraints:
 

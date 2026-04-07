@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/user/liteterm-web/internal/auth"
-	"github.com/user/liteterm-web/internal/config"
-	"github.com/user/liteterm-web/internal/filebrowser"
-	"github.com/user/liteterm-web/internal/server"
-	"github.com/user/liteterm-web/internal/terminal"
+	"github.com/user/roambench-web/internal/auth"
+	"github.com/user/roambench-web/internal/config"
+	"github.com/user/roambench-web/internal/filebrowser"
+	"github.com/user/roambench-web/internal/server"
+	"github.com/user/roambench-web/internal/terminal"
 )
 
 const version = "0.2.0"
@@ -86,13 +86,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: No password configured.")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Option 1: Generate a hash and set env var:")
-		fmt.Fprintln(os.Stderr, "  ./liteterm --password-hash")
+		fmt.Fprintln(os.Stderr, "  ./roambench --password-hash")
 		fmt.Fprintln(os.Stderr, "  export LITETERM_PASSWORD_HASH='<hash>'")
-		fmt.Fprintln(os.Stderr, "  ./liteterm")
+		fmt.Fprintln(os.Stderr, "  ./roambench")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Option 2: Set password_hash in config file:")
-		fmt.Fprintln(os.Stderr, "  cp configs/liteterm.example.toml liteterm.toml")
-		fmt.Fprintln(os.Stderr, "  # edit liteterm.toml and set password_hash")
+		fmt.Fprintln(os.Stderr, "  cp configs/roambench.example.toml roambench.toml")
+		fmt.Fprintln(os.Stderr, "  # edit roambench.toml and set password_hash")
 		os.Exit(1)
 	}
 
@@ -177,7 +177,7 @@ func validateSecurityConfig(cfg *config.Config) error {
 		return errors.New("single_user is required; RoamBench is single-user only")
 	}
 	if cfg.Auth.SingleUser != currentUser.Username {
-		return fmt.Errorf("single_user %q must match the Unix account running liteterm (%q)", cfg.Auth.SingleUser, currentUser.Username)
+		return fmt.Errorf("single_user %q must match the Unix account running roambench (%q)", cfg.Auth.SingleUser, currentUser.Username)
 	}
 
 	if (cfg.Server.TLSCert == "") != (cfg.Server.TLSKey == "") {

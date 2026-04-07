@@ -1,7 +1,7 @@
 # RoamBench Deployment Hardening
 
 Public product name: `RoamBench`  
-Current technical identifiers: `liteterm`
+Current technical identifiers: `roambench`
 
 This guide explains what users should do after building or downloading the binary, especially before exposing RoamBench beyond a trusted local or LAN setup.
 
@@ -13,7 +13,7 @@ RoamBench is single-user only.
 
 Important rule:
 
-- `[auth].single_user` must exactly match the Unix account running the `liteterm` process
+- `[auth].single_user` must exactly match the Unix account running the `roambench` process
 
 That means the service account is also the shell account whose files and home directory the terminal will see.
 
@@ -29,13 +29,13 @@ Do not run RoamBench as `root`.
 Use:
 
 ```bash
-cp configs/liteterm.example.toml liteterm.toml
+cp configs/roambench.example.toml roambench.toml
 ```
 
 Do not expose this file to the public Internet:
 
 ```bash
-cp configs/liteterm.quickstart.toml liteterm.toml
+cp configs/roambench.quickstart.toml roambench.toml
 ```
 
 Why:
@@ -56,14 +56,14 @@ Your config can contain:
 Recommended permissions:
 
 ```bash
-chmod 700 /etc/liteterm
-chmod 600 /etc/liteterm/liteterm.toml
+chmod 700 /etc/roambench
+chmod 600 /etc/roambench/roambench.toml
 ```
 
 If you keep the password hash in an environment file instead, protect that file too:
 
 ```bash
-chmod 600 /etc/liteterm/liteterm.env
+chmod 600 /etc/roambench/roambench.env
 ```
 
 Never commit a real deployment config to a public repo.
@@ -101,12 +101,12 @@ Minimum rules:
 Generate a bcrypt hash:
 
 ```bash
-./liteterm --password-hash
+./roambench --password-hash
 ```
 
 Then use one of these two patterns:
 
-- put the hash in `liteterm.toml`
+- put the hash in `roambench.toml`
 - or store it in a protected environment file and load it from systemd
 
 Example environment file:
@@ -181,14 +181,14 @@ sha256sum -c sha256sums.txt
 Then install the binary to a stable path such as:
 
 ```bash
-install -m 0755 liteterm /usr/local/bin/liteterm
+install -m 0755 roambench /usr/local/bin/roambench
 ```
 
 ## 10. Systemd Recommendations
 
 Start from the template:
 
-- [configs/liteterm.service](../configs/liteterm.service)
+- [configs/roambench.service](../configs/roambench.service)
 
 Before using it:
 
@@ -201,7 +201,7 @@ Before using it:
 If you want to keep auth settings out of the main config, use an environment file:
 
 ```ini
-EnvironmentFile=-/etc/liteterm/liteterm.env
+EnvironmentFile=-/etc/roambench/roambench.env
 ```
 
 Useful baseline service practices:

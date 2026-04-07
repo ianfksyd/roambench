@@ -3,7 +3,7 @@
 This document turns the product positioning into launch material you can actually use.
 
 Public product name: `RoamBench`
-Current technical identifiers: `liteterm`
+Current technical identifiers: `roambench`
 
 ## Core Message
 
@@ -75,7 +75,7 @@ Recommended evidence:
 Suggested commands and checks:
 
 ```bash
-ls -lh liteterm
+ls -lh roambench
 ps -o pid,rss,command -p <pid>
 go test ./...
 node --check web/js/app.js
@@ -85,7 +85,7 @@ Suggested evidence table for launch notes:
 
 | Metric | How To Measure | Current Value | Notes |
 | --- | --- | --- | --- |
-| Binary size | `ls -lh liteterm` | fill in | after `make build` |
+| Binary size | `ls -lh roambench` | fill in | after `make build` |
 | Idle RSS | `ps -o rss= -p <pid>` | fill in | after login and idle |
 | Refresh recovery | manual | fill in | same terminal still attached |
 | Restart recovery | manual with `tmux` | fill in | restart the RoamBench service only |
@@ -176,7 +176,7 @@ Recommended order:
 
 Current fast-path file:
 
-- [configs/liteterm.quickstart.toml](../configs/liteterm.quickstart.toml)
+- [configs/roambench.quickstart.toml](../configs/roambench.quickstart.toml)
 
 Current primary docs:
 

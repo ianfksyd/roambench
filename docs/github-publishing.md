@@ -8,7 +8,7 @@ Suggested:
 
 - `roambench`
 
-Current repo name can stay `liteterm-web` until the code-level rename is complete.
+Current repo name can stay `roambench-web` until the code-level rename is complete.
 
 ## Repository Description
 

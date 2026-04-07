@@ -2,7 +2,7 @@
 
 RoamBench is a single-user self-hosted tool, but it still exposes authentication, terminal, and file-management surfaces. Issues in those areas should be treated seriously.
 
-`RoamBench` is the public-facing product name. Current technical identifiers still use `liteterm`.
+`RoamBench` is the public-facing product name. Current technical identifiers still use `roambench`.
 
 ## Supported Versions
 

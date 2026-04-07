@@ -17,7 +17,7 @@ Suggested subtitle:
 RoamBench is a compact self-hosted remote workbench for one person.
 
 Public product name: `RoamBench`
-Current technical identifiers: `liteterm`
+Current technical identifiers: `roambench`
 
 It is built for the space between SSH and a full browser IDE: keep terminal sessions alive, run `2 / 4`-pane split views, resume work from anywhere, inspect files, copy and edit files, and direct terminal-first tools such as `openclaw`, Codex, Claude Code, Kimi-CLI, and OpenCode from a laptop or phone.
 
@@ -66,7 +66,7 @@ Docs:
 RoamBench 是一个面向单人自托管场景的轻量远程工作台。
 
 对外产品名：`RoamBench`
-当前技术标识：`liteterm`
+当前技术标识：`roambench`
 
 它处在 SSH 和完整浏览器 IDE 之间：保住 terminal 会话、用 `2 / 4` 分屏同时跑多个工具、从任何地点接回工作、看文件、复制和修改文件，也可以在电脑或手机上直接指挥 `openclaw`、Codex、Claude Code、Kimi-CLI、OpenCode 这类 terminal-first 工具。
 

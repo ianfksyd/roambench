@@ -3,7 +3,7 @@
 This page records concrete runtime evidence for RoamBench instead of relying on vague "lightweight" claims.
 
 Public product name: `RoamBench`
-Current technical identifiers: `liteterm`
+Current technical identifiers: `roambench`
 
 ## Snapshot
 
@@ -16,7 +16,7 @@ Measured on `2026-04-04` UTC in a live session with:
 
 Binary:
 
-- `liteterm`: about `9.5 MB`
+- `roambench`: about `9.5 MB`
 
 Runtime memory snapshot:
 
@@ -38,7 +38,7 @@ Practical reading:
 Commands used:
 
 ```bash
-ls -lh liteterm
+ls -lh roambench
 ps -o pid,ppid,stat,rss,vsz,%cpu,etime,cmd -p <pids>
 tmux ls
 ```
@@ -47,14 +47,14 @@ Representative process snapshot:
 
 ```text
 PID      RSS   CMD
-3536562  13592 ./liteterm --config ./liteterm.toml
+3536562  13592 ./roambench --config ./roambench.toml
 2241326  25396 tmux new-session ...
-2266507   4220 /bin/bash --rcfile /tmp/.liteterm-bashrc -i
-2379694   3372 /bin/bash --rcfile /tmp/.liteterm-bashrc -i
-2480299   3804 /bin/bash --rcfile /tmp/.liteterm-bashrc -i
-3449060   5052 /bin/bash --rcfile /tmp/.liteterm-bashrc -i
-3679053   4952 /bin/bash --rcfile /tmp/.liteterm-bashrc -i
-3722798   4948 /bin/bash --rcfile /tmp/.liteterm-bashrc -i
+2266507   4220 /bin/bash --rcfile /tmp/.roambench-bashrc -i
+2379694   3372 /bin/bash --rcfile /tmp/.roambench-bashrc -i
+2480299   3804 /bin/bash --rcfile /tmp/.roambench-bashrc -i
+3449060   5052 /bin/bash --rcfile /tmp/.roambench-bashrc -i
+3679053   4952 /bin/bash --rcfile /tmp/.roambench-bashrc -i
+3722798   4948 /bin/bash --rcfile /tmp/.roambench-bashrc -i
 3752482   4276 tmux attach-session -t ...
 3752492   4272 tmux attach-session -t ...
 ```

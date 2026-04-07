@@ -1,7 +1,7 @@
 # RoamBench Authentication
 
 Public product name: `RoamBench`
-Current technical identifiers: `liteterm`
+Current technical identifiers: `roambench`
 
 RoamBench supports two authentication modes:
 
@@ -25,7 +25,7 @@ single_user = "your-unix-user"
 
 Rules:
 
-- `single_user` must exactly match the Unix account running the `liteterm` process
+- `single_user` must exactly match the Unix account running the `roambench` process
 - `password_hash` must be a valid `bcrypt` hash
 - if `password_hash` is empty, RoamBench will also accept the `LITETERM_PASSWORD_HASH` environment variable
 
@@ -34,7 +34,7 @@ Rules:
 1. Generate a new `bcrypt` hash:
 
    ```bash
-   ./liteterm --password-hash
+   ./roambench --password-hash
    ```
 
 2. Enter the new password at the prompt.
@@ -71,6 +71,6 @@ If either check fails, login is rejected.
 
 ## Related Files
 
-- `hash` generation: `cmd/liteterm/main.go`
+- `hash` generation: `cmd/roambench/main.go`
 - password verification: `internal/auth/auth.go`
-- example config: `configs/liteterm.example.toml`
+- example config: `configs/roambench.example.toml`
