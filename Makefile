@@ -1,17 +1,17 @@
 .PHONY: build build-pam run clean hash-password
 
 build:
-	go build -o liteterm ./cmd/liteterm
+	go build -o roambench ./cmd/roambench
 
 build-pam:
-	go build -tags pam -o liteterm ./cmd/liteterm
+	go build -tags pam -o roambench ./cmd/roambench
 
 run: build
-	./liteterm --port 3000
+	./roambench --port 3000
 
 clean:
-	rm -f liteterm
+	rm -f roambench
 
 hash-password: build
 	@echo "Enter password (then press Ctrl+D):"
-	@./liteterm --password-hash
+	@./roambench --password-hash

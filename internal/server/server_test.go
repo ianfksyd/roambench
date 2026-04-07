@@ -16,9 +16,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/user/liteterm-web/internal/auth"
-	"github.com/user/liteterm-web/internal/config"
-	"github.com/user/liteterm-web/internal/filebrowser"
+	"github.com/ianf339/roambench/internal/auth"
+	"github.com/ianf339/roambench/internal/config"
+	"github.com/ianf339/roambench/internal/filebrowser"
 )
 
 type stubAuthProvider struct {
@@ -296,7 +296,7 @@ func TestLoginCookieUsesBasePath(t *testing.T) {
 }
 
 func TestParseProcMemoryValueBytes(t *testing.T) {
-	content := "Name:\tliteterm\nVmRSS:\t   12345 kB\nThreads:\t7\n"
+	content := "Name:\troambench\nVmRSS:\t   12345 kB\nThreads:\t7\n"
 
 	got, err := parseProcMemoryValueBytes(content, "VmRSS:")
 	if err != nil {
@@ -380,7 +380,7 @@ func TestFilesPreviewRouteReturnsScaledImage(t *testing.T) {
 		t.Fatalf("user.Current error: %v", err)
 	}
 
-	tempDir, err := os.MkdirTemp(currentUser.HomeDir, ".liteterm-preview-test-")
+	tempDir, err := os.MkdirTemp(currentUser.HomeDir, ".roambench-preview-test-")
 	if err != nil {
 		t.Fatalf("MkdirTemp error: %v", err)
 	}

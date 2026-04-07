@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/user/roambench-web/internal/auth"
-	"github.com/user/roambench-web/internal/config"
-	"github.com/user/roambench-web/internal/filebrowser"
-	"github.com/user/roambench-web/internal/server"
-	"github.com/user/roambench-web/internal/terminal"
+	"github.com/ianf339/roambench/internal/auth"
+	"github.com/ianf339/roambench/internal/config"
+	"github.com/ianf339/roambench/internal/filebrowser"
+	"github.com/ianf339/roambench/internal/server"
+	"github.com/ianf339/roambench/internal/terminal"
 )
 
 const version = "0.2.0"
@@ -67,16 +67,16 @@ func main() {
 		cfg.Server.Host = *host
 	}
 
-	// Check for password hash from env var
+	// Check for password hash from env vars.
 	if cfg.Auth.PasswordHash == "" {
-		if envHash := os.Getenv("LITETERM_PASSWORD_HASH"); envHash != "" {
+		if envHash := firstNonEmpty(os.Getenv("ROAMBENCH_PASSWORD_HASH"), os.Getenv("LITETERM_PASSWORD_HASH")); envHash != "" {
 			cfg.Auth.PasswordHash = envHash
 		}
 	}
 
-	// Check for single user from env var
+	// Check for single user from env vars.
 	if cfg.Auth.SingleUser == "" {
-		if envUser := os.Getenv("LITETERM_USER"); envUser != "" {
+		if envUser := firstNonEmpty(os.Getenv("ROAMBENCH_USER"), os.Getenv("LITETERM_USER")); envUser != "" {
 			cfg.Auth.SingleUser = envUser
 		}
 	}
@@ -87,7 +87,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Option 1: Generate a hash and set env var:")
 		fmt.Fprintln(os.Stderr, "  ./roambench --password-hash")
-		fmt.Fprintln(os.Stderr, "  export LITETERM_PASSWORD_HASH='<hash>'")
+		fmt.Fprintln(os.Stderr, "  export ROAMBENCH_PASSWORD_HASH='<hash>'")
 		fmt.Fprintln(os.Stderr, "  ./roambench")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Option 2: Set password_hash in config file:")
@@ -199,4 +199,13 @@ func isLoopbackHost(host string) bool {
 	trimmed := strings.Trim(host, "[]")
 	ip := net.ParseIP(trimmed)
 	return ip != nil && ip.IsLoopback()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

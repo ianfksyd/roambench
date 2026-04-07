@@ -112,8 +112,8 @@ cp configs/roambench.quickstart.toml roambench.toml
 APP_BIN=<path-to-binary>         # e.g. ./roambench
 APP_CONFIG=<path-to-config-file>  # e.g. ./roambench.toml
 "$APP_BIN" --password-hash
-export LITETERM_USER="$(whoami)"
-export LITETERM_PASSWORD_HASH='<填入刚生成的 hash>'
+export ROAMBENCH_USER="$(whoami)"
+export ROAMBENCH_PASSWORD_HASH='<填入刚生成的 hash>'
 APP_CONFIG=${APP_CONFIG:-roambench.toml}
 "$APP_BIN" --config "$APP_CONFIG"
 ```

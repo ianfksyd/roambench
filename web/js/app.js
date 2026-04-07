@@ -4,12 +4,12 @@
 
     const MIN_EDITOR_HEIGHT = 140;
     const MIN_TERMINAL_HEIGHT = 140;
-    const TERMINAL_SETTINGS_STORAGE_KEY = 'liteterm.terminal-settings.v2';
-    const LEGACY_TERMINAL_SETTINGS_STORAGE_KEYS = ['liteterm.terminal-settings'];
-    const LANGUAGE_STORAGE_KEY = 'liteterm.language.v1';
-    const TERMINAL_WORKSPACES_STORAGE_KEY = 'liteterm.terminal-workspaces.v1';
-    const EDITOR_DRAFTS_STORAGE_KEY = 'liteterm.editor-drafts.v1';
-    const EDITOR_UI_STORAGE_KEY = 'liteterm.editor-ui.v1';
+    const TERMINAL_SETTINGS_STORAGE_KEY = 'roambench.terminal-settings.v2';
+    const LEGACY_TERMINAL_SETTINGS_STORAGE_KEYS = ['liteterm.terminal-settings', 'roambench.terminal-settings'];
+    const LANGUAGE_STORAGE_KEY = 'roambench.language.v1';
+    const TERMINAL_WORKSPACES_STORAGE_KEY = 'roambench.terminal-workspaces.v1';
+    const EDITOR_DRAFTS_STORAGE_KEY = 'roambench.editor-drafts.v1';
+    const EDITOR_UI_STORAGE_KEY = 'roambench.editor-ui.v1';
     const UPLOAD_RESPONSE_GRACE_MS = 6000;
     const DEFAULT_LANGUAGE = 'en';
     const WORKSPACE_LAYOUT_SLOT_COUNTS = { '1': 1, '2': 2, '4': 4, '4w': 4 };

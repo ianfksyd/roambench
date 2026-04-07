@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/user/liteterm-web/internal/config"
+	"github.com/ianf339/roambench/internal/config"
 )
 
 func newTestManager(t *testing.T, cfg *config.TerminalConfig) *Manager {
@@ -307,7 +307,7 @@ func TestTmuxShellCommandForcesColorFriendlyEnv(t *testing.T) {
 		"COLORTERM='truecolor'",
 		"HOME='/home/ian'",
 		"SHELL='/bin/bash'",
-		" --rcfile '/tmp/.liteterm-bashrc' -i",
+		" --rcfile '/tmp/.roambench-bashrc' -i",
 	} {
 		if !strings.Contains(command, fragment) {
 			t.Fatalf("tmuxShellCommand missing %q in %q", fragment, command)

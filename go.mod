@@ -1,4 +1,4 @@
-module github.com/user/liteterm-web
+module github.com/ianf339/roambench
 
 go 1.18
 

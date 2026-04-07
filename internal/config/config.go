@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -91,6 +92,9 @@ func Load(path string) (*Config, error) {
 
 func FindAndLoad() *Config {
 	paths := []string{
+		"roambench.toml",
+		os.ExpandEnv("$HOME/.config/roambench/roambench.toml"),
+		"/etc/roambench/roambench.toml",
 		"liteterm.toml",
 		os.ExpandEnv("$HOME/.config/liteterm/liteterm.toml"),
 		"/etc/liteterm/liteterm.toml",
@@ -134,10 +138,20 @@ func (c *TerminalConfig) GetPersistDir() string {
 
 	homeDir, err := os.UserHomeDir()
 	if err == nil && homeDir != "" {
-		return filepath.Join(homeDir, ".local", "state", "liteterm", "terminals")
+		candidates := []string{
+			filepath.Join(homeDir, ".local", "state", "roambench", "terminals"),
+			filepath.Join(homeDir, ".local", "state", "liteterm", "terminals"),
+		}
+		sort.Strings(candidates)
+		for _, p := range candidates {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+		return candidates[0]
 	}
 
-	return filepath.Join(os.TempDir(), "liteterm", "terminals")
+	return filepath.Join(os.TempDir(), "roambench", "terminals")
 }
 
 func (c *TerminalConfig) GetPersistMaxBytes() int64 {

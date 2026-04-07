@@ -11,8 +11,8 @@ Group=roambench
 WorkingDirectory=/opt/roambench
 Environment=HOME=/home/roambench
 # Optional: keep auth settings in a protected env file instead of the main config.
-# EnvironmentFile=-/etc/liteterm/liteterm.env
-ExecStart=/usr/local/bin/liteterm --config /etc/liteterm/liteterm.toml
+# EnvironmentFile=-/etc/roambench/roambench.env
+ExecStart=/usr/local/bin/roambench --config /etc/roambench/roambench.toml
 Restart=always
 RestartSec=3
 

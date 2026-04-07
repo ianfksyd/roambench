@@ -9,10 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/user/liteterm-web/internal/config"
+	"github.com/ianf339/roambench/internal/config"
 )
 
-const CookieName = "liteterm_session"
+const CookieName = "roambench_session"
+const LegacyCookieName = "liteterm_session"
 
 var ErrSessionExpired = errors.New("session expired")
 

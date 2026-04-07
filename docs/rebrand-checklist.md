@@ -27,12 +27,12 @@ This checklist separates the public-facing brand rename from the code-level rena
 
 ## Phase 3: Code-Level Rename With Compatibility
 
-- rename the binary from `roambench` to `roambench`
-- keep `roambench` as a compatibility alias for at least one release
-- support both `roambench.toml` and `roambench.toml`
+- rename the binary from `liteterm` to `roambench`
+- keep `liteterm` as a compatibility alias for at least one release
+- support both `roambench.toml` and `liteterm.toml`
 - support both `ROAMBENCH_*` and `LITETERM_*` environment variables
-- support both `~/.config/roambench` and `~/.config/roambench`
-- support both `~/.local/state/roambench` and `~/.local/state/roambench`
+- support both `~/.config/roambench` and `~/.config/liteterm`
+- support both `~/.local/state/roambench` and `~/.local/state/liteterm`
 - keep existing browser local storage keys readable so users do not lose workspace state
 - review CLI help text, example configs, Makefile targets, and service logs
 

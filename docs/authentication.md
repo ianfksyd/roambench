@@ -27,7 +27,7 @@ Rules:
 
 - `single_user` must exactly match the Unix account running the `roambench` process
 - `password_hash` must be a valid `bcrypt` hash
-- if `password_hash` is empty, RoamBench will also accept the `LITETERM_PASSWORD_HASH` environment variable
+- if `password_hash` is empty, RoamBench will also accept the `ROAMBENCH_PASSWORD_HASH` environment variable
 
 ## Set Or Change The Password
 
@@ -53,7 +53,7 @@ Rules:
    Method B: export it as an environment variable before starting the service
 
    ```bash
-   export LITETERM_PASSWORD_HASH='$2a$10$...'
+   export ROAMBENCH_PASSWORD_HASH='$2a$10$...'
    ```
 
 4. Restart the service.

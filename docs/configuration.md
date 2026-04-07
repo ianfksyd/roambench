@@ -75,8 +75,8 @@ Important behavior:
 - `single_user` must exactly match the Unix account running the process
 - `method` can be `password` or `pam`
 - `password_hash` is only used in `password` mode
-- if `password_hash` is empty, RoamBench also checks `LITETERM_PASSWORD_HASH`
-- if `single_user` is empty, RoamBench also checks `LITETERM_USER`
+- if `password_hash` is empty, RoamBench also checks `ROAMBENCH_PASSWORD_HASH`
+- if `single_user` is empty, RoamBench also checks `ROAMBENCH_USER`
 
 More details:
 
@@ -130,8 +130,8 @@ Important behavior:
 
 RoamBench currently recognizes:
 
-- `LITETERM_PASSWORD_HASH`
-- `LITETERM_USER`
+- `ROAMBENCH_PASSWORD_HASH`
+- `ROAMBENCH_USER`
 
 These are fallback sources when the config file omits the corresponding auth values.
 

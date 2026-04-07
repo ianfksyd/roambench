@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/user/liteterm-web/internal/config"
+	"github.com/ianf339/roambench/internal/config"
 )
 
 func TestSessionManagerCreateValidateInvalidate(t *testing.T) {

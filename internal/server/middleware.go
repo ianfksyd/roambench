@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/liteterm-web/internal/auth"
-	"github.com/user/liteterm-web/internal/config"
+	"github.com/ianf339/roambench/internal/auth"
+	"github.com/ianf339/roambench/internal/config"
 )
 
 type contextKey string
@@ -28,8 +28,8 @@ func GetUsername(r *http.Request) string {
 
 func authRequired(sm *auth.SessionManager, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(auth.CookieName)
-		if err != nil {
+		cookie := authCookie(r)
+		if cookie == nil {
 			http.Error(w, `{"error":"not authenticated"}`, http.StatusUnauthorized)
 			return
 		}
@@ -43,6 +43,16 @@ func authRequired(sm *auth.SessionManager, next http.HandlerFunc) http.HandlerFu
 		ctx := context.WithValue(r.Context(), usernameKey, username)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+func authCookie(r *http.Request) *http.Cookie {
+	if cookie, err := r.Cookie(auth.CookieName); err == nil {
+		return cookie
+	}
+	if cookie, err := r.Cookie(auth.LegacyCookieName); err == nil {
+		return cookie
+	}
+	return nil
 }
 
 func secureHeaders(cfg *config.Config, next http.Handler) http.Handler {

@@ -11,7 +11,7 @@ User=roambench
 Group=roambench
 WorkingDirectory=/opt/roambench
 Environment=HOME=/home/roambench
-ExecStart=/usr/local/bin/liteterm --config /etc/liteterm/liteterm.toml
+ExecStart=/usr/local/bin/roambench --config /etc/roambench/roambench.toml
 Restart=always
 RestartSec=3
 

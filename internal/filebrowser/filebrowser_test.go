@@ -24,7 +24,7 @@ func makeHomeScopedTempDir(t *testing.T) (string, string) {
 	t.Helper()
 
 	u, home := currentUserHome(t)
-	dir, err := os.MkdirTemp(home, ".liteterm-filebrowser-test-")
+	dir, err := os.MkdirTemp(home, ".roambench-filebrowser-test-")
 	if err != nil {
 		t.Fatalf("MkdirTemp error: %v", err)
 	}

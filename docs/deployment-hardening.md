@@ -112,8 +112,8 @@ Then use one of these two patterns:
 Example environment file:
 
 ```bash
-LITETERM_USER=your-unix-user
-LITETERM_PASSWORD_HASH=$2a$10$...
+ROAMBENCH_USER=your-unix-user
+ROAMBENCH_PASSWORD_HASH=$2a$10$...
 ```
 
 If you use an environment file:

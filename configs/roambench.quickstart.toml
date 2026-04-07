@@ -5,7 +5,7 @@
 # - allow_insecure_http = true
 #
 # Do not expose this configuration directly to the public Internet.
-# For a safer setup, start from configs/liteterm.example.toml instead.
+# For a safer setup, start from configs/roambench.example.toml instead.
 
 [server]
 host = "0.0.0.0"
@@ -19,11 +19,11 @@ session_timeout = "24h"
 max_login_attempts = 5
 lockout_duration = "15m"
 
-# Generate with: ./liteterm --password-hash
-# Leave empty here and provide the hash via LITETERM_PASSWORD_HASH.
+# Generate with: ./roambench --password-hash
+# Leave empty here and provide the hash via ROAMBENCH_PASSWORD_HASH.
 password_hash = ""
 
-# Leave empty here and provide the Unix username via LITETERM_USER.
+# Leave empty here and provide the Unix username via ROAMBENCH_USER.
 single_user = ""
 
 [terminal]

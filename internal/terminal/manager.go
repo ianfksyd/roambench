@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	"github.com/user/liteterm-web/internal/config"
+	"github.com/ianf339/roambench/internal/config"
 )
 
 var (
@@ -34,7 +34,7 @@ const (
 	terminalColorDepth = "truecolor"
 	terminalDefaultRows = 40
 
-	terminalBashRCPath = "/tmp/.liteterm-bashrc"
+	terminalBashRCPath = "/tmp/.roambench-bashrc"
 	terminalBashRC     = `# Default colored prompt (kept even when user shell files override it)
 # Prefer a color-capable shell setup even when user defaults are plain.
 force_color_prompt=yes

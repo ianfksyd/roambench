@@ -16,11 +16,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/user/liteterm-web/internal/auth"
-	"github.com/user/liteterm-web/internal/config"
-	"github.com/user/liteterm-web/internal/filebrowser"
-	"github.com/user/liteterm-web/internal/terminal"
-	"github.com/user/liteterm-web/web"
+	"github.com/ianf339/roambench/internal/auth"
+	"github.com/ianf339/roambench/internal/config"
+	"github.com/ianf339/roambench/internal/filebrowser"
+	"github.com/ianf339/roambench/internal/terminal"
+	"github.com/ianf339/roambench/web"
 )
 
 type Server struct {
@@ -248,15 +248,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     auth.CookieName,
-		Value:    cookie,
-		Path:     s.cookiePath(),
-		HttpOnly: true,
-		Secure:   isSecureRequest(r, s.cfg.Server.TrustProxy),
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(s.cfg.Auth.GetSessionTimeout().Seconds()),
-	})
+	for _, cookieName := range []string{auth.CookieName, auth.LegacyCookieName} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     cookieName,
+			Value:    cookie,
+			Path:     s.cookiePath(),
+			HttpOnly: true,
+			Secure:   isSecureRequest(r, s.cfg.Server.TrustProxy),
+			SameSite: http.SameSiteStrictMode,
+			MaxAge:   int(s.cfg.Auth.GetSessionTimeout().Seconds()),
+		})
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"authenticated": true,
@@ -269,18 +271,21 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if cookie, err := r.Cookie(auth.CookieName); err == nil {
-		s.sessions.InvalidateSession(cookie.Value)
+	for _, cookieName := range []string{auth.CookieName, auth.LegacyCookieName} {
+		cookie, err := r.Cookie(cookieName)
+		if err == nil {
+			s.sessions.InvalidateSession(cookie.Value)
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     cookieName,
+			Value:    "",
+			Path:     s.cookiePath(),
+			HttpOnly: true,
+			Secure:   isSecureRequest(r, s.cfg.Server.TrustProxy),
+			SameSite: http.SameSiteStrictMode,
+			MaxAge:   -1,
+		})
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     auth.CookieName,
-		Value:    "",
-		Path:     s.cookiePath(),
-		HttpOnly: true,
-		Secure:   isSecureRequest(r, s.cfg.Server.TrustProxy),
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   -1,
-	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
 
@@ -303,8 +308,8 @@ func (s *Server) handleLegacyAuthStatus(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) writeAuthStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	cookie, err := r.Cookie(auth.CookieName)
-	if err != nil {
+	cookie := authCookie(r)
+	if cookie == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": false})
 		return
 	}

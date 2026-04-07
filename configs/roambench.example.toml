@@ -1,12 +1,12 @@
 # RoamBench Configuration
-# Copy to liteterm.toml and customize
+# Copy to roambench.toml and customize
 # Docs: README.md and docs/configuration.md
 
 [server]
 host = "0.0.0.0"
 port = 3000
-# tls_cert = "/etc/liteterm/cert.pem"
-# tls_key = "/etc/liteterm/key.pem"
+# tls_cert = "/etc/roambench/cert.pem"
+# tls_key = "/etc/roambench/key.pem"
 # allow_insecure_http = true   # only for trusted local/LAN testing
 
 # IP allowlist: only these IPs can access the web UI.
@@ -26,13 +26,13 @@ max_login_attempts = 5
 lockout_duration = "15m"
 
 # For password mode: set the bcrypt hash of your password
-# Generate with: ./liteterm --password-hash
+# Generate with: ./roambench --password-hash
 # Full guide: docs/authentication.md
-# Or set env var: LITETERM_PASSWORD_HASH
+# Or set env var: ROAMBENCH_PASSWORD_HASH
 password_hash = ""
 
 # RoamBench is single-user only.
-# This must match the Unix account running the liteterm process.
+# This must match the Unix account running the roambench process.
 single_user = "your-unix-user"
 
 [terminal]
@@ -41,7 +41,7 @@ max_sessions = 0          # 0 = no fixed session count cap
 scrollback = 10000       # tmux scrollback lines
 idle_timeout = "72h"     # kill idle sessions after this
 persist_max_bytes = 67108864  # total disk budget for remembered terminal metadata
-# persist_dir = "/home/your-user/.local/state/liteterm/terminals"
+# persist_dir = "/home/your-user/.local/state/roambench/terminals"
 
 [ui]
 title = "RoamBench"

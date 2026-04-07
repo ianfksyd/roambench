@@ -83,7 +83,7 @@
     <text x="60" y="230" fill="#94a3b8" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600">Filter current directory</text>
     <text x="46" y="278" fill="#0f172a" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" font-weight="700">README.md</text>
     <text x="46" y="316" fill="#0f172a" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" font-weight="700">docs/branding/</text>
-    <text x="46" y="354" fill="#0f172a" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" font-weight="700">configs/liteterm.toml</text>
+    <text x="46" y="354" fill="#0f172a" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" font-weight="700">configs/roambench.toml</text>
     <text x="46" y="392" fill="#0f172a" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" font-weight="700">web/index.html</text>
     <text x="46" y="430" fill="#0f172a" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" font-weight="700">web/js/app.js</text>
     <text x="46" y="468" fill="#64748b" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600">New File   Save As   Copy</text>
