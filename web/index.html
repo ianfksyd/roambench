@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>RoamBench</title>
+    <script>window.__BASE_PATH__ = "__ROAMBENCH_BASE_PATH__";</script>
+    <link rel="icon" href="__ROAMBENCH_BASE_PATH__/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="__ROAMBENCH_BASE_PATH__/vendor/xterm/xterm.min.css">
+    <link rel="stylesheet" href="__ROAMBENCH_BASE_PATH__/css/style.css">
+</head>
+<body class="app-loading view-login">
+    <div id="app-loader" style="position:fixed;inset:0;background:var(--bg,#1e1e1e);z-index:9999"></div>
+    <!-- Login View -->
+    <div id="login-view" class="view" style="display:none">
+        <div class="login-card">
+            <img class="login-brand-icon" src="__ROAMBENCH_BASE_PATH__/favicon.svg" alt="RoamBench">
+            <h1 class="login-title">RoamBench</h1>
+            <p class="login-subtitle" id="login-subtitle">Web Terminal</p>
+            <div class="login-language-row">
+                <label class="login-language-label" for="login-language" data-i18n="login.language">Language</label>
+                <select id="login-language" class="login-language-select" data-i18n-aria-label="login.language">
+                    <option value="en" data-i18n="language.en">English</option>
+                    <option value="zh-CN" data-i18n="language.zh-CN">简体中文</option>
+                    <option value="ja" data-i18n="language.ja">日本語</option>
+                </select>
+            </div>
+            <div id="login-error" class="error-msg" style="display:none"></div>
+            <input type="text" id="login-username" placeholder="Username" data-i18n-placeholder="login.usernamePlaceholder" autocapitalize="off" autocomplete="username">
+            <div class="login-password-field">
+                <input type="password" id="login-password" placeholder="Password" data-i18n-placeholder="login.passwordPlaceholder" autocomplete="current-password">
+                <label class="login-password-toggle">
+                    <input type="checkbox" id="login-show-password" data-i18n-aria-label="login.showPassword">
+                    <span data-i18n="login.showPassword">Show password</span>
+                </label>
+            </div>
+            <button id="login-btn" onclick="doLogin()" data-i18n="login.connect">Connect</button>
+        </div>
+    </div>
+
+    <!-- Terminal View -->
+    <div id="terminal-view" class="view" style="display:none">
+        <div class="header">
+            <button class="header-btn header-brand-btn" onclick="goBack()" title="Logout" aria-label="Logout" data-i18n-title="header.logout" data-i18n-aria-label="header.logout">
+                <img class="header-brand-icon" src="__ROAMBENCH_BASE_PATH__/favicon.svg" alt="RoamBench">
+            </button>
+            <span class="header-title" id="header-title">RoamBench</span>
+            <div class="header-memory" id="memory-indicator" aria-live="polite">
+                <svg class="header-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 7h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"></path>
+                    <path d="M9 4.5V7"></path>
+                    <path d="M12 4.5V7"></path>
+                    <path d="M15 4.5V7"></path>
+                    <path d="M9 17v2.5"></path>
+                    <path d="M12 17v2.5"></path>
+                    <path d="M15 17v2.5"></path>
+                </svg>
+                <span id="memory-indicator-text">-- / -- / --</span>
+            </div>
+            <button class="header-btn header-btn-settings" onclick="openTerminalSettings()" title="Settings" aria-label="Settings" data-i18n-title="header.settings" data-i18n-aria-label="header.settings">
+                <svg class="header-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 8.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5z"></path>
+                    <path d="M19 12a7 7 0 0 0-.08-1l2.01-1.56-1.9-3.28-2.42.98a7.1 7.1 0 0 0-1.73-1L14.5 3h-5l-.38 3.14a7.1 7.1 0 0 0-1.73 1l-2.42-.98-1.9 3.28L5.08 11a7 7 0 0 0 0 2l-2.01 1.56 1.9 3.28 2.42-.98a7.1 7.1 0 0 0 1.73 1L9.5 21h5l.38-3.14a7.1 7.1 0 0 0 1.73-1l2.42.98 1.9-3.28L18.92 13c.05-.33.08-.66.08-1z"></path>
+                </svg>
+            </button>
+            <button class="header-btn header-btn-folder" id="files-btn" onclick="toggleFileBrowser()" title="Files" aria-label="Files" data-i18n-title="header.files" data-i18n-aria-label="header.files">
+                <svg class="header-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3.5 7.5a2 2 0 0 1 2-2h3.7l1.8 2H18.5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path>
+                    <path d="M3.5 9h17"></path>
+                </svg>
+            </button>
+            <button class="header-btn header-btn-danger" onclick="doLogout()" title="Logout" aria-label="Logout" data-i18n-title="header.logout" data-i18n-aria-label="header.logout">
+                <svg class="header-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 3.5v7"></path>
+                    <path d="M7.2 6.7a7 7 0 1 0 9.6 0"></path>
+                </svg>
+            </button>
+        </div>
+        <div class="tab-bar-row">
+            <button class="header-btn tab-bar-add-btn" id="workspace-add-btn" onclick="createWorkspaceTab()" title="New View" data-i18n-title="workspace.newView">+</button>
+            <div class="tab-bar" id="tab-bar"></div>
+            <div class="tab-layout-switcher" role="group" aria-label="Terminal Layout" data-i18n-aria-label="workspace.layoutSwitcher">
+                <button class="tab-layout-btn" id="layout-btn-1" onclick="setActiveWorkspaceLayout('1')" title="Single Terminal" aria-label="Single Terminal" data-i18n-title="workspace.layout.single" data-i18n-aria-label="workspace.layout.single">1</button>
+                <button class="tab-layout-btn" id="layout-btn-2" onclick="setActiveWorkspaceLayout('2')" title="Two Terminals" aria-label="Two Terminals" data-i18n-title="workspace.layout.double" data-i18n-aria-label="workspace.layout.double">2</button>
+                <button class="tab-layout-btn" id="layout-btn-4" onclick="setActiveWorkspaceLayout('4')" title="Four Terminals" aria-label="Four Terminals" data-i18n-title="workspace.layout.quad" data-i18n-aria-label="workspace.layout.quad">4</button>
+                <button class="tab-layout-btn tab-layout-btn-icon" id="layout-btn-4w" onclick="setActiveWorkspaceLayout('4w')" title="Four Columns" aria-label="Four Columns" data-i18n-title="workspace.layout.quadWide" data-i18n-aria-label="workspace.layout.quadWide">
+                    <svg class="tab-layout-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="2.5" y="4" width="4" height="16" rx="1.2"></rect>
+                        <rect x="7.9" y="4" width="4" height="16" rx="1.2"></rect>
+                        <rect x="13.3" y="4" width="4" height="16" rx="1.2"></rect>
+                        <rect x="18.7" y="4" width="2.8" height="16" rx="1"></rect>
+                    </svg>
+                </button>
+            </div>
+            <button class="header-btn tab-bar-max-btn" id="terminal-max-btn" onclick="toggleMaximize('terminal')" title="Maximize Terminal" data-i18n-title="header.maximizeTerminal">&#x26F6;</button>
+        </div>
+        <div class="workspace" id="workspace">
+            <div class="editor-pane" id="editor-pane" style="display:none">
+                <div class="editor-tab-bar" id="editor-tab-bar"></div>
+                <div class="editor-toolbar">
+                    <span class="editor-path" id="editor-path" data-i18n="editor.noFileOpen">No file open</span>
+                    <span class="editor-caret" id="editor-caret"></span>
+                    <span class="editor-status" id="editor-status"></span>
+                    <button class="header-btn editor-tool-btn" id="editor-line-numbers-btn" onclick="toggleEditorLineNumbers()" title="Line Numbers" aria-label="Line Numbers" data-i18n-title="editor.lineNumbers" data-i18n-aria-label="editor.lineNumbers" data-i18n="editor.lineNumbersShort">123</button>
+                    <button class="header-btn editor-tool-btn" id="editor-find-btn" onclick="openEditorFind()" title="Find / Replace" aria-label="Find / Replace" data-i18n-title="editor.find" data-i18n-aria-label="editor.find" data-i18n="editor.findShort">Find</button>
+                    <button class="header-btn editor-tool-btn" id="editor-goto-btn" onclick="openEditorGoToLine()" title="Go to Line" aria-label="Go to Line" data-i18n-title="editor.goToLine" data-i18n-aria-label="editor.goToLine" data-i18n="editor.goToLineShort">Go</button>
+                    <button class="header-btn" id="editor-save-btn" onclick="saveActiveEditor()" title="Save" data-i18n-title="editor.save">&#128190;</button>
+                    <button class="header-btn editor-save-as-btn" id="editor-save-as-btn" onclick="saveActiveEditorAs()" title="Save As" data-i18n-title="editor.saveAs" data-i18n="editor.saveAsShort">As</button>
+                    <button class="header-btn" id="editor-max-btn" onclick="toggleMaximize('editor')" title="Maximize Editor" data-i18n-title="editor.maximize">&#x26F6;</button>
+                    <button class="header-btn" onclick="closeActiveEditor()" title="Close Editor" data-i18n-title="editor.close">&#x2715;</button>
+                </div>
+                <div class="editor-search-bar" id="editor-search-bar" style="display:none">
+                    <div class="editor-search-group editor-search-group-find">
+                        <input id="editor-find-input" class="editor-search-input" type="text" placeholder="Find" data-i18n-placeholder="editor.findPlaceholder" autocapitalize="off" autocomplete="off" spellcheck="false">
+                        <span class="editor-search-count" id="editor-search-count"></span>
+                        <button class="browser-action-btn editor-search-btn" type="button" onclick="findPreviousMatch()" data-i18n="editor.previousShort">Prev</button>
+                        <button class="browser-action-btn editor-search-btn" type="button" onclick="findNextMatch()" data-i18n="editor.nextShort">Next</button>
+                    </div>
+                    <div class="editor-search-group editor-search-group-replace">
+                        <input id="editor-replace-input" class="editor-search-input" type="text" placeholder="Replace" data-i18n-placeholder="editor.replacePlaceholder" autocapitalize="off" autocomplete="off" spellcheck="false">
+                        <button class="browser-action-btn editor-search-btn" type="button" onclick="replaceCurrentMatch()" data-i18n="editor.replaceShort">Replace</button>
+                        <button class="browser-action-btn editor-search-btn" type="button" onclick="replaceAllMatches()" data-i18n="editor.replaceAllShort">All</button>
+                    </div>
+                    <div class="editor-search-group editor-search-group-goto">
+                        <input id="editor-goto-line-input" class="editor-search-line-input" type="text" placeholder="Line:Col" data-i18n-placeholder="editor.goToLinePlaceholder" autocapitalize="off" autocomplete="off" spellcheck="false">
+                        <button class="browser-action-btn editor-search-btn" type="button" onclick="goToEditorLine()" data-i18n="editor.goToLineShort">Go</button>
+                        <button class="header-btn editor-search-close" type="button" onclick="closeEditorSearch()" title="Close" aria-label="Close" data-i18n-title="settings.close" data-i18n-aria-label="settings.close">&#x2715;</button>
+                    </div>
+                </div>
+                <div class="editor-body">
+                    <div id="editor-line-numbers" class="editor-line-numbers" aria-hidden="true"></div>
+                    <div class="editor-code-host">
+                        <pre id="editor-highlight" class="editor-highlight" aria-hidden="true"></pre>
+                        <textarea id="editor-textarea" class="editor-textarea" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="workspace-splitter" id="workspace-splitter" style="display:none"></div>
+            <div class="terminal-container" id="terminal-container">
+                <div class="terminal-dock" id="terminal-dock"></div>
+                <div class="terminal-grid" id="terminal-grid"></div>
+            </div>
+        </div>
+        <div class="extra-keys" id="extra-keys">
+            <button onclick="sendKey('tab')">Tab</button>
+            <button id="ctrl-btn" onclick="toggleCtrl()">Ctrl</button>
+            <button onclick="sendKey('esc')">Esc</button>
+            <button onclick="sendKey('pipe')">|</button>
+            <button onclick="sendKey('tilde')">~</button>
+            <button onclick="sendKey('slash')">/</button>
+            <button onclick="sendKey('dash')">-</button>
+            <button onclick="sendKey('up')">&#x2191;</button>
+            <button onclick="sendKey('down')">&#x2193;</button>
+            <button onclick="sendKey('left')">&#x2190;</button>
+            <button onclick="sendKey('right')">&#x2192;</button>
+        </div>
+    </div>
+
+    <div id="terminal-settings" class="terminal-settings-modal" style="display:none">
+        <div class="terminal-settings-backdrop" onclick="closeTerminalSettings()"></div>
+        <div class="terminal-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="terminal-settings-title">
+            <div class="terminal-settings-header">
+                <div>
+                    <h2 id="terminal-settings-title" class="terminal-settings-title" data-i18n="settings.title">Settings</h2>
+                    <p class="terminal-settings-subtitle" data-i18n="settings.subtitle">Fonts, colors, and language are stored in this browser and apply live.</p>
+                </div>
+                <div class="terminal-settings-actions">
+                    <button class="header-btn terminal-settings-reset" onclick="resetTerminalSettings()" title="Reset Terminal Style" data-i18n-title="settings.resetTerminal" data-i18n="settings.resetTerminal">Reset Terminal Style</button>
+                    <button class="header-btn" onclick="closeTerminalSettings()" title="Close" data-i18n-title="settings.close">&#x2715;</button>
+                </div>
+            </div>
+            <div class="terminal-settings-body">
+                <div class="terminal-settings-grid">
+                    <label class="terminal-settings-field terminal-settings-field-wide">
+                        <span class="terminal-settings-label" data-i18n="settings.language">Interface Language</span>
+                        <select id="interface-language">
+                            <option value="en" data-i18n="language.en">English</option>
+                            <option value="zh-CN" data-i18n="language.zh-CN">简体中文</option>
+                            <option value="ja" data-i18n="language.ja">日本語</option>
+                        </select>
+                    </label>
+
+                    <label class="terminal-settings-field terminal-settings-field-wide">
+                        <span class="terminal-settings-label" data-i18n="settings.fontFamily">Font Family</span>
+                        <select id="terminal-font-family">
+                            <option value="'Menlo', 'Consolas', 'Courier New', monospace">Menlo / Consolas</option>
+                            <option value="'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace">JetBrains Mono / Fira Code</option>
+                            <option value="'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace">SF Mono / Liberation Mono</option>
+                            <option value="'IBM Plex Mono', 'Source Code Pro', monospace">IBM Plex Mono / Source Code Pro</option>
+                            <option value="'Monaco', 'Courier New', monospace">Monaco</option>
+                        </select>
+                    </label>
+
+                    <label class="terminal-settings-field terminal-settings-field-wide">
+                        <span class="terminal-settings-label" data-i18n="settings.fontSize">Font Size</span>
+                        <div class="terminal-settings-inline">
+                            <input id="terminal-font-size" type="range" min="11" max="24" step="1" value="14">
+                            <output id="terminal-font-size-value" for="terminal-font-size">14px</output>
+                        </div>
+                    </label>
+
+                    <label class="terminal-settings-field">
+                        <span class="terminal-settings-label" data-i18n="settings.themePreset">Theme Preset</span>
+                        <select id="terminal-theme-preset">
+                            <option value="classic" data-i18n="settings.theme.classic">Classic Dark</option>
+                            <option value="midnight" data-i18n="settings.theme.midnight">Midnight Blue</option>
+                            <option value="forest" data-i18n="settings.theme.forest">Forest</option>
+                            <option value="amber" data-i18n="settings.theme.amber">Amber</option>
+                            <option value="custom" data-i18n="settings.theme.custom">Custom</option>
+                        </select>
+                    </label>
+
+                    <label class="terminal-settings-field terminal-settings-checkbox">
+                        <span class="terminal-settings-label" data-i18n="settings.cursorBlink">Cursor Blink</span>
+                        <input id="terminal-cursor-blink" type="checkbox" checked>
+                    </label>
+
+                    <label class="terminal-settings-field terminal-settings-color">
+                        <span class="terminal-settings-label" data-i18n="color.background">Background</span>
+                        <input id="terminal-color-background" type="color" value="#1e1e1e">
+                    </label>
+
+                    <label class="terminal-settings-field terminal-settings-color">
+                        <span class="terminal-settings-label" data-i18n="color.foreground">Foreground</span>
+                        <input id="terminal-color-foreground" type="color" value="#d4d4d4">
+                    </label>
+
+                    <label class="terminal-settings-field terminal-settings-color">
+                        <span class="terminal-settings-label" data-i18n="color.cursor">Cursor</span>
+                        <input id="terminal-color-cursor" type="color" value="#569cd6">
+                    </label>
+
+                    <label class="terminal-settings-field terminal-settings-color">
+                        <span class="terminal-settings-label" data-i18n="color.selection">Selection</span>
+                        <input id="terminal-color-selection" type="color" value="#569cd6">
+                    </label>
+
+                    <div class="terminal-settings-section terminal-settings-field-wide">
+                        <div class="terminal-settings-section-header">
+                            <span class="terminal-settings-label" data-i18n="settings.ansiPalette">ANSI Palette</span>
+                            <span class="terminal-settings-section-note" data-i18n="settings.ansiNote">Used by Codex, git diff, ls, and other ANSI-colored tools.</span>
+                        </div>
+                        <div class="terminal-settings-palette-grid">
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.black">Black</span>
+                                <input id="terminal-ansi-black" type="color" value="#1e1e1e">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.red">Red</span>
+                                <input id="terminal-ansi-red" type="color" value="#c75c6a">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.green">Green</span>
+                                <input id="terminal-ansi-green" type="color" value="#8fb573">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.yellow">Yellow</span>
+                                <input id="terminal-ansi-yellow" type="color" value="#d7ba7d">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.blue">Blue</span>
+                                <input id="terminal-ansi-blue" type="color" value="#569cd6">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.magenta">Magenta</span>
+                                <input id="terminal-ansi-magenta" type="color" value="#c586c0">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.cyan">Cyan</span>
+                                <input id="terminal-ansi-cyan" type="color" value="#4ec9b0">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.white">White</span>
+                                <input id="terminal-ansi-white" type="color" value="#d4d4d4">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.brightBlack">Bright Black</span>
+                                <input id="terminal-ansi-bright-black" type="color" value="#808080">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.brightRed">Bright Red</span>
+                                <input id="terminal-ansi-bright-red" type="color" value="#f44747">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.brightGreen">Bright Green</span>
+                                <input id="terminal-ansi-bright-green" type="color" value="#4ec9b0">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.brightYellow">Bright Yellow</span>
+                                <input id="terminal-ansi-bright-yellow" type="color" value="#ffcc66">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.brightBlue">Bright Blue</span>
+                                <input id="terminal-ansi-bright-blue" type="color" value="#9cdcfe">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.brightMagenta">Bright Magenta</span>
+                                <input id="terminal-ansi-bright-magenta" type="color" value="#d7a6ff">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.brightCyan">Bright Cyan</span>
+                                <input id="terminal-ansi-bright-cyan" type="color" value="#7fdbca">
+                            </label>
+                            <label class="terminal-settings-field terminal-settings-color">
+                                <span class="terminal-settings-label" data-i18n="color.brightWhite">Bright White</span>
+                                <input id="terminal-ansi-bright-white" type="color" value="#f3f3f3">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="terminal-settings-preview-card">
+                    <div class="terminal-settings-preview-head">
+                        <span data-i18n="settings.preview">Preview</span>
+                        <span class="terminal-settings-preview-note" data-i18n="settings.previewNote">Changes apply to open terminals immediately</span>
+                    </div>
+                    <div id="terminal-settings-preview" class="terminal-settings-preview">
+                        <div class="terminal-settings-preview-toolbar">
+                            <span class="terminal-settings-preview-dot"></span>
+                            <span class="terminal-settings-preview-dot"></span>
+                            <span class="terminal-settings-preview-dot"></span>
+                            <span class="terminal-settings-preview-caption" data-i18n="settings.previewCaption">term preview</span>
+                        </div>
+                        <div id="terminal-settings-palette-preview" class="terminal-settings-palette-preview">
+                            <span class="terminal-settings-palette-chip" data-palette-preview="black" title="Black" data-i18n-title="color.black"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="red" title="Red" data-i18n-title="color.red"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="green" title="Green" data-i18n-title="color.green"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="yellow" title="Yellow" data-i18n-title="color.yellow"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="blue" title="Blue" data-i18n-title="color.blue"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="magenta" title="Magenta" data-i18n-title="color.magenta"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="cyan" title="Cyan" data-i18n-title="color.cyan"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="white" title="White" data-i18n-title="color.white"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="brightBlack" title="Bright Black" data-i18n-title="color.brightBlack"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="brightRed" title="Bright Red" data-i18n-title="color.brightRed"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="brightGreen" title="Bright Green" data-i18n-title="color.brightGreen"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="brightYellow" title="Bright Yellow" data-i18n-title="color.brightYellow"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="brightBlue" title="Bright Blue" data-i18n-title="color.brightBlue"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="brightMagenta" title="Bright Magenta" data-i18n-title="color.brightMagenta"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="brightCyan" title="Bright Cyan" data-i18n-title="color.brightCyan"></span>
+                            <span class="terminal-settings-palette-chip" data-palette-preview="brightWhite" title="Bright White" data-i18n-title="color.brightWhite"></span>
+                        </div>
+                        <pre id="terminal-settings-preview-body" class="terminal-settings-preview-body"><span class="terminal-settings-preview-muted">user@roambench</span>:<span class="terminal-settings-preview-accent">~/workspace</span>$ ls
+<span data-ansi-preview="green" data-i18n="settings.preview.src">src</span>  <span data-ansi-preview="blue">app.js</span>  <span data-ansi-preview="yellow">README.md</span>
+<span data-ansi-preview="red" data-i18n="settings.preview.warning">warning:</span> <span data-i18n="settings.preview.pending">session check pending</span>
+<span data-ansi-preview="magenta" data-i18n="settings.preview.codex">codex</span> <span data-ansi-preview="brightCyan" data-i18n="settings.preview.review">review</span> <span class="terminal-settings-preview-selection" data-i18n="settings.preview.selection">Term 1  logs  notes.txt</span>
+<span class="terminal-settings-preview-muted" data-i18n="settings.preview.ready">ready</span><span id="terminal-settings-preview-cursor" class="terminal-settings-preview-cursor"></span></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- File Browser Panel -->
+    <div id="file-panel" class="file-panel">
+        <div class="browser-tabs">
+            <button id="browser-tab-files" class="browser-tab-btn active" onclick="switchFileBrowserTab('files')" data-i18n="header.files">Files</button>
+            <button id="browser-tab-viewer" class="browser-tab-btn" onclick="switchFileBrowserTab('viewer')" data-i18n="viewer.tab">Viewer</button>
+            <div class="browser-tabs-spacer"></div>
+            <button class="header-btn browser-close-btn" onclick="toggleFileBrowser()" title="Close" data-i18n-title="settings.close">&#x2715;</button>
+        </div>
+        <div id="file-toolbar" class="browser-toolbar">
+            <button class="browser-action-btn" id="file-select-mode-btn" onclick="toggleFileSelectionMode()" title="Select" aria-label="Select" data-i18n-title="files.selectMode" data-i18n-aria-label="files.selectMode">
+                <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5.5 5.5h13v13h-13z"></path>
+                    <path d="m8.5 12 2.2 2.2 4.8-4.8"></path>
+                </svg>
+                <span data-i18n="files.selectMode">Select</span>
+            </button>
+            <button class="browser-action-btn browser-action-file" onclick="promptNewFile()" title="New File" aria-label="New File" data-i18n-title="files.newFile" data-i18n-aria-label="files.newFile">
+                <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5A1.5 1.5 0 0 1 7.5 3.5z"></path>
+                    <path d="M14 3.5v4h4"></path>
+                    <path d="M12 10.5v6"></path>
+                    <path d="M9 13.5h6"></path>
+                </svg>
+                <span data-i18n="files.newFile">New File</span>
+            </button>
+            <button class="browser-action-btn browser-action-folder" onclick="promptNewFolder()" title="New Folder" aria-label="New Folder" data-i18n-title="files.newFolder" data-i18n-aria-label="files.newFolder">
+                <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3.5 7.5a2 2 0 0 1 2-2h3.7l1.8 2H18.5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path>
+                    <path d="M12 11.25v5.5"></path>
+                    <path d="M9.25 14h5.5"></path>
+                </svg>
+                <span data-i18n="files.newFolder">New Folder</span>
+            </button>
+            <button class="browser-action-btn browser-action-upload" id="upload-btn" onclick="triggerFileUpload()" title="Upload" aria-label="Upload" data-i18n-title="files.upload" data-i18n-aria-label="files.upload">
+                <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 16V5"></path>
+                    <path d="m7.5 9.5 4.5-4.5 4.5 4.5"></path>
+                    <path d="M5 18.5h14"></path>
+                </svg>
+                <span data-i18n="files.upload">Upload</span>
+            </button>
+            <button class="browser-action-btn" id="hidden-btn" onclick="toggleHiddenFiles()" title="Show Hidden" aria-label="Show Hidden" data-i18n-title="files.showHidden" data-i18n-aria-label="files.showHidden">
+                <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"></path>
+                    <path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"></path>
+                </svg>
+                <span id="hidden-btn-label" data-i18n="files.showHidden">Show Hidden</span>
+            </button>
+            <button class="browser-action-btn" onclick="refreshFiles()" title="Refresh" aria-label="Refresh" data-i18n-title="files.refresh" data-i18n-aria-label="files.refresh">
+                <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+                    <path d="M20 4v5h-5"></path>
+                </svg>
+                <span data-i18n="files.refresh">Refresh</span>
+            </button>
+        </div>
+        <div id="file-selection-bar" class="file-selection-bar" style="display:none">
+            <span id="file-selection-summary" class="file-selection-summary">0 selected</span>
+            <div class="file-selection-actions">
+                <button id="file-selection-all-btn" class="browser-action-btn file-selection-btn" type="button" onclick="selectAllFiles()" data-i18n="files.selectAll">Select All</button>
+                <button id="file-selection-copy-btn" class="browser-action-btn file-selection-btn" type="button" onclick="copySelectedFiles()" data-i18n="files.copy">Copy</button>
+                <button id="file-selection-rename-btn" class="browser-action-btn file-selection-btn" type="button" onclick="renameSelectedFiles()" data-i18n="files.rename">Rename</button>
+                <button id="file-selection-download-btn" class="browser-action-btn file-selection-btn" type="button" onclick="downloadSelectedFiles()" data-i18n="files.download">Download</button>
+                <button id="file-selection-delete-btn" class="browser-action-btn file-selection-btn danger" type="button" onclick="deleteSelectedFiles()" data-i18n="files.delete">Delete</button>
+                <button id="file-selection-cancel-btn" class="browser-action-btn file-selection-btn" type="button" onclick="clearFileSelectionMode()" data-i18n="files.selectionCancel">Cancel</button>
+            </div>
+        </div>
+        <div id="file-upload-status" class="file-upload-status" style="display:none">
+            <div class="file-upload-status-head">
+                <span id="file-upload-label" class="file-upload-label" data-i18n="upload.uploading">Uploading</span>
+                <button id="file-upload-cancel-btn" class="file-upload-cancel" type="button" onclick="cancelUpload()" title="Cancel Upload" aria-label="Cancel Upload" data-i18n-title="upload.cancel" data-i18n-aria-label="upload.cancel" style="display:none">
+                    <span data-i18n="upload.cancel">Cancel</span>
+                </button>
+                <span id="file-upload-percent" class="file-upload-percent">0%</span>
+            </div>
+            <span id="file-upload-detail" class="file-upload-detail"></span>
+            <div class="file-upload-progress">
+                <div id="file-upload-progress-bar" class="file-upload-progress-bar"></div>
+            </div>
+        </div>
+        <div class="browser-pathbar">
+            <div class="browser-path-actions">
+                <button class="browser-nav-btn" onclick="loadHomeDirectory()" title="Home" data-i18n-title="files.home">
+                    <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 10.5 12 4l8 6.5"></path>
+                        <path d="M6.5 9.5V20h11V9.5"></path>
+                    </svg>
+                </button>
+                <button class="browser-nav-btn" onclick="navigateUp()" title="Up" data-i18n-title="files.up">
+                    <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 18V6"></path>
+                        <path d="m7.5 10.5 4.5-4.5 4.5 4.5"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="browser-path-label" id="file-path">~</div>
+            <div class="browser-filter" id="file-filter-wrap">
+                <input id="file-filter-input" class="browser-filter-input" type="search" placeholder="Filter current directory" aria-label="Filter current directory" data-i18n-placeholder="files.filterPlaceholder" data-i18n-aria-label="files.filterPlaceholder" autocapitalize="off" autocomplete="off" spellcheck="false">
+                <span id="file-filter-summary" class="browser-filter-summary"></span>
+            </div>
+        </div>
+        <div id="file-browser-view" class="browser-view">
+            <div class="file-table-head">
+                <button id="file-sort-name" class="file-sort-btn file-col-name" type="button" onclick="setFileSort('name')">
+                    <span data-i18n="files.columnName">Name</span>
+                    <span id="file-sort-name-indicator" class="file-sort-indicator" aria-hidden="true">↕</span>
+                </button>
+                <button id="file-sort-size" class="file-sort-btn file-sort-btn-right file-col-size" type="button" onclick="setFileSort('size')">
+                    <span data-i18n="files.columnSize">Size</span>
+                    <span id="file-sort-size-indicator" class="file-sort-indicator" aria-hidden="true">↕</span>
+                </button>
+                <button id="file-sort-modified" class="file-sort-btn file-sort-btn-right file-col-modified" type="button" onclick="setFileSort('modified')">
+                    <span data-i18n="files.columnModified">Modified</span>
+                    <span id="file-sort-modified-indicator" class="file-sort-indicator" aria-hidden="true">↕</span>
+                </button>
+            </div>
+            <div id="file-list" class="file-list"></div>
+        </div>
+        <div id="file-viewer-view" class="browser-view" style="display:none">
+            <div class="viewer-toolbar">
+                <div class="viewer-file-meta">
+                    <span id="image-preview-title" class="viewer-file-title" data-i18n="image.preview">Image Preview</span>
+                    <span id="viewer-file-path" class="viewer-file-path">~</span>
+                </div>
+                <div class="viewer-toolbar-actions">
+                    <button id="viewer-copy-btn" class="browser-action-btn viewer-toolbar-btn" type="button" onclick="copyViewerText()" title="Copy Text" aria-label="Copy Text" data-i18n-title="viewer.copyText" data-i18n-aria-label="viewer.copyText">
+                        <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+                            <path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"></path>
+                        </svg>
+                    </button>
+                    <button id="viewer-edit-btn" class="browser-action-btn viewer-toolbar-btn" type="button" onclick="openViewerEditMode()" title="Edit" aria-label="Edit" data-i18n-title="viewer.edit" data-i18n-aria-label="viewer.edit">
+                        <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4.5 19.5h4.25l8.8-8.8-4.25-4.25-8.8 8.8z"></path>
+                            <path d="m12.9 6.45 4.25 4.25"></path>
+                            <path d="M15.9 4.35 19.65 8.1"></path>
+                        </svg>
+                    </button>
+                    <button id="viewer-download-btn" class="browser-action-btn viewer-toolbar-btn" type="button" onclick="downloadPreviewImage()" title="Download" aria-label="Download" data-i18n-title="files.download" data-i18n-aria-label="files.download">
+                        <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 4.5v11"></path>
+                            <path d="m7.5 11.5 4.5 4.5 4.5-4.5"></path>
+                            <path d="M5 19.5h14"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div id="viewer-empty" class="viewer-empty">
+                <div class="viewer-empty-kicker" data-i18n="viewer.tab">Viewer</div>
+                <div class="viewer-empty-title" data-i18n="viewer.emptyTitle">Select a file</div>
+                <div class="viewer-empty-copy" data-i18n="viewer.emptyHint">Open an image, PDF, or text file from Files.</div>
+            </div>
+            <div id="viewer-canvas" class="viewer-canvas" style="display:none">
+                <div id="viewer-loading-indicator" class="viewer-loading-indicator" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+                <div id="viewer-image-stage" class="viewer-stage">
+                    <img id="image-preview-blur" class="viewer-image viewer-image-preview" alt="">
+                    <img id="image-preview-img" class="viewer-image viewer-image-full" alt="Image preview">
+                </div>
+                <iframe id="viewer-pdf-frame" class="viewer-pdf-frame" title="PDF preview" style="display:none"></iframe>
+                <pre id="viewer-text-content" class="viewer-text-content" style="display:none"></pre>
+                <div id="viewer-editor-host" class="viewer-editor-host" style="display:none"></div>
+            </div>
+        </div>
+        <div id="file-dropzone" class="file-dropzone" aria-hidden="true">
+            <div class="file-dropzone-copy" data-i18n="files.dropToUpload">Drop files to upload</div>
+        </div>
+        <input id="file-upload-input" type="file" multiple hidden>
+    </div>
+    <div id="file-overlay" class="file-overlay" onclick="toggleFileBrowser()" style="display:none"></div>
+
+    <script src="__ROAMBENCH_BASE_PATH__/vendor/xterm/xterm.min.js"></script>
+    <script src="__ROAMBENCH_BASE_PATH__/vendor/xterm/xterm-addon-fit.min.js"></script>
+    <script src="__ROAMBENCH_BASE_PATH__/js/app.js"></script>
+</body>
+</html>

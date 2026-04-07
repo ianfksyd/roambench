@@ -1,0 +1,19 @@
+[Unit]
+Description=RoamBench
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Example unit for a host-level deployment.
+# Replace the user and paths before installing it.
+Type=simple
+User=roambench
+Group=roambench
+WorkingDirectory=/opt/roambench
+Environment=HOME=/home/roambench
+ExecStart=/usr/local/bin/liteterm --config /etc/liteterm/liteterm.toml
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

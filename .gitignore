@@ -1,0 +1,30 @@
+# Build artifacts
+/liteterm
+/liteterm.new
+/liteterm.next
+/dist/
+
+# Local configuration
+/liteterm.toml
+/liteterm.lan.toml
+
+# Local assistant and editor state
+/.claude/
+/.vscode/
+/.idea/
+
+# Logs and temp files
+*.log
+*.pid
+*.tmp
+
+# OS files
+.DS_Store
+
+# Local scratch files
+/editor-test.txt
+/issues/
+/docs/branding/roambench-phone-access-qr.png
+/docs/branding/roambench-phone-access-qr.svg
+/docs/branding/server-access-*.png
+/docs/branding/server-access-*.svg

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+  <title id="title">RoamBench Concept B Roam Path</title>
+  <desc id="desc">A warm route line connecting checkpoints into a bench-like pane grid beside the RoamBench wordmark.</desc>
+  <defs>
+    <linearGradient id="b-path" x1="34" y1="184" x2="208" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f97316"/>
+      <stop offset="1" stop-color="#fb7185"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(40 40)">
+    <rect x="0" y="0" width="240" height="240" rx="56" fill="#fff7ed"/>
+
+    <path d="M40 186C74 186 86 173 101 156C119 135 128 112 154 96C173 85 190 84 205 86"
+          fill="none"
+          stroke="url(#b-path)"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="14"/>
+    <circle cx="40" cy="186" r="12" fill="#f97316"/>
+    <circle cx="102" cy="155" r="9" fill="#fb923c"/>
+    <circle cx="154" cy="96" r="9" fill="#fb7185"/>
+
+    <rect x="132" y="108" width="34" height="34" rx="10" fill="#14342c"/>
+    <rect x="174" y="108" width="34" height="34" rx="10" fill="#14342c"/>
+    <rect x="132" y="150" width="34" height="34" rx="10" fill="#14342c"/>
+    <rect x="174" y="150" width="34" height="34" rx="10" fill="#14342c"/>
+    <path d="M197 76L210 86L198 98" fill="none" stroke="#fb7185" stroke-linecap="round" stroke-linejoin="round" stroke-width="9"/>
+  </g>
+
+  <g transform="translate(334 92)">
+    <text x="0" y="66" fill="#14342c" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="86" font-weight="700" letter-spacing="-2">RoamBench</text>
+    <text x="4" y="116" fill="#7c5c43" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="26" font-weight="500" letter-spacing="2">WORKSPACE THAT FOLLOWS YOU</text>
+  </g>
+</svg>

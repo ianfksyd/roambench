@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">RoamBench Icon</title>
+  <desc id="desc">Square icon showing a four-pane workspace with a reconnect loop.</desc>
+  <defs>
+    <linearGradient id="icon-loop" x1="118" y1="106" x2="394" y2="388" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#36d399"/>
+      <stop offset="1" stop-color="#2dd4bf"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="#0f172a"/>
+
+  <rect x="92" y="92" width="132" height="132" rx="30" fill="#163047"/>
+  <rect x="288" y="92" width="132" height="132" rx="30" fill="#163047"/>
+  <rect x="92" y="288" width="132" height="132" rx="30" fill="#163047"/>
+  <rect x="288" y="288" width="132" height="132" rx="30" fill="#163047"/>
+
+  <path d="M138 350C138 253 216 185 311 185C366 185 408 214 408 269C408 312 380 346 334 353C294 359 268 338 268 308C268 279 290 258 320 258C344 258 364 272 373 294"
+        fill="none"
+        stroke="url(#icon-loop)"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="22"/>
+  <circle cx="138" cy="350" r="18" fill="#36d399"/>
+  <path d="M360 276L386 292L365 319" fill="none" stroke="#2dd4bf" stroke-linecap="round" stroke-linejoin="round" stroke-width="18"/>
+  <circle cx="364" cy="387" r="14" fill="#f59e0b"/>
+</svg>

@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose an improvement to RoamBench
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        RoamBench stays intentionally compact.
+
+        Please explain the workflow problem first, then the feature. Requests that fit the single-user, terminal-first, mobile-usable model are easier to evaluate.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What workflow is painful today?
+      placeholder: Describe the real workflow problem first.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like RoamBench to do?
+      placeholder: Describe the change you want.
+    validations:
+      required: true
+  - type: textarea
+    id: fit
+    attributes:
+      label: Why this fits RoamBench
+      description: Explain why this belongs in a compact, terminal-first remote workbench.
+      placeholder: Why is this a good fit for the project boundary?
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Real use case
+      description: How would you use this on desktop or phone?
+      placeholder: Describe a concrete workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: Workarounds, rejected ideas, or similar tools.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and roadmap items first.
+          required: true
+        - label: I explained the workflow problem, not only the feature idea.
+          required: true

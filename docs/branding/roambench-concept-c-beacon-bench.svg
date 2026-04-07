@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+  <title id="title">RoamBench Concept C Beacon Bench</title>
+  <desc id="desc">A dark technical mark combining a pane bench with a beacon signal and the RoamBench wordmark.</desc>
+
+  <g transform="translate(40 40)">
+    <rect x="0" y="0" width="240" height="240" rx="56" fill="#111827"/>
+
+    <rect x="50" y="138" width="64" height="56" rx="16" fill="#1f2937"/>
+    <rect x="126" y="138" width="64" height="56" rx="16" fill="#1f2937"/>
+    <rect x="50" y="74" width="64" height="52" rx="16" fill="#1f2937"/>
+    <rect x="126" y="74" width="64" height="52" rx="16" fill="#1f2937"/>
+
+    <path d="M120 54C145 54 166 73 166 96" fill="none" stroke="#22d3ee" stroke-linecap="round" stroke-width="10"/>
+    <path d="M120 34C156 34 186 63 186 99" fill="none" stroke="#06b6d4" stroke-linecap="round" stroke-width="10"/>
+    <circle cx="120" cy="96" r="12" fill="#f59e0b"/>
+    <path d="M120 108V132" fill="none" stroke="#f59e0b" stroke-linecap="round" stroke-width="10"/>
+  </g>
+
+  <g transform="translate(334 92)">
+    <text x="0" y="66" fill="#111827" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="86" font-weight="700" letter-spacing="-2">RoamBench</text>
+    <text x="4" y="116" fill="#475569" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="26" font-weight="500" letter-spacing="2">TERMINAL-FIRST CONTROL SURFACE</text>
+  </g>
+</svg>

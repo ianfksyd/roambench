@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+  <title id="title">RoamBench Concept A Grid Loop</title>
+  <desc id="desc">A rounded-square workspace grid with a reconnect loop next to the RoamBench wordmark.</desc>
+  <defs>
+    <linearGradient id="a-loop" x1="42" y1="40" x2="202" y2="202" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#36d399"/>
+      <stop offset="1" stop-color="#2dd4bf"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(40 40)">
+    <rect x="0" y="0" width="240" height="240" rx="56" fill="#0f172a"/>
+    <rect x="32" y="32" width="74" height="74" rx="18" fill="#163047"/>
+    <rect x="134" y="32" width="74" height="74" rx="18" fill="#163047"/>
+    <rect x="32" y="134" width="74" height="74" rx="18" fill="#163047"/>
+    <rect x="134" y="134" width="74" height="74" rx="18" fill="#163047"/>
+
+    <path d="M58 166C58 112 101 74 154 74C185 74 208 91 208 122C208 146 193 164 167 168C145 171 131 160 131 143C131 127 143 116 160 116C173 116 184 124 189 136"
+          fill="none"
+          stroke="url(#a-loop)"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="12"/>
+    <circle cx="58" cy="166" r="10" fill="#36d399"/>
+    <path d="M182 126L196 135L185 149" fill="none" stroke="#2dd4bf" stroke-linecap="round" stroke-linejoin="round" stroke-width="10"/>
+    <circle cx="183" cy="183" r="8" fill="#f59e0b"/>
+  </g>
+
+  <g transform="translate(334 92)">
+    <text x="0" y="66" fill="#0f172a" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="86" font-weight="700" letter-spacing="-2">RoamBench</text>
+    <text x="4" y="116" fill="#475569" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="26" font-weight="500" letter-spacing="2">RECONNECT. SPLIT. RESUME.</text>
+  </g>
+</svg>
