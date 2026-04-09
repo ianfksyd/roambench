@@ -4177,7 +4177,6 @@
 
                 if (terminalId && state.terminals[terminalId] && !mounted[terminalId]) {
                     mounted[terminalId] = true;
-                    pane.dataset.terminalId = terminalId;
                     host.appendChild(state.terminals[terminalId].wrapper);
                 } else {
                     host.appendChild(buildTerminalPanePlaceholder(terminalId, Boolean(terminalId && mounted[terminalId])));
@@ -4271,23 +4270,36 @@
             return 0;
         }
         if (index >= state.workspaces.length) {
-            return state.workspaces.length - 1;
+            return state.workspaces.length;
         }
         return index;
     }
 
-    function clampWorkspaceTabDragOffset(offset) {
-        if (typeof offset !== 'number' || Number.isNaN(offset)) {
-            return 0;
-        }
-        return Math.min(offset, 0);
-    }
+    function resolveWorkspaceTabTargetIndex(dropIndex) {
+        var normalizedDropIndex;
+        var targetIndex;
 
-    function clampWorkspaceTabDropIndexForDirection(index) {
-        if (workspaceTabDrag === null || typeof index !== 'number' || Number.isNaN(index)) {
+        if (workspaceTabDrag === null || typeof dropIndex !== 'number' || Number.isNaN(dropIndex)) {
             return null;
         }
-        return Math.min(index, workspaceTabDrag.sourceIndex);
+
+        normalizedDropIndex = clampWorkspaceTabDropIndex(dropIndex);
+        if (typeof normalizedDropIndex !== 'number') {
+            return null;
+        }
+
+        targetIndex = normalizedDropIndex > workspaceTabDrag.sourceIndex
+            ? normalizedDropIndex - 1
+            : normalizedDropIndex;
+
+        if (targetIndex < 0) {
+            targetIndex = 0;
+        }
+        if (targetIndex >= state.workspaces.length) {
+            targetIndex = state.workspaces.length - 1;
+        }
+
+        return targetIndex === workspaceTabDrag.sourceIndex ? null : targetIndex;
     }
 
     function resolveWorkspaceTabDropIndexFromPointer(x) {
@@ -4325,7 +4337,7 @@
         }
 
         clearWorkspaceTabDragHighlights();
-        if (typeof dropIndex !== 'number' || Number.isNaN(dropIndex)) {
+        if (typeof dropIndex !== 'number' || Number.isNaN(dropIndex) || resolveWorkspaceTabTargetIndex(dropIndex) === null) {
             return;
         }
 
@@ -4371,7 +4383,7 @@
             }
         });
 
-        if (typeof dropIndex !== 'number' || Number.isNaN(dropIndex) || !sourceWidth) {
+        if (typeof dropIndex !== 'number' || Number.isNaN(dropIndex) || !sourceWidth || resolveWorkspaceTabTargetIndex(dropIndex) === null) {
             return;
         }
 
@@ -4435,7 +4447,7 @@
         var rawDx = event.clientX - workspaceTabDrag.startX;
 
         if (!workspaceTabDrag.started) {
-            if (rawDx > -4) {
+            if (Math.abs(rawDx) < 4) {
                 return;
             }
             workspaceTabDrag.started = true;
@@ -4448,7 +4460,7 @@
             document.body.style.cursor = 'grabbing';
         }
 
-        var dx = clampWorkspaceTabDragOffset(rawDx);
+        var dx = rawDx;
         var distance = Math.abs(dx);
         var sourceTab = workspaceTabDrag.sourceTab;
         if (sourceTab) {
@@ -4459,7 +4471,7 @@
         }
 
         var dropIndex = resolveWorkspaceTabDropIndexFromPointer(workspaceTabDrag.startX + dx);
-        dropIndex = clampWorkspaceTabDropIndexForDirection(dropIndex);
+        dropIndex = clampWorkspaceTabDropIndex(dropIndex);
         workspaceTabDrag.dropIndex = typeof dropIndex === 'number' ? dropIndex : null;
         applyWorkspaceTabReflow(dropIndex);
         applyWorkspaceTabDragHint(dropIndex);
@@ -4468,20 +4480,14 @@
 
     function endWorkspaceTabDrag(event) {
         var dragged = workspaceTabDrag;
-        var targetIndex;
+        var targetIndex = null;
 
         if (!dragged || dragged.pointerId !== event.pointerId) {
             return;
         }
 
         if (dragged.started && typeof dragged.dropIndex === 'number') {
-            targetIndex = dragged.dropIndex > dragged.sourceIndex
-                ? dragged.dropIndex - 1
-                : dragged.dropIndex;
-            targetIndex = clampWorkspaceTabDropIndex(targetIndex);
-            if (typeof targetIndex === 'number') {
-                targetIndex = Math.min(targetIndex, dragged.sourceIndex);
-            }
+            targetIndex = resolveWorkspaceTabTargetIndex(dragged.dropIndex);
         }
 
         clearWorkspaceTabDragState(event.pointerId);
