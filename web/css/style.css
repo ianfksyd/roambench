@@ -784,6 +784,27 @@ body.view-login #terminal-view {
 
 .tab:hover { background: var(--surface2); }
 
+.tab-main {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: inherit;
+}
+
+.tab-main:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+}
+
 .tab.is-dragging {
     opacity: 0.96;
     cursor: grabbing;
@@ -845,9 +866,22 @@ body.view-login #terminal-view {
     border-radius: 4px;
 }
 
+button.tab-action {
+    appearance: none;
+    background: none;
+    border: 0;
+    font: inherit;
+    color: inherit;
+}
+
 .tab-action:hover {
     opacity: 1;
     background: rgba(255, 255, 255, 0.08);
+}
+
+button.tab-action:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
 }
 
 .tab-rename:hover {

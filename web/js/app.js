@@ -4532,28 +4532,89 @@
         return true;
     }
 
+    function focusWorkspaceTabById(workspaceId) {
+        var bar = document.getElementById('tab-bar');
+
+        if (!bar) {
+            return;
+        }
+
+        Array.from(bar.querySelectorAll('.tab-main')).some(function(tab) {
+            if (tab.dataset.workspaceId === workspaceId) {
+                tab.focus();
+                return true;
+            }
+            return false;
+        });
+    }
+
     function renderTabBar() {
         const bar = document.getElementById('tab-bar');
+        const workspacePanel = document.getElementById('workspace');
         bar.innerHTML = '';
+        bar.setAttribute('role', 'tablist');
+        bar.setAttribute('aria-label', 'Workspace views');
+        bar.setAttribute('aria-orientation', 'horizontal');
 
         state.workspaces.forEach(function(workspace, index) {
+            const isActive = workspace.id === state.activeWorkspaceId;
             const tab = document.createElement('div');
-            tab.className = 'tab' + (workspace.id === state.activeWorkspaceId ? ' active' : '') + (canStartWorkspaceTabDrag() ? ' is-reorderable' : '');
+            const tabButton = document.createElement('button');
+            tab.className = 'tab' + (isActive ? ' active' : '') + (canStartWorkspaceTabDrag() ? ' is-reorderable' : '');
             tab.dataset.workspaceId = workspace.id;
+            tab.setAttribute('role', 'presentation');
+            tabButton.type = 'button';
+            tabButton.className = 'tab-main';
+            tabButton.id = 'workspace-tab-' + workspace.id;
+            tabButton.dataset.workspaceId = workspace.id;
+            tabButton.tabIndex = isActive ? 0 : -1;
+            tabButton.setAttribute('role', 'tab');
+            tabButton.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            tabButton.setAttribute('aria-controls', 'workspace');
             tab.onpointerdown = function(event) {
                 if (event.pointerType === 'mouse' && event.button !== 0) {
                     return;
                 }
                 beginWorkspaceTabDrag(event, workspace.id, index, tab);
             };
-            tab.onclick = function(e) {
+            tabButton.onkeydown = function(event) {
+                var targetIndex = index;
+                var targetWorkspace;
+
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    switchTab(workspace.id);
+                    return;
+                }
+                if (event.key === 'ArrowRight') {
+                    targetIndex = Math.min(state.workspaces.length - 1, index + 1);
+                } else if (event.key === 'ArrowLeft') {
+                    targetIndex = Math.max(0, index - 1);
+                } else if (event.key === 'Home') {
+                    targetIndex = 0;
+                } else if (event.key === 'End') {
+                    targetIndex = state.workspaces.length - 1;
+                } else {
+                    return;
+                }
+
+                event.preventDefault();
+                targetWorkspace = state.workspaces[targetIndex];
+                if (!targetWorkspace) {
+                    return;
+                }
+
+                switchTab(targetWorkspace.id);
+                window.requestAnimationFrame(function() {
+                    focusWorkspaceTabById(targetWorkspace.id);
+                });
+            };
+            tabButton.onclick = function(e) {
                 if (workspaceTabDragIgnoreClickId === workspace.id) {
                     workspaceTabDragIgnoreClickId = null;
                     return;
                 }
-                if (!e.target.classList.contains('tab-action')) {
-                    switchTab(workspace.id);
-                }
+                switchTab(workspace.id);
             };
 
             const name = document.createElement('span');
@@ -4563,15 +4624,18 @@
                 e.stopPropagation();
                 renameWorkspace(workspace.id);
             };
-            tab.appendChild(name);
+            tabButton.appendChild(name);
+            tab.appendChild(tabButton);
 
             const actions = document.createElement('span');
             actions.className = 'tab-actions';
 
-            const rename = document.createElement('span');
+            const rename = document.createElement('button');
+            rename.type = 'button';
             rename.className = 'tab-action tab-rename';
             rename.textContent = '\u270E';
             rename.title = t('workspace.renameView');
+            rename.setAttribute('aria-label', t('workspace.renameView'));
             rename.onclick = function(e) {
                 e.stopPropagation();
                 renameWorkspace(workspace.id);
@@ -4579,10 +4643,12 @@
             actions.appendChild(rename);
 
             if (state.workspaces.length > 1) {
-                const close = document.createElement('span');
+                const close = document.createElement('button');
+                close.type = 'button';
                 close.className = 'tab-action tab-close';
                 close.textContent = '\u00d7';
                 close.title = t('workspace.closeView');
+                close.setAttribute('aria-label', t('workspace.closeView'));
                 close.onclick = function(e) {
                     e.stopPropagation();
                     closeWorkspaceTab(workspace.id);
@@ -4594,6 +4660,16 @@
 
             bar.appendChild(tab);
         });
+
+        if (workspacePanel) {
+            const activeTab = bar.querySelector('.tab.active .tab-main');
+            workspacePanel.setAttribute('role', 'tabpanel');
+            if (activeTab && activeTab.id) {
+                workspacePanel.setAttribute('aria-labelledby', activeTab.id);
+            } else {
+                workspacePanel.removeAttribute('aria-labelledby');
+            }
+        }
 
         updateLayoutSwitchButtons();
     }
