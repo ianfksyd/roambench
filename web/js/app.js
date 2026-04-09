@@ -4407,7 +4407,7 @@
     }
 
     function beginWorkspaceTabDrag(event, workspaceId, index, tab) {
-        if (!canStartWorkspaceTabDrag() || isWorkspaceTabActionTarget(event.target) || (event.button !== undefined && event.button !== 0 && event.button !== -1)) {
+        if (!canStartWorkspaceTabDrag() || event.pointerType === 'touch' || isWorkspaceTabActionTarget(event.target) || (event.button !== undefined && event.button !== 0 && event.button !== -1)) {
             return;
         }
 
@@ -4470,7 +4470,10 @@
             sourceTab.style.removeProperty('--tab-rotate');
         }
 
-        var dropIndex = resolveWorkspaceTabDropIndexFromPointer(workspaceTabDrag.startX + dx);
+        var dragCenterX = workspaceTabDrag.startX
+            + dx
+            + ((workspaceTabDrag.tabWidth || 0) / 2 - (workspaceTabDrag.offsetX || 0));
+        var dropIndex = resolveWorkspaceTabDropIndexFromPointer(dragCenterX);
         dropIndex = clampWorkspaceTabDropIndex(dropIndex);
         workspaceTabDrag.dropIndex = typeof dropIndex === 'number' ? dropIndex : null;
         applyWorkspaceTabReflow(dropIndex);

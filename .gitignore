@@ -1,7 +1,9 @@
 # Build artifacts
 /liteterm
+/liteterm.bak
 /liteterm.new
 /liteterm.next
+/roambench
 /dist/
 
 # Local configuration

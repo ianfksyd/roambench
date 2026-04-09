@@ -768,7 +768,7 @@ body.view-login #terminal-view {
 
 .tab.is-reorderable {
     cursor: grab;
-    touch-action: pan-y;
+    touch-action: auto;
 }
 
 .tab-name {
