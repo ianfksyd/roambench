@@ -805,6 +805,8 @@
     let viewerLoadSequence = 0;
     let editorHighlightFrame = 0;
     let fileDragDepth = 0;
+    let workspaceTabDrag = null;
+    let workspaceTabDragIgnoreClickId = null;
 
     const loginTitle = document.querySelector('.login-title');
     const loginSubtitle = document.getElementById('login-subtitle');
@@ -889,9 +891,12 @@
         window.visualViewport.addEventListener('resize', handleWindowResize);
         window.visualViewport.addEventListener('scroll', handleWindowResize);
     }
+    window.addEventListener('pointermove', handleWorkspaceTabDrag);
     window.addEventListener('pointermove', handleEditorDrag);
     window.addEventListener('pointerup', endEditorDrag);
     window.addEventListener('pointercancel', endEditorDrag);
+    window.addEventListener('pointerup', endWorkspaceTabDrag);
+    window.addEventListener('pointercancel', endWorkspaceTabDrag);
     window.addEventListener('pointermove', handleTerminalScrollbarDrag);
     window.addEventListener('pointerup', endTerminalScrollbarDrag);
     window.addEventListener('pointercancel', endTerminalScrollbarDrag);
@@ -1045,7 +1050,25 @@
         return 'view-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     }
 
-    function createWorkspace(layout, terminalIds, name) {
+    function normalizeWorkspaceLabelNumber(value) {
+        var labelNumber = Number(value);
+
+        if (Number.isInteger(labelNumber) && labelNumber > 0) {
+            return labelNumber;
+        }
+
+        return 0;
+    }
+
+    function getNextWorkspaceLabelNumber(workspaces) {
+        var items = Array.isArray(workspaces) ? workspaces : state.workspaces;
+
+        return items.reduce(function(max, workspace) {
+            return Math.max(max, normalizeWorkspaceLabelNumber(workspace && workspace.labelNumber));
+        }, 0) + 1;
+    }
+
+    function createWorkspace(layout, terminalIds, name, labelNumber) {
         var slots = ['', '', '', ''];
 
         if (Array.isArray(terminalIds)) {
@@ -1058,12 +1081,18 @@
             id: generateWorkspaceId(),
             layout: normalizeWorkspaceLayout(layout),
             terminalIds: slots,
-            name: typeof name === 'string' ? name.trim() : ''
+            name: typeof name === 'string' ? name.trim() : '',
+            labelNumber: normalizeWorkspaceLabelNumber(labelNumber) || getNextWorkspaceLabelNumber()
         };
     }
 
-    function normalizeWorkspaceRecord(candidate) {
-        var workspace = createWorkspace(candidate && candidate.layout, candidate && candidate.terminalIds, candidate && candidate.name);
+    function normalizeWorkspaceRecord(candidate, index) {
+        var workspace = createWorkspace(
+            candidate && candidate.layout,
+            candidate && candidate.terminalIds,
+            candidate && candidate.name,
+            normalizeWorkspaceLabelNumber(candidate && candidate.labelNumber) || (index + 1)
+        );
 
         if (candidate && typeof candidate.id === 'string' && candidate.id.trim()) {
             workspace.id = candidate.id.trim();
@@ -1091,7 +1120,7 @@
             return workspace.name;
         }
 
-        return getDefaultWorkspaceName(index + 1);
+        return getDefaultWorkspaceName(normalizeWorkspaceLabelNumber(workspace && workspace.labelNumber) || (index + 1));
     }
 
     function normalizeWorkspaceStatePayload(payload) {
@@ -1110,7 +1139,9 @@
         return {
             activeWorkspaceId: activeWorkspaceId,
             updatedAt: updatedAt,
-            workspaces: workspaces.map(normalizeWorkspaceRecord)
+            workspaces: workspaces.map(function(workspace, index) {
+                return normalizeWorkspaceRecord(workspace, index);
+            })
         };
     }
 
@@ -1266,7 +1297,8 @@
                     id: workspace.id,
                     layout: normalizeWorkspaceLayout(workspace.layout),
                     terminalIds: workspace.terminalIds.slice(0, 4),
-                    name: workspace.name || ''
+                    name: workspace.name || '',
+                    labelNumber: normalizeWorkspaceLabelNumber(workspace.labelNumber) || 1
                 };
             })
         };
@@ -1643,10 +1675,10 @@
 
         if (!state.workspaces.length) {
             if (terminalIds.length === 0) {
-                state.workspaces = [createWorkspace('1', [''])];
+                state.workspaces = [createWorkspace('1', [''], '', 1)];
             } else {
-                state.workspaces = terminalIds.map(function(id) {
-                    return createWorkspace('1', [id]);
+                state.workspaces = terminalIds.map(function(id, index) {
+                    return createWorkspace('1', [id], '', index + 1);
                 });
                 state.activeWorkspaceId = state.workspaces[state.workspaces.length - 1].id;
             }
@@ -3169,7 +3201,7 @@
 
         requestCreateTerminal()
             .then(function(data) {
-                var workspace = createWorkspace('1', [data.id]);
+                var workspace = createWorkspace('1', [data.id], '', getNextWorkspaceLabelNumber());
 
                 if (hadNoTerminals) {
                     state.workspaces = [workspace];
@@ -3192,7 +3224,7 @@
 
     window.createWorkspaceTab = function() {
         var activeWorkspace = getActiveWorkspace();
-        var workspace = createWorkspace(activeWorkspace ? activeWorkspace.layout : '1', []);
+        var workspace = createWorkspace(activeWorkspace ? activeWorkspace.layout : '1', [], '', getNextWorkspaceLabelNumber());
 
         state.workspaces.push(workspace);
         state.activeWorkspaceId = workspace.id;
@@ -3760,7 +3792,7 @@
         });
 
         if (!state.workspaces.length) {
-            state.workspaces = [createWorkspace('1', [id])];
+            state.workspaces = [createWorkspace('1', [id], '', 1)];
             state.activeWorkspaceId = state.workspaces[0].id;
             state.activeId = id;
             saveWorkspaceState();
@@ -4173,14 +4205,343 @@
         scheduleFitActiveTerminal();
     }
 
+    function clearWorkspaceTabDragHighlights() {
+        const bar = document.getElementById('tab-bar');
+        if (!bar) {
+            return;
+        }
+
+        bar.querySelectorAll('.tab').forEach(function(tab) {
+            tab.classList.remove('is-drag-over');
+            tab.classList.remove('is-drag-over-end');
+        });
+    }
+
+    function clearWorkspaceTabDragState(pointerId) {
+        const sourceTab = workspaceTabDrag && workspaceTabDrag.sourceTab ? workspaceTabDrag.sourceTab : null;
+
+        clearWorkspaceTabDragHighlights();
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+
+        if (sourceTab) {
+            sourceTab.classList.remove('is-dragging');
+            sourceTab.style.zIndex = '';
+            sourceTab.style.position = '';
+            if (typeof pointerId === 'number' && sourceTab.releasePointerCapture) {
+                try {
+                    if (!sourceTab.hasPointerCapture || sourceTab.hasPointerCapture(pointerId)) {
+                        sourceTab.releasePointerCapture(pointerId);
+                    }
+                } catch (_) {
+                    // Ignore browsers that reject release after DOM churn.
+                }
+            }
+        }
+
+        const bar = document.getElementById('tab-bar');
+        if (bar) {
+            bar.querySelectorAll('.tab').forEach(function(tab) {
+                tab.style.removeProperty('--tab-shift-x');
+                tab.style.removeProperty('--tab-lift-y');
+                tab.style.removeProperty('--tab-scale');
+                tab.style.removeProperty('--tab-rotate');
+            });
+        }
+
+        workspaceTabDrag = null;
+    }
+
+    function canStartWorkspaceTabDrag() {
+        return state.workspaces.length > 1;
+    }
+
+    function isWorkspaceTabActionTarget(target) {
+        return target && target.closest && target.closest('.tab-action');
+    }
+
+    function clampWorkspaceTabDropIndex(index) {
+        if (typeof index !== 'number' || Number.isNaN(index)) {
+            return null;
+        }
+        if (index < 0) {
+            return 0;
+        }
+        if (state.workspaces.length <= 1) {
+            return 0;
+        }
+        if (index >= state.workspaces.length) {
+            return state.workspaces.length - 1;
+        }
+        return index;
+    }
+
+    function clampWorkspaceTabDragOffset(offset) {
+        if (typeof offset !== 'number' || Number.isNaN(offset)) {
+            return 0;
+        }
+        return Math.min(offset, 0);
+    }
+
+    function clampWorkspaceTabDropIndexForDirection(index) {
+        if (workspaceTabDrag === null || typeof index !== 'number' || Number.isNaN(index)) {
+            return null;
+        }
+        return Math.min(index, workspaceTabDrag.sourceIndex);
+    }
+
+    function resolveWorkspaceTabDropIndexFromPointer(x) {
+        const bar = document.getElementById('tab-bar');
+        if (!bar) {
+            return null;
+        }
+
+        const tabs = Array.from(bar.querySelectorAll('.tab'));
+        const visibleTabs = tabs.filter(function(tab) {
+            return tab.offsetParent !== null;
+        });
+
+        if (!visibleTabs.length) {
+            return null;
+        }
+
+        for (let i = 0; i < visibleTabs.length; i += 1) {
+            const tab = visibleTabs[i];
+            const rect = tab.getBoundingClientRect();
+            const midpoint = rect.left + rect.width / 2;
+
+            if (x < midpoint) {
+                return i;
+            }
+        }
+
+        return visibleTabs.length;
+    }
+
+    function applyWorkspaceTabDragHint(dropIndex) {
+        const bar = document.getElementById('tab-bar');
+        if (!bar || workspaceTabDrag === null) {
+            return;
+        }
+
+        clearWorkspaceTabDragHighlights();
+        if (typeof dropIndex !== 'number' || Number.isNaN(dropIndex)) {
+            return;
+        }
+
+        const tabs = Array.from(bar.querySelectorAll('.tab')).filter(function(tab) {
+            return tab.offsetParent !== null;
+        });
+        if (!tabs.length) {
+            return;
+        }
+
+        if (dropIndex >= tabs.length) {
+            if (workspaceTabDrag.sourceId !== tabs[tabs.length - 1].dataset.workspaceId) {
+                tabs[tabs.length - 1].classList.add('is-drag-over-end');
+            }
+            return;
+        }
+
+        tabs.forEach(function(tab, index) {
+            if (index === dropIndex && workspaceTabDrag.sourceId !== tab.dataset.workspaceId) {
+                tab.classList.add('is-drag-over');
+            }
+        });
+    }
+
+    function applyWorkspaceTabReflow(dropIndex) {
+        const bar = document.getElementById('tab-bar');
+        if (!bar || workspaceTabDrag === null) {
+            return;
+        }
+
+        const tabs = Array.from(bar.querySelectorAll('.tab')).filter(function(tab) {
+            return tab.offsetParent !== null;
+        });
+        const sourceTab = workspaceTabDrag.sourceTab;
+        const sourceIndex = workspaceTabDrag.sourceIndex;
+        const sourceWidth = workspaceTabDrag.tabWidth || (sourceTab ? sourceTab.offsetWidth : 0);
+
+        tabs.forEach(function(tab) {
+            if (tab !== sourceTab) {
+                tab.style.setProperty('--tab-shift-x', '0px');
+                tab.style.setProperty('--tab-lift-y', '0px');
+                tab.style.setProperty('--tab-scale', '1');
+            }
+        });
+
+        if (typeof dropIndex !== 'number' || Number.isNaN(dropIndex) || !sourceWidth) {
+            return;
+        }
+
+        tabs.forEach(function(tab, index) {
+            var shift = 0;
+
+            if (tab === sourceTab) {
+                return;
+            }
+
+            if (dropIndex > sourceIndex && index > sourceIndex && index < dropIndex) {
+                shift = -sourceWidth;
+            } else if (dropIndex < sourceIndex && index >= dropIndex && index < sourceIndex) {
+                shift = sourceWidth;
+            }
+
+            tab.style.setProperty('--tab-shift-x', shift + 'px');
+            tab.style.setProperty('--tab-lift-y', shift === 0 ? '0px' : '-2px');
+            tab.style.setProperty('--tab-scale', shift === 0 ? '1' : '1.015');
+        });
+    }
+
+    function beginWorkspaceTabDrag(event, workspaceId, index, tab) {
+        if (!canStartWorkspaceTabDrag() || isWorkspaceTabActionTarget(event.target) || (event.button !== undefined && event.button !== 0 && event.button !== -1)) {
+            return;
+        }
+
+        var tabRect = tab ? tab.getBoundingClientRect() : null;
+
+        workspaceTabDrag = {
+            sourceId: workspaceId,
+            sourceIndex: index,
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            started: false,
+            dropIndex: index,
+            sourceTab: tab || null,
+            tabWidth: tabRect ? tabRect.width : 0,
+            tabStartLeft: tabRect ? tabRect.left : 0,
+            offsetX: tabRect ? (event.clientX - tabRect.left) : 0
+        };
+
+        workspaceTabDragIgnoreClickId = null;
+        document.body.style.userSelect = 'none';
+        if (tab && tab.setPointerCapture) {
+            try {
+                tab.setPointerCapture(event.pointerId);
+            } catch (_) {
+                // Ignore browsers that do not allow capture for this pointer.
+            }
+        }
+        event.preventDefault();
+    }
+
+    function handleWorkspaceTabDrag(event) {
+        if (!workspaceTabDrag || workspaceTabDrag.pointerId !== event.pointerId) {
+            return;
+        }
+
+        var rawDx = event.clientX - workspaceTabDrag.startX;
+
+        if (!workspaceTabDrag.started) {
+            if (rawDx > -4) {
+                return;
+            }
+            workspaceTabDrag.started = true;
+            var sourceTab = workspaceTabDrag.sourceTab;
+            if (sourceTab) {
+                sourceTab.classList.add('is-dragging');
+                sourceTab.style.zIndex = '100';
+                sourceTab.style.position = 'relative';
+            }
+            document.body.style.cursor = 'grabbing';
+        }
+
+        var dx = clampWorkspaceTabDragOffset(rawDx);
+        var distance = Math.abs(dx);
+        var sourceTab = workspaceTabDrag.sourceTab;
+        if (sourceTab) {
+            sourceTab.style.setProperty('--tab-lift-y', '-' + Math.min(6, 2 + distance * 0.018).toFixed(2) + 'px');
+            sourceTab.style.setProperty('--tab-scale', Math.max(0.982, 0.995 - distance * 0.00012).toFixed(3));
+            sourceTab.style.setProperty('--tab-shift-x', dx + 'px');
+            sourceTab.style.removeProperty('--tab-rotate');
+        }
+
+        var dropIndex = resolveWorkspaceTabDropIndexFromPointer(workspaceTabDrag.startX + dx);
+        dropIndex = clampWorkspaceTabDropIndexForDirection(dropIndex);
+        workspaceTabDrag.dropIndex = typeof dropIndex === 'number' ? dropIndex : null;
+        applyWorkspaceTabReflow(dropIndex);
+        applyWorkspaceTabDragHint(dropIndex);
+        event.preventDefault();
+    }
+
+    function endWorkspaceTabDrag(event) {
+        var dragged = workspaceTabDrag;
+        var targetIndex;
+
+        if (!dragged || dragged.pointerId !== event.pointerId) {
+            return;
+        }
+
+        if (dragged.started && typeof dragged.dropIndex === 'number') {
+            targetIndex = dragged.dropIndex > dragged.sourceIndex
+                ? dragged.dropIndex - 1
+                : dragged.dropIndex;
+            targetIndex = clampWorkspaceTabDropIndex(targetIndex);
+            if (typeof targetIndex === 'number') {
+                targetIndex = Math.min(targetIndex, dragged.sourceIndex);
+            }
+        }
+
+        clearWorkspaceTabDragState(event.pointerId);
+        if (dragged.started) {
+            workspaceTabDragIgnoreClickId = dragged.sourceId;
+        } else {
+            workspaceTabDragIgnoreClickId = null;
+        }
+
+        if (typeof targetIndex === 'number' && targetIndex !== dragged.sourceIndex) {
+            moveWorkspaceTab(dragged.sourceIndex, targetIndex);
+        }
+    }
+
+    function moveWorkspaceTab(fromIndex, toIndex) {
+        var workspaces;
+        var movedWorkspace;
+
+        if (fromIndex === toIndex) {
+            return false;
+        }
+
+        if (fromIndex < 0 || fromIndex >= state.workspaces.length || toIndex < 0 || toIndex >= state.workspaces.length) {
+            return false;
+        }
+
+        workspaces = state.workspaces.slice();
+        movedWorkspace = workspaces.splice(fromIndex, 1)[0];
+        if (!movedWorkspace) {
+            return false;
+        }
+
+        workspaces.splice(toIndex, 0, movedWorkspace);
+        state.workspaces = workspaces;
+        saveWorkspaceState();
+        renderTabBar();
+        renderActiveWorkspace();
+
+        return true;
+    }
+
     function renderTabBar() {
         const bar = document.getElementById('tab-bar');
         bar.innerHTML = '';
 
         state.workspaces.forEach(function(workspace, index) {
             const tab = document.createElement('div');
-            tab.className = 'tab' + (workspace.id === state.activeWorkspaceId ? ' active' : '');
+            tab.className = 'tab' + (workspace.id === state.activeWorkspaceId ? ' active' : '') + (canStartWorkspaceTabDrag() ? ' is-reorderable' : '');
+            tab.dataset.workspaceId = workspace.id;
+            tab.onpointerdown = function(event) {
+                if (event.pointerType === 'mouse' && event.button !== 0) {
+                    return;
+                }
+                beginWorkspaceTabDrag(event, workspace.id, index, tab);
+            };
             tab.onclick = function(e) {
+                if (workspaceTabDragIgnoreClickId === workspace.id) {
+                    workspaceTabDragIgnoreClickId = null;
+                    return;
+                }
                 if (!e.target.classList.contains('tab-action')) {
                     switchTab(workspace.id);
                 }

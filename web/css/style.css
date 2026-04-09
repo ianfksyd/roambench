@@ -759,6 +759,16 @@ body.view-login #terminal-view {
     color: var(--text-dim);
     min-width: 0;
     flex-shrink: 0;
+    position: relative;
+    will-change: transform;
+    transform-origin: center bottom;
+    transform: translateX(var(--tab-shift-x, 0px)) translateY(var(--tab-lift-y, 0px)) scale(var(--tab-scale, 1));
+    transition: transform 220ms cubic-bezier(0.2, 0.95, 0.28, 1.12), box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1), background 120ms ease, color 120ms ease, opacity 160ms ease;
+}
+
+.tab.is-reorderable {
+    cursor: grab;
+    touch-action: pan-y;
 }
 
 .tab-name {
@@ -773,6 +783,52 @@ body.view-login #terminal-view {
 }
 
 .tab:hover { background: var(--surface2); }
+
+.tab.is-dragging {
+    opacity: 0.96;
+    cursor: grabbing;
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
+    background: var(--surface2);
+    transition: none;
+    --tab-lift-y: -2px;
+    --tab-scale: 0.995;
+}
+
+.tab.is-drag-over {
+    z-index: 1;
+}
+
+.tab.is-drag-over::before,
+.tab.is-drag-over-end::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 999px;
+    background: var(--accent, #7c8aff);
+    box-shadow: 0 0 0 1px rgba(124, 138, 255, 0.15), 0 0 12px rgba(124, 138, 255, 0.35);
+    animation: tab-drop-pulse 720ms cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.tab.is-drag-over::before {
+    left: -1px;
+}
+
+.tab.is-drag-over-end::after {
+    right: -1px;
+}
+
+@keyframes tab-drop-pulse {
+    0%, 100% {
+        opacity: 0.55;
+        transform: scaleX(0.92) scaleY(0.82);
+    }
+    50% {
+        opacity: 1;
+        transform: scaleX(1.12) scaleY(1.08);
+    }
+}
 
 .tab-actions {
     display: flex;

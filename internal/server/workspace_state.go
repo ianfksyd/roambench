@@ -22,6 +22,7 @@ type workspaceStateRecord struct {
 	Layout      string   `json:"layout"`
 	TerminalIDs []string `json:"terminalIds"`
 	Name        string   `json:"name"`
+	LabelNumber int      `json:"labelNumber"`
 }
 
 type workspaceStateStore struct {
@@ -117,6 +118,9 @@ func normalizeWorkspaceStatePayload(state *workspaceStatePayload) {
 		record.Name = strings.TrimSpace(record.Name)
 		record.Layout = normalizeWorkspaceLayout(record.Layout)
 		record.TerminalIDs = normalizeWorkspaceTerminalIDs(record.TerminalIDs)
+		if record.LabelNumber < 1 {
+			record.LabelNumber = index + 1
+		}
 	}
 }
 
