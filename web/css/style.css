@@ -2659,12 +2659,6 @@ body.view-login #terminal-view {
 
     .tab-bar-row {
         gap: 4px;
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-
-    .tab-bar-row::-webkit-scrollbar {
-        display: none;
     }
 
     .tab-layout-switcher {
