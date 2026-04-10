@@ -30,8 +30,8 @@ var (
 )
 
 const (
-	terminalClientTerm = "xterm-256color"
-	terminalColorDepth = "truecolor"
+	terminalClientTerm  = "xterm-256color"
+	terminalColorDepth  = "truecolor"
 	terminalDefaultRows = 40
 
 	terminalBashRCPath = "/tmp/.roambench-bashrc"
