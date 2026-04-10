@@ -723,7 +723,9 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 		once.Do(func() {
 			close(done)
 			ptmx.Close()
-			if !s.terminals.HasTmux() && cmd != nil && cmd.Process != nil {
+			// In tmux mode this is only the attach client; killing it detaches
+			// the web bridge without killing the persisted tmux session.
+			if cmd != nil && cmd.Process != nil {
 				cmd.Process.Kill()
 			}
 		})

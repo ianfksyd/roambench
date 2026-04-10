@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -226,6 +227,74 @@ func TestManagerLoadPersistedSessionsRestoresExistingTmuxSessions(t *testing.T) 
 	}
 }
 
+func TestManagerReapsAttachedCommandAndClearsSessionReference(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	cmd := startSleepCommand(t)
+	defer cmd.Process.Kill()
+	done := mgr.reapAttachedCommand(session.ID, cmd, nil)
+
+	mgr.mu.Lock()
+	mgr.sessions[session.ID].cmd = cmd
+	mgr.mu.Unlock()
+
+	_ = cmd.Process.Kill()
+	waitForReaper(t, done)
+
+	mgr.mu.Lock()
+	got := mgr.sessions[session.ID].cmd
+	mgr.mu.Unlock()
+	if got != nil {
+		t.Fatalf("session cmd = %#v, want nil after attached command is reaped", got)
+	}
+}
+
+func TestManagerReapDoesNotClearReplacementAttachment(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	stale := startSleepCommand(t)
+	defer stale.Process.Kill()
+	staleDone := mgr.reapAttachedCommand(session.ID, stale, nil)
+	replacement := startSleepCommand(t)
+	defer replacement.Process.Kill()
+	replacementDone := mgr.reapAttachedCommand(session.ID, replacement, nil)
+
+	mgr.mu.Lock()
+	mgr.sessions[session.ID].cmd = replacement
+	mgr.mu.Unlock()
+
+	_ = stale.Process.Kill()
+	waitForReaper(t, staleDone)
+
+	mgr.mu.Lock()
+	got := mgr.sessions[session.ID].cmd
+	mgr.mu.Unlock()
+	if got != replacement {
+		t.Fatalf("session cmd = %#v, want replacement command %#v", got, replacement)
+	}
+
+	_ = replacement.Process.Kill()
+	waitForReaper(t, replacementDone)
+}
+
 func TestManagerEnforcePersistedStorageLimitPrunesOldestSessions(t *testing.T) {
 	mgr := newTestManager(t, &config.TerminalConfig{
 		Shell:           "/bin/sh",
@@ -358,5 +427,23 @@ func TestPersistedSessionPathUsesConfiguredDirectory(t *testing.T) {
 	want := filepath.Join(dir, "ian", "lt-123.json")
 	if path != want {
 		t.Fatalf("persistedSessionPath = %q, want %q", path, want)
+	}
+}
+
+func startSleepCommand(t *testing.T) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-c", "sleep 30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("cmd.Start error: %v", err)
+	}
+	return cmd
+}
+
+func waitForReaper(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("attached command was not reaped before timeout")
 	}
 }

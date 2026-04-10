@@ -245,7 +245,8 @@ func (m *Manager) sessionForUser(username, sessionID string) (*Session, error) {
 }
 
 // AttachSession returns a pty file descriptor for the session.
-// The caller must close the returned file when done.
+// The caller must close the returned file when done. The manager waits for the
+// returned command when it exits so attachment processes are reaped.
 func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *exec.Cmd, error) {
 	session, err := m.sessionForUser(username, sessionID)
 	if err != nil {
@@ -257,10 +258,10 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 		session.ptyFile.Close()
 		session.ptyFile = nil
 	}
-	if !m.hasTmux && session.cmd != nil && session.cmd.Process != nil {
+	if session.cmd != nil && session.cmd.Process != nil {
 		session.cmd.Process.Kill()
-		session.cmd = nil
 	}
+	session.cmd = nil
 	m.mu.Unlock()
 
 	var cmd *exec.Cmd
@@ -295,7 +296,38 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 	session.dirty = true
 	m.mu.Unlock()
 
+	m.reapAttachedCommand(sessionID, cmd, ptmx)
+
 	return ptmx, cmd, nil
+}
+
+func (m *Manager) reapAttachedCommand(sessionID string, cmd *exec.Cmd, ptyFile *os.File) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if cmd == nil {
+			return
+		}
+
+		_ = cmd.Wait()
+		if ptyFile != nil {
+			ptyFile.Close()
+		}
+
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		session, ok := m.sessions[sessionID]
+		if !ok {
+			return
+		}
+		if session.cmd == cmd {
+			session.cmd = nil
+		}
+		if session.ptyFile == ptyFile {
+			session.ptyFile = nil
+		}
+	}()
+	return done
 }
 
 func (m *Manager) ResizeSessionForUser(username, sessionID string, rows, cols uint16) error {
