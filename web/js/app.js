@@ -4447,7 +4447,7 @@
         var rawDx = event.clientX - workspaceTabDrag.startX;
 
         if (!workspaceTabDrag.started) {
-            if (Math.abs(rawDx) < 4) {
+            if (Math.abs(rawDx) < 6) {
                 return;
             }
             workspaceTabDrag.started = true;
@@ -4501,14 +4501,14 @@
             targetIndex = resolveWorkspaceTabTargetIndex(dragged.dropIndex);
         }
 
-        clearWorkspaceTabDragState(event.pointerId);
-        if (dragged.started) {
-            workspaceTabDragIgnoreClickId = dragged.sourceId;
-        } else {
-            workspaceTabDragIgnoreClickId = null;
-        }
+        var willReorder = dragged.started
+            && typeof targetIndex === 'number'
+            && targetIndex !== dragged.sourceIndex;
 
-        if (typeof targetIndex === 'number' && targetIndex !== dragged.sourceIndex) {
+        clearWorkspaceTabDragState(event.pointerId);
+        workspaceTabDragIgnoreClickId = willReorder ? dragged.sourceId : null;
+
+        if (willReorder) {
             moveWorkspaceTab(dragged.sourceIndex, targetIndex);
         }
     }
