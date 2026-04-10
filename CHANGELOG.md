@@ -6,9 +6,26 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-10
+
+### Added
+
+- Viewer can create a new draft from pasted or typed text and save it into the current file browser directory
+- Viewer can accept pasted images, preview them, and upload them as new files
+- Workspace tabs now have scroll controls for overflowing tab lists
+- Added a Windows native app planning document covering Wails, ConPTY, packaging, and opencode installation
+- Added launch posting helper docs and dynamic install script release notes
+
 ### Changed
 
 - Release-prep cleanup now uses generic publishable defaults, a template `systemd` unit, and sanitized public-facing assets and docs
+- Workspace tab scrolling and drag reordering behavior is more consistent across desktop and mobile layouts
+
+### Fixed
+
+- Terminal attachment processes are now reaped so tmux attach clients do not remain as zombie child processes
+- Workspace tab clicks are no longer swallowed by tiny pointer movement during drag detection
+- Workspace tab dragging now reorders correctly in both directions
 
 ## [0.2.0] - 2026-04-05
 
