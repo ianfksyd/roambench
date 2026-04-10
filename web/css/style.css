@@ -2331,6 +2331,186 @@ button.tab-action:focus-visible {
     text-align: center;
 }
 
+.viewer-draft {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px 22px;
+    background: #1c2230;
+    overflow: hidden;
+}
+
+.viewer-draft-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.viewer-draft-label {
+    font-size: 12px;
+    color: #9ab0c4;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.viewer-draft-filename {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.28);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+}
+
+.viewer-draft-filename:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(124, 138, 255, 0.22);
+}
+
+.viewer-draft-hint {
+    font-size: 12px;
+    color: #8ea0b4;
+    flex-shrink: 0;
+}
+
+.viewer-draft-textarea {
+    flex: 1;
+    min-height: 0;
+    resize: none;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.32);
+    color: var(--text);
+    font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-size: 13px;
+    line-height: 1.55;
+    tab-size: 4;
+}
+
+.viewer-draft-textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(124, 138, 255, 0.22);
+}
+
+.viewer-draft-image {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.24);
+    overflow: hidden;
+}
+
+.viewer-draft-image img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 4px;
+}
+
+.viewer-draft-image-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 12px;
+    color: #9ab0c4;
+    flex-shrink: 0;
+}
+
+.viewer-draft-image-clear {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: #d4c2a8;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.viewer-draft-image-clear:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.viewer-draft-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.viewer-draft-status {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: #8ea0b4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.viewer-draft-status.is-error {
+    color: #ff8a8a;
+}
+
+.viewer-draft-status.is-success {
+    color: #7fd6a4;
+}
+
+.viewer-draft-btn {
+    height: 30px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.viewer-draft-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.viewer-draft-save {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+
+.viewer-draft-save:hover {
+    filter: brightness(1.08);
+    background: var(--primary);
+}
+
+.viewer-draft-save:disabled,
+.viewer-draft-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.viewer-toolbar-btn#viewer-new-btn.active {
+    background: rgba(124, 138, 255, 0.16);
+    color: #c1cbff;
+}
+
 .viewer-empty-kicker {
     padding: 5px 10px;
     border-radius: 999px;

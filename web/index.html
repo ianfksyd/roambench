@@ -477,6 +477,12 @@
                     <span id="viewer-file-path" class="viewer-file-path">~</span>
                 </div>
                 <div class="viewer-toolbar-actions">
+                    <button id="viewer-new-btn" class="browser-action-btn viewer-toolbar-btn" type="button" onclick="toggleViewerDraft()" title="New" aria-label="New" data-i18n-title="viewer.new" data-i18n-aria-label="viewer.new">
+                        <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 5v14"></path>
+                            <path d="M5 12h14"></path>
+                        </svg>
+                    </button>
                     <button id="viewer-copy-btn" class="browser-action-btn viewer-toolbar-btn" type="button" onclick="copyViewerText()" title="Copy Text" aria-label="Copy Text" data-i18n-title="viewer.copyText" data-i18n-aria-label="viewer.copyText">
                         <svg class="browser-action-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <rect x="9" y="9" width="10" height="10" rx="2"></rect>
@@ -497,6 +503,26 @@
                             <path d="M5 19.5h14"></path>
                         </svg>
                     </button>
+                </div>
+            </div>
+            <div id="viewer-draft" class="viewer-draft" style="display:none">
+                <div class="viewer-draft-header">
+                    <label class="viewer-draft-label" for="viewer-draft-filename" data-i18n="viewer.newDraft.filename">File name</label>
+                    <input id="viewer-draft-filename" class="viewer-draft-filename" type="text" spellcheck="false" autocomplete="off">
+                </div>
+                <div id="viewer-draft-hint" class="viewer-draft-hint" data-i18n="viewer.newDraft.hint">Paste text or an image here, then Save.</div>
+                <textarea id="viewer-draft-textarea" class="viewer-draft-textarea" spellcheck="false" placeholder="Paste or type text..." data-i18n-placeholder="viewer.newDraft.textPlaceholder"></textarea>
+                <div id="viewer-draft-image" class="viewer-draft-image" style="display:none">
+                    <img id="viewer-draft-image-preview" alt="">
+                    <div class="viewer-draft-image-meta">
+                        <span id="viewer-draft-image-size"></span>
+                        <button type="button" class="viewer-draft-image-clear" onclick="clearViewerDraftImage()" data-i18n="viewer.newDraft.clearImage">Clear image</button>
+                    </div>
+                </div>
+                <div class="viewer-draft-actions">
+                    <span id="viewer-draft-status" class="viewer-draft-status" role="status" aria-live="polite"></span>
+                    <button type="button" class="viewer-draft-btn viewer-draft-cancel" onclick="cancelViewerDraft()" data-i18n="viewer.newDraft.cancel">Cancel</button>
+                    <button type="button" id="viewer-draft-save-btn" class="viewer-draft-btn viewer-draft-save" onclick="saveViewerDraft()" data-i18n="viewer.newDraft.save">Save</button>
                 </div>
             </div>
             <div id="viewer-empty" class="viewer-empty">

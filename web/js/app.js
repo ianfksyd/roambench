@@ -88,6 +88,23 @@
             'viewer.emptyHint': 'Open an image, PDF, or text file from Files.',
             'viewer.copyText': 'Copy Text',
             'viewer.edit': 'Edit',
+            'viewer.new': 'New',
+            'viewer.newDraft.filename': 'File name',
+            'viewer.newDraft.hint': 'Paste text or an image here, then Save.',
+            'viewer.newDraft.textPlaceholder': 'Paste or type text...',
+            'viewer.newDraft.clearImage': 'Clear image',
+            'viewer.newDraft.cancel': 'Cancel',
+            'viewer.newDraft.save': 'Save',
+            'viewer.newDraft.switchToImage': 'Replace the text you typed with the pasted image?',
+            'viewer.newDraft.switchToText': 'Discard the pasted image and switch to text?',
+            'viewer.newDraft.filenameRequired': 'File name is required.',
+            'viewer.newDraft.filenameInvalid': 'File name cannot contain slashes.',
+            'viewer.newDraft.noContent': 'Paste text or an image before saving.',
+            'viewer.newDraft.saving': 'Saving...',
+            'viewer.newDraft.saved': 'Saved as {name}',
+            'viewer.newDraft.saveFailed': 'Save failed: {message}',
+            'viewer.newDraft.imagePasted': 'Image pasted ({size})',
+            'viewer.newDraft.discardConfirm': 'Discard this draft?',
             'memory.title': 'Memory',
             'memory.tooltip': 'RoamBench RSS {app} / System Used {used} / System RAM {total}',
             'memory.unavailableTooltip': 'Memory status unavailable',
@@ -270,6 +287,23 @@
             'viewer.emptyHint': '在文件标签中打开图片、PDF 或文本文件。',
             'viewer.copyText': '复制全文',
             'viewer.edit': '编辑',
+            'viewer.new': '新建',
+            'viewer.newDraft.filename': '文件名',
+            'viewer.newDraft.hint': '在此粘贴文本或图片，然后保存。',
+            'viewer.newDraft.textPlaceholder': '粘贴或输入文本……',
+            'viewer.newDraft.clearImage': '清除图片',
+            'viewer.newDraft.cancel': '取消',
+            'viewer.newDraft.save': '保存',
+            'viewer.newDraft.switchToImage': '要用粘贴的图片替换已输入的文本吗？',
+            'viewer.newDraft.switchToText': '丢弃已粘贴的图片并切换为文本？',
+            'viewer.newDraft.filenameRequired': '请输入文件名。',
+            'viewer.newDraft.filenameInvalid': '文件名不能包含斜杠。',
+            'viewer.newDraft.noContent': '保存前请先粘贴文本或图片。',
+            'viewer.newDraft.saving': '保存中……',
+            'viewer.newDraft.saved': '已保存为 {name}',
+            'viewer.newDraft.saveFailed': '保存失败：{message}',
+            'viewer.newDraft.imagePasted': '已粘贴图片（{size}）',
+            'viewer.newDraft.discardConfirm': '放弃这份草稿吗？',
             'memory.title': '内存',
             'memory.tooltip': 'RoamBench 占用 {app} / 系统已用 {used} / 系统总内存 {total}',
             'memory.unavailableTooltip': '内存状态暂不可用',
@@ -452,6 +486,23 @@
             'viewer.emptyHint': 'Files から画像、PDF、またはテキストファイルを開いてください。',
             'viewer.copyText': 'テキストをコピー',
             'viewer.edit': '編集',
+            'viewer.new': '新規',
+            'viewer.newDraft.filename': 'ファイル名',
+            'viewer.newDraft.hint': 'ここにテキストまたは画像を貼り付けてから保存してください。',
+            'viewer.newDraft.textPlaceholder': 'テキストを貼り付けまたは入力…',
+            'viewer.newDraft.clearImage': '画像をクリア',
+            'viewer.newDraft.cancel': 'キャンセル',
+            'viewer.newDraft.save': '保存',
+            'viewer.newDraft.switchToImage': '入力したテキストを貼り付けた画像で置き換えますか？',
+            'viewer.newDraft.switchToText': '貼り付けた画像を破棄してテキストに切り替えますか？',
+            'viewer.newDraft.filenameRequired': 'ファイル名を入力してください。',
+            'viewer.newDraft.filenameInvalid': 'ファイル名にスラッシュは使用できません。',
+            'viewer.newDraft.noContent': '保存前にテキストまたは画像を貼り付けてください。',
+            'viewer.newDraft.saving': '保存中…',
+            'viewer.newDraft.saved': '{name} として保存しました',
+            'viewer.newDraft.saveFailed': '保存に失敗しました：{message}',
+            'viewer.newDraft.imagePasted': '画像を貼り付けました（{size}）',
+            'viewer.newDraft.discardConfirm': 'この下書きを破棄しますか？',
             'memory.title': 'メモリ',
             'memory.tooltip': 'RoamBench 使用量 {app} / システム使用中 {used} / システム総メモリ {total}',
             'memory.unavailableTooltip': 'メモリ状態を取得できません',
@@ -761,6 +812,7 @@
         previewContentType: '',
         previewTextContent: '',
         previewEditMode: false,
+        viewerDraft: null,
         currentPath: '',
         files: [],
         editors: [],         // [{ path, name, content, savedContent, dirty, saving, scrollTop }]
@@ -849,6 +901,16 @@
     const fileViewerCopyBtn = document.getElementById('viewer-copy-btn');
     const fileViewerEditBtn = document.getElementById('viewer-edit-btn');
     const fileViewerDownloadBtn = document.getElementById('viewer-download-btn');
+    const fileViewerNewBtn = document.getElementById('viewer-new-btn');
+    const fileViewerDraft = document.getElementById('viewer-draft');
+    const fileViewerDraftFilename = document.getElementById('viewer-draft-filename');
+    const fileViewerDraftHint = document.getElementById('viewer-draft-hint');
+    const fileViewerDraftTextarea = document.getElementById('viewer-draft-textarea');
+    const fileViewerDraftImage = document.getElementById('viewer-draft-image');
+    const fileViewerDraftImagePreview = document.getElementById('viewer-draft-image-preview');
+    const fileViewerDraftImageSize = document.getElementById('viewer-draft-image-size');
+    const fileViewerDraftStatus = document.getElementById('viewer-draft-status');
+    const fileViewerDraftSaveBtn = document.getElementById('viewer-draft-save-btn');
     const fileDropzone = document.getElementById('file-dropzone');
     const editorPane = document.getElementById('editor-pane');
     const editorTabs = document.getElementById('editor-tab-bar');
@@ -5883,7 +5945,456 @@
         enableViewerEditMode();
     };
 
+    function pad2(n) {
+        return n < 10 ? '0' + n : String(n);
+    }
+
+    function formatBytesShort(bytes) {
+        var value = Number(bytes) || 0;
+        if (value < 1024) {
+            return value + ' B';
+        }
+        if (value < 1024 * 1024) {
+            return (value / 1024).toFixed(1) + ' KB';
+        }
+        return (value / 1024 / 1024).toFixed(2) + ' MB';
+    }
+
+    function defaultDraftFilename(kind, mime) {
+        var now = new Date();
+        var stamp = now.getFullYear()
+            + pad2(now.getMonth() + 1)
+            + pad2(now.getDate())
+            + '-'
+            + pad2(now.getHours())
+            + pad2(now.getMinutes())
+            + pad2(now.getSeconds());
+
+        if (kind === 'image') {
+            return 'pasted-' + stamp + extensionForImageMime(mime || 'image/png');
+        }
+        return 'untitled-' + stamp + '.txt';
+    }
+
+    function extensionForImageMime(mime) {
+        var normalized = (mime || '').toLowerCase();
+        if (normalized === 'image/jpeg' || normalized === 'image/jpg') {
+            return '.jpg';
+        }
+        if (normalized === 'image/gif') {
+            return '.gif';
+        }
+        if (normalized === 'image/webp') {
+            return '.webp';
+        }
+        if (normalized === 'image/svg+xml') {
+            return '.svg';
+        }
+        if (normalized === 'image/bmp') {
+            return '.bmp';
+        }
+        return '.png';
+    }
+
+    function revokeDraftImageUrl() {
+        if (state.viewerDraft && state.viewerDraft.imageObjectUrl) {
+            try {
+                URL.revokeObjectURL(state.viewerDraft.imageObjectUrl);
+            } catch (_) {
+                // ignore
+            }
+            state.viewerDraft.imageObjectUrl = '';
+        }
+    }
+
+    function setViewerDraftStatus(message, tone) {
+        if (!fileViewerDraftStatus) {
+            return;
+        }
+        fileViewerDraftStatus.textContent = message || '';
+        fileViewerDraftStatus.classList.remove('is-error', 'is-success');
+        if (tone === 'error') {
+            fileViewerDraftStatus.classList.add('is-error');
+        } else if (tone === 'success') {
+            fileViewerDraftStatus.classList.add('is-success');
+        }
+    }
+
+    function replaceFilenameExtension(name, nextExt) {
+        var trimmed = (name || '').trim();
+        if (!trimmed) {
+            return '';
+        }
+        var dot = trimmed.lastIndexOf('.');
+        if (dot <= 0) {
+            return trimmed + nextExt;
+        }
+        return trimmed.slice(0, dot) + nextExt;
+    }
+
+    window.toggleViewerDraft = function() {
+        if (state.viewerDraft) {
+            cancelViewerDraft();
+            return;
+        }
+        openViewerDraft();
+    };
+
+    function openViewerDraft() {
+        state.viewerDraft = {
+            kind: 'text',
+            filename: defaultDraftFilename('text'),
+            textContent: '',
+            imageBlob: null,
+            imageObjectUrl: '',
+            imageMime: '',
+            saving: false
+        };
+        renderViewerPanel();
+        if (fileViewerDraftTextarea) {
+            window.requestAnimationFrame(function() {
+                fileViewerDraftTextarea.focus();
+            });
+        }
+    }
+
+    window.cancelViewerDraft = function() {
+        if (!state.viewerDraft) {
+            return;
+        }
+        var hasContent = Boolean(
+            state.viewerDraft.textContent
+            || state.viewerDraft.imageBlob
+        );
+        if (hasContent && !state.viewerDraft.saving) {
+            if (!window.confirm(t('viewer.newDraft.discardConfirm'))) {
+                return;
+            }
+        }
+        closeViewerDraft();
+    };
+
+    function closeViewerDraft() {
+        if (!state.viewerDraft) {
+            return;
+        }
+        revokeDraftImageUrl();
+        state.viewerDraft = null;
+        setViewerDraftStatus('');
+        renderViewerPanel();
+    }
+
+    window.clearViewerDraftImage = function() {
+        if (!state.viewerDraft || state.viewerDraft.kind !== 'image') {
+            return;
+        }
+        revokeDraftImageUrl();
+        state.viewerDraft.imageBlob = null;
+        state.viewerDraft.imageMime = '';
+        state.viewerDraft.kind = 'text';
+        state.viewerDraft.filename = replaceFilenameExtension(state.viewerDraft.filename, '.txt')
+            || defaultDraftFilename('text');
+        setViewerDraftStatus('');
+        renderViewerPanel();
+        if (fileViewerDraftTextarea) {
+            fileViewerDraftTextarea.focus();
+        }
+    };
+
+    function handleViewerDraftPaste(event) {
+        if (!state.viewerDraft) {
+            return;
+        }
+        var clipboard = event.clipboardData;
+        if (!clipboard) {
+            return;
+        }
+
+        var imageFile = null;
+        if (clipboard.items) {
+            for (var i = 0; i < clipboard.items.length; i += 1) {
+                var item = clipboard.items[i];
+                if (item && item.kind === 'file' && item.type && item.type.indexOf('image/') === 0) {
+                    imageFile = item.getAsFile();
+                    if (imageFile) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (imageFile) {
+            event.preventDefault();
+            acceptDraftImage(imageFile);
+            return;
+        }
+
+        if (state.viewerDraft.kind === 'image') {
+            var pastedText = clipboard.getData ? clipboard.getData('text/plain') : '';
+            if (!pastedText) {
+                return;
+            }
+            event.preventDefault();
+            if (!window.confirm(t('viewer.newDraft.switchToText'))) {
+                return;
+            }
+            revokeDraftImageUrl();
+            state.viewerDraft.kind = 'text';
+            state.viewerDraft.imageBlob = null;
+            state.viewerDraft.imageMime = '';
+            state.viewerDraft.textContent = pastedText;
+            state.viewerDraft.filename = replaceFilenameExtension(state.viewerDraft.filename, '.txt')
+                || defaultDraftFilename('text');
+            setViewerDraftStatus('');
+            renderViewerPanel();
+            if (fileViewerDraftTextarea) {
+                fileViewerDraftTextarea.focus();
+                fileViewerDraftTextarea.setSelectionRange(pastedText.length, pastedText.length);
+            }
+        }
+    }
+
+    function acceptDraftImage(file) {
+        if (!state.viewerDraft || !file) {
+            return;
+        }
+        if (state.viewerDraft.kind === 'text' && state.viewerDraft.textContent) {
+            if (!window.confirm(t('viewer.newDraft.switchToImage'))) {
+                return;
+            }
+        }
+        revokeDraftImageUrl();
+        var objectUrl = '';
+        try {
+            objectUrl = URL.createObjectURL(file);
+        } catch (_) {
+            objectUrl = '';
+        }
+        state.viewerDraft.kind = 'image';
+        state.viewerDraft.imageBlob = file;
+        state.viewerDraft.imageMime = file.type || 'image/png';
+        state.viewerDraft.imageObjectUrl = objectUrl;
+        state.viewerDraft.textContent = '';
+        var currentName = (state.viewerDraft.filename || '').trim();
+        var isDefaultText = !currentName || /^untitled-\d{8}-\d{6}\.txt$/i.test(currentName);
+        if (isDefaultText) {
+            state.viewerDraft.filename = defaultDraftFilename('image', state.viewerDraft.imageMime);
+        } else {
+            state.viewerDraft.filename = replaceFilenameExtension(
+                currentName,
+                extensionForImageMime(state.viewerDraft.imageMime)
+            );
+        }
+        setViewerDraftStatus(t('viewer.newDraft.imagePasted', { size: formatBytesShort(file.size) }));
+        renderViewerPanel();
+    }
+
+    window.saveViewerDraft = async function() {
+        if (!state.viewerDraft || state.viewerDraft.saving) {
+            return;
+        }
+        var filename = (fileViewerDraftFilename && fileViewerDraftFilename.value || '').trim();
+        if (!filename) {
+            setViewerDraftStatus(t('viewer.newDraft.filenameRequired'), 'error');
+            if (fileViewerDraftFilename) {
+                fileViewerDraftFilename.focus();
+            }
+            return;
+        }
+        if (filename.indexOf('/') !== -1 || filename.indexOf('\\') !== -1) {
+            setViewerDraftStatus(t('viewer.newDraft.filenameInvalid'), 'error');
+            return;
+        }
+        state.viewerDraft.filename = filename;
+
+        var kind = state.viewerDraft.kind;
+        if (kind === 'text') {
+            var text = fileViewerDraftTextarea ? fileViewerDraftTextarea.value : '';
+            state.viewerDraft.textContent = text;
+            if (!text) {
+                setViewerDraftStatus(t('viewer.newDraft.noContent'), 'error');
+                return;
+            }
+        } else if (kind === 'image') {
+            if (!state.viewerDraft.imageBlob) {
+                setViewerDraftStatus(t('viewer.newDraft.noContent'), 'error');
+                return;
+            }
+        } else {
+            return;
+        }
+
+        var dir = state.currentPath || '~';
+        var fullPath = joinPath(dir, filename);
+
+        state.viewerDraft.saving = true;
+        setViewerDraftStatus(t('viewer.newDraft.saving'));
+        if (fileViewerDraftSaveBtn) {
+            fileViewerDraftSaveBtn.disabled = true;
+        }
+
+        try {
+            if (kind === 'text') {
+                await fetchJSON('/api/files/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: fullPath, content: state.viewerDraft.textContent })
+                }, { authRequired: true });
+            } else {
+                var formData = new FormData();
+                formData.append('file', state.viewerDraft.imageBlob, filename);
+                var response = await fetchAPI('/api/files/upload?path=' + encodeURIComponent(dir), {
+                    method: 'POST',
+                    body: formData
+                }, { authRequired: true });
+                if (!response.ok) {
+                    var errData = null;
+                    try { errData = await response.json(); } catch (_) { errData = null; }
+                    throw buildRequestError(response, errData, t('common.requestFailed'));
+                }
+            }
+
+            var savedSize = kind === 'image' && state.viewerDraft && state.viewerDraft.imageBlob
+                ? state.viewerDraft.imageBlob.size
+                : (state.viewerDraft && state.viewerDraft.textContent ? state.viewerDraft.textContent.length : 0);
+
+            setViewerDraftStatus(t('viewer.newDraft.saved', { name: filename }), 'success');
+            closeViewerDraft();
+
+            var savedFile = {
+                name: filename,
+                modTime: Date.now(),
+                size: savedSize
+            };
+            if (kind === 'text') {
+                previewTextFile(savedFile);
+            } else {
+                previewImage(savedFile);
+            }
+
+            if (state.fileBrowserOpen && isSameDirectory(state.currentPath, fullPath)) {
+                if (typeof window.refreshFiles === 'function') {
+                    window.refreshFiles();
+                }
+            }
+        } catch (err) {
+            if (state.viewerDraft) {
+                state.viewerDraft.saving = false;
+            }
+            if (isHandledAuthError(err)) {
+                return;
+            }
+            setViewerDraftStatus(t('viewer.newDraft.saveFailed', { message: err && err.message ? err.message : '' }), 'error');
+        } finally {
+            if (state.viewerDraft) {
+                state.viewerDraft.saving = false;
+            }
+            if (fileViewerDraftSaveBtn) {
+                fileViewerDraftSaveBtn.disabled = false;
+            }
+        }
+    };
+
+    function renderViewerDraft() {
+        var draft = state.viewerDraft;
+        if (!draft || !fileViewerDraft) {
+            return;
+        }
+        if (fileViewerDraftFilename && fileViewerDraftFilename.value !== draft.filename) {
+            fileViewerDraftFilename.value = draft.filename || '';
+        }
+        var isImage = draft.kind === 'image';
+        if (fileViewerDraftTextarea) {
+            fileViewerDraftTextarea.style.display = isImage ? 'none' : 'block';
+            if (!isImage && fileViewerDraftTextarea.value !== draft.textContent) {
+                fileViewerDraftTextarea.value = draft.textContent || '';
+            }
+        }
+        if (fileViewerDraftImage) {
+            fileViewerDraftImage.style.display = isImage ? 'flex' : 'none';
+        }
+        if (isImage && fileViewerDraftImagePreview) {
+            if (draft.imageObjectUrl) {
+                if (fileViewerDraftImagePreview.getAttribute('src') !== draft.imageObjectUrl) {
+                    fileViewerDraftImagePreview.src = draft.imageObjectUrl;
+                }
+            } else {
+                fileViewerDraftImagePreview.removeAttribute('src');
+            }
+        }
+        if (isImage && fileViewerDraftImageSize && draft.imageBlob) {
+            fileViewerDraftImageSize.textContent = formatBytesShort(draft.imageBlob.size);
+        } else if (fileViewerDraftImageSize) {
+            fileViewerDraftImageSize.textContent = '';
+        }
+        if (fileViewerDraftSaveBtn) {
+            fileViewerDraftSaveBtn.disabled = draft.saving === true;
+        }
+    }
+
+    if (fileViewerDraft) {
+        fileViewerDraft.addEventListener('paste', handleViewerDraftPaste);
+    }
+    if (fileViewerDraftFilename) {
+        fileViewerDraftFilename.addEventListener('input', function() {
+            if (state.viewerDraft) {
+                state.viewerDraft.filename = fileViewerDraftFilename.value;
+            }
+        });
+    }
+    if (fileViewerDraftTextarea) {
+        fileViewerDraftTextarea.addEventListener('input', function() {
+            if (state.viewerDraft && state.viewerDraft.kind === 'text') {
+                state.viewerDraft.textContent = fileViewerDraftTextarea.value;
+            }
+        });
+        fileViewerDraftTextarea.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                window.cancelViewerDraft();
+            }
+        });
+    }
+
     function renderViewerPanel(forceReload) {
+        if (state.viewerDraft) {
+            if (fileViewerEmpty) {
+                fileViewerEmpty.style.display = 'none';
+            }
+            if (fileViewerCanvas) {
+                fileViewerCanvas.style.display = 'none';
+            }
+            if (fileViewerDraft) {
+                fileViewerDraft.style.display = 'flex';
+            }
+            if (fileViewerTitle) {
+                fileViewerTitle.textContent = t('viewer.new');
+            }
+            if (fileViewerPath) {
+                fileViewerPath.textContent = state.currentPath || '~';
+            }
+            if (fileViewerCopyBtn) {
+                fileViewerCopyBtn.style.display = 'none';
+            }
+            if (fileViewerEditBtn) {
+                fileViewerEditBtn.style.display = 'none';
+            }
+            if (fileViewerDownloadBtn) {
+                fileViewerDownloadBtn.disabled = true;
+            }
+            if (fileViewerNewBtn) {
+                fileViewerNewBtn.classList.add('active');
+            }
+            restoreEditorPaneHost();
+            renderViewerDraft();
+            return;
+        }
+        if (fileViewerDraft) {
+            fileViewerDraft.style.display = 'none';
+        }
+        if (fileViewerNewBtn) {
+            fileViewerNewBtn.classList.remove('active');
+        }
         const type = state.previewContentType || '';
         const imageKey = state.previewImagePath + '::' + String(state.previewImageVersion || '');
         const hasPreview = Boolean(state.previewImagePath);
