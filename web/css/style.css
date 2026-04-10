@@ -691,6 +691,24 @@ body.view-login #terminal-view {
     flex-shrink: 0;
 }
 
+.tab-scroll-btn {
+    font-size: 18px !important;
+    min-width: 26px !important;
+    min-height: 32px !important;
+    padding: 4px 7px !important;
+    flex-shrink: 0;
+}
+
+.tab-scroll-btn[hidden] {
+    display: none !important;
+}
+
+.tab-scroll-btn:disabled {
+    opacity: 0.28;
+    cursor: default;
+    pointer-events: none;
+}
+
 .tab-bar {
     display: flex;
     flex: 1;

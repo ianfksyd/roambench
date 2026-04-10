@@ -897,6 +897,7 @@
     window.addEventListener('pointercancel', endEditorDrag);
     window.addEventListener('pointerup', endWorkspaceTabDrag);
     window.addEventListener('pointercancel', endWorkspaceTabDrag);
+    window.addEventListener('resize', updateWorkspaceTabScrollButtons);
     window.addEventListener('pointermove', handleTerminalScrollbarDrag);
     window.addEventListener('pointerup', endTerminalScrollbarDrag);
     window.addEventListener('pointercancel', endTerminalScrollbarDrag);
@@ -4548,6 +4549,92 @@
         });
     }
 
+    function getWorkspaceTabScrollStep(bar) {
+        return Math.max(120, Math.floor((bar ? bar.clientWidth : 0) * 0.75));
+    }
+
+    function getWorkspaceTabElementById(workspaceId) {
+        var bar = document.getElementById('tab-bar');
+
+        if (!bar) {
+            return null;
+        }
+
+        return Array.from(bar.querySelectorAll('.tab')).find(function(tab) {
+            return tab.dataset.workspaceId === workspaceId;
+        }) || null;
+    }
+
+    function updateWorkspaceTabScrollButtons() {
+        var bar = document.getElementById('tab-bar');
+        var left = document.getElementById('workspace-tabs-scroll-left');
+        var right = document.getElementById('workspace-tabs-scroll-right');
+        var maxScroll;
+        var canScroll;
+
+        if (!bar || !left || !right) {
+            return;
+        }
+
+        maxScroll = Math.max(0, bar.scrollWidth - bar.clientWidth);
+        canScroll = maxScroll > 2;
+        left.hidden = !canScroll;
+        right.hidden = !canScroll;
+        left.disabled = !canScroll || bar.scrollLeft <= 1;
+        right.disabled = !canScroll || bar.scrollLeft >= maxScroll - 1;
+    }
+
+    function ensureWorkspaceTabVisible(workspaceId) {
+        var bar = document.getElementById('tab-bar');
+        var tab = getWorkspaceTabElementById(workspaceId);
+        var padding = 8;
+        var tabLeft;
+        var tabRight;
+        var visibleLeft;
+        var visibleRight;
+        var nextLeft = null;
+
+        if (!bar || !tab) {
+            updateWorkspaceTabScrollButtons();
+            return;
+        }
+
+        tabLeft = tab.offsetLeft;
+        tabRight = tabLeft + tab.offsetWidth;
+        visibleLeft = bar.scrollLeft;
+        visibleRight = visibleLeft + bar.clientWidth;
+
+        if (tabLeft < visibleLeft + padding) {
+            nextLeft = Math.max(0, tabLeft - padding);
+        } else if (tabRight > visibleRight - padding) {
+            nextLeft = Math.min(bar.scrollWidth - bar.clientWidth, tabRight - bar.clientWidth + padding);
+        }
+
+        if (typeof nextLeft === 'number') {
+            bar.scrollTo({
+                left: nextLeft,
+                behavior: 'smooth'
+            });
+        }
+        updateWorkspaceTabScrollButtons();
+    }
+
+    window.scrollWorkspaceTabs = function(direction) {
+        var bar = document.getElementById('tab-bar');
+        var delta;
+
+        if (!bar) {
+            return;
+        }
+
+        delta = getWorkspaceTabScrollStep(bar) * (direction < 0 ? -1 : 1);
+        bar.scrollBy({
+            left: delta,
+            behavior: 'smooth'
+        });
+        window.setTimeout(updateWorkspaceTabScrollButtons, 220);
+    };
+
     function renderTabBar() {
         const bar = document.getElementById('tab-bar');
         const workspacePanel = document.getElementById('workspace');
@@ -4555,6 +4642,7 @@
         bar.setAttribute('role', 'tablist');
         bar.setAttribute('aria-label', 'Workspace views');
         bar.setAttribute('aria-orientation', 'horizontal');
+        bar.onscroll = updateWorkspaceTabScrollButtons;
 
         state.workspaces.forEach(function(workspace, index) {
             const isActive = workspace.id === state.activeWorkspaceId;
@@ -4672,6 +4760,9 @@
         }
 
         updateLayoutSwitchButtons();
+        window.requestAnimationFrame(function() {
+            ensureWorkspaceTabVisible(state.activeWorkspaceId);
+        });
     }
 
     function renameWorkspace(id) {
