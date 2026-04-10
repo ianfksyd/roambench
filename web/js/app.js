@@ -217,6 +217,7 @@
             'files.sortBy': 'Sort by {column}: {direction}',
             'files.view': 'View',
             'files.copy': 'Copy',
+            'files.move': 'Move',
             'files.rename': 'Rename',
             'files.download': 'Download',
             'files.delete': 'Delete',
@@ -226,6 +227,8 @@
             'files.newFolderPrompt': 'New folder path:',
             'files.copyPrompt': 'Copy to:',
             'files.copyFailed': 'Copy failed: {message}',
+            'files.movePrompt': 'Move selected items to directory:',
+            'files.moveFailed': 'Move failed: {message}',
             'files.renamePrompt': 'Rename or move to:',
             'files.renameFailed': 'Rename failed: {message}',
             'files.dropToUpload': 'Drop files to upload',
@@ -416,6 +419,7 @@
             'files.sortBy': '按{column}排序：{direction}',
             'files.view': '查看',
             'files.copy': '复制',
+            'files.move': '移动',
             'files.rename': '重命名',
             'files.download': '下载',
             'files.delete': '删除',
@@ -425,6 +429,8 @@
             'files.newFolderPrompt': '新建文件夹路径：',
             'files.copyPrompt': '复制到：',
             'files.copyFailed': '复制失败：{message}',
+            'files.movePrompt': '将已选择项移动到目录：',
+            'files.moveFailed': '移动失败：{message}',
             'files.renamePrompt': '重命名或移动到：',
             'files.renameFailed': '重命名失败：{message}',
             'files.dropToUpload': '拖拽文件到这里上传',
@@ -615,6 +621,7 @@
             'files.sortBy': '{column}で並び替え: {direction}',
             'files.view': '表示',
             'files.copy': 'コピー',
+            'files.move': '移動',
             'files.rename': '名前変更',
             'files.download': 'ダウンロード',
             'files.delete': '削除',
@@ -624,6 +631,8 @@
             'files.newFolderPrompt': '新しいフォルダのパス:',
             'files.copyPrompt': 'コピー先:',
             'files.copyFailed': 'コピーに失敗しました: {message}',
+            'files.movePrompt': '選択した項目の移動先ディレクトリ:',
+            'files.moveFailed': '移動に失敗しました: {message}',
             'files.renamePrompt': '名前変更または移動先:',
             'files.renameFailed': '名前変更に失敗しました: {message}',
             'files.dropToUpload': 'ここにドロップしてアップロード',
@@ -876,6 +885,7 @@
     const fileSelectionSummary = document.getElementById('file-selection-summary');
     const fileSelectionAllBtn = document.getElementById('file-selection-all-btn');
     const fileSelectionCopyBtn = document.getElementById('file-selection-copy-btn');
+    const fileSelectionMoveBtn = document.getElementById('file-selection-move-btn');
     const fileSelectionRenameBtn = document.getElementById('file-selection-rename-btn');
     const fileSelectionDownloadBtn = document.getElementById('file-selection-download-btn');
     const fileSelectionDeleteBtn = document.getElementById('file-selection-delete-btn');
@@ -5203,6 +5213,9 @@
         if (fileSelectionCopyBtn) {
             fileSelectionCopyBtn.disabled = selectedCount !== 1;
         }
+        if (fileSelectionMoveBtn) {
+            fileSelectionMoveBtn.disabled = selectedCount === 0;
+        }
         if (fileSelectionRenameBtn) {
             fileSelectionRenameBtn.disabled = selectedCount !== 1;
         }
@@ -5680,6 +5693,76 @@
                 renderFileList(state.files);
             }
         });
+    };
+
+    window.moveSelectedFiles = function() {
+        const selectedEntries = getSelectedFileEntries();
+        let rawTargetDir;
+        let targetDir;
+        let movePlans;
+
+        if (!selectedEntries.length) {
+            return;
+        }
+
+        rawTargetDir = prompt(t('files.movePrompt'), state.currentPath || '~');
+        if (rawTargetDir === null) {
+            return;
+        }
+
+        targetDir = normalizePromptPath(rawTargetDir, state.currentPath || '~');
+        if (!targetDir) {
+            return;
+        }
+
+        movePlans = selectedEntries.map(function(file) {
+            const oldPath = getFilePath(file);
+            const newPath = joinPath(targetDir, file.name);
+            return {
+                file: file,
+                oldPath: oldPath,
+                newPath: newPath
+            };
+        }).filter(function(plan) {
+            return plan.newPath !== plan.oldPath;
+        });
+
+        if (!movePlans.length) {
+            return;
+        }
+
+        for (const plan of movePlans) {
+            if (findEditor(plan.newPath) && plan.newPath !== plan.oldPath) {
+                alert(t('editor.pathAlreadyOpen', { path: plan.newPath }));
+                return;
+            }
+
+            if (isKnownDirectoryPath(plan.newPath, plan.oldPath)) {
+                alert(t('files.cannotOverwriteDirectory', { path: plan.newPath }));
+                return;
+            }
+        }
+
+        movePlans.reduce(function(chain, plan) {
+            return chain.then(function() {
+                return fetchJSON('/api/files/rename', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ oldPath: plan.oldPath, newPath: plan.newPath })
+                }, { authRequired: true }).then(function() {
+                    syncPathConsumersAfterRename(plan.oldPath, plan.newPath);
+                });
+            });
+        }, Promise.resolve())
+            .then(function() {
+                resetFileSelection();
+                window.refreshFiles();
+            })
+            .catch(function(err) {
+                if (!isHandledAuthError(err)) {
+                    alert(t('files.moveFailed', { message: err.message }));
+                }
+            });
     };
 
     window.downloadSelectedFiles = function() {
