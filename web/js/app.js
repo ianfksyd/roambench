@@ -4318,8 +4318,16 @@
             return null;
         }
 
+        const sourceTab = workspaceTabDrag ? workspaceTabDrag.sourceTab : null;
+
         for (let i = 0; i < visibleTabs.length; i += 1) {
             const tab = visibleTabs[i];
+            // Skip the dragged tab — its getBoundingClientRect() is shifted
+            // by the CSS transform and would block drop index advancement
+            // when dragging left-to-right.
+            if (tab === sourceTab) {
+                continue;
+            }
             const rect = tab.getBoundingClientRect();
             const midpoint = rect.left + rect.width / 2;
 
