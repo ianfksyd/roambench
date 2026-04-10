@@ -4437,15 +4437,6 @@
         };
 
         workspaceTabDragIgnoreClickId = null;
-        document.body.style.userSelect = 'none';
-        if (tab && tab.setPointerCapture) {
-            try {
-                tab.setPointerCapture(event.pointerId);
-            } catch (_) {
-                // Ignore browsers that do not allow capture for this pointer.
-            }
-        }
-        event.preventDefault();
     }
 
     function handleWorkspaceTabDrag(event) {
@@ -4460,11 +4451,19 @@
                 return;
             }
             workspaceTabDrag.started = true;
+            document.body.style.userSelect = 'none';
             var sourceTab = workspaceTabDrag.sourceTab;
             if (sourceTab) {
                 sourceTab.classList.add('is-dragging');
                 sourceTab.style.zIndex = '100';
                 sourceTab.style.position = 'relative';
+                if (sourceTab.setPointerCapture) {
+                    try {
+                        sourceTab.setPointerCapture(event.pointerId);
+                    } catch (_) {
+                        // Ignore browsers that do not allow capture.
+                    }
+                }
             }
             document.body.style.cursor = 'grabbing';
         }
