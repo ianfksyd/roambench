@@ -3353,13 +3353,17 @@
             return workspace.id === id;
         });
 
-        if (index === -1 || state.workspaces.length <= 1) {
+        if (index === -1) {
             return;
         }
 
         state.workspaces.splice(index, 1);
         if (state.activeWorkspaceId === id) {
-            state.activeWorkspaceId = state.workspaces[Math.max(0, index - 1)].id;
+            if (state.workspaces.length) {
+                state.activeWorkspaceId = state.workspaces[Math.max(0, index - 1)].id;
+            } else {
+                state.activeWorkspaceId = null;
+            }
         }
         rebalanceWorkspaceAssignments(state.activeWorkspaceId);
         ensureActiveTerminalVisible();
@@ -4799,19 +4803,17 @@
             };
             actions.appendChild(rename);
 
-            if (state.workspaces.length > 1) {
-                const close = document.createElement('button');
-                close.type = 'button';
-                close.className = 'tab-action tab-close';
-                close.textContent = '\u00d7';
-                close.title = t('workspace.closeView');
-                close.setAttribute('aria-label', t('workspace.closeView'));
-                close.onclick = function(e) {
-                    e.stopPropagation();
-                    closeWorkspaceTab(workspace.id);
-                };
-                actions.appendChild(close);
-            }
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'tab-action tab-close';
+            close.textContent = '\u00d7';
+            close.title = t('workspace.closeView');
+            close.setAttribute('aria-label', t('workspace.closeView'));
+            close.onclick = function(e) {
+                e.stopPropagation();
+                closeWorkspaceTab(workspace.id);
+            };
+            actions.appendChild(close);
 
             tab.appendChild(actions);
 
