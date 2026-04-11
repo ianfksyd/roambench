@@ -826,6 +826,7 @@
         files: [],
         editors: [],         // [{ path, name, content, savedContent, dirty, saving, scrollTop }]
         activeEditorPath: null,
+        editorPaneSuspended: false,
         editorSearchVisible: false,
         editorSearchMatches: [],
         editorSearchCurrentIndex: -1,
@@ -2075,7 +2076,11 @@
         }
 
         if (e.key === 'Escape' && state.fileBrowserOpen && state.fileBrowserTab === 'viewer' && state.previewImagePath) {
-            window.closeImagePreview();
+            if (shouldEmbedViewerEditor()) {
+                closeEditor(state.previewImagePath);
+            } else {
+                window.closeImagePreview();
+            }
             return;
         }
 
@@ -5388,6 +5393,12 @@
             state.fileBrowserSingleDesktopDismissed = false;
         }
 
+        if (!open && config.userInitiated && shouldEmbedViewerEditor()) {
+            if (!closeEditor(state.previewImagePath)) {
+                return;
+            }
+        }
+
         state.fileBrowserOpen = open;
         if (!open) {
             fileDragDepth = 0;
@@ -5987,20 +5998,18 @@
     }
 
     window.closeImagePreview = function() {
+        if (shouldEmbedViewerEditor()) {
+            closeEditor(state.previewImagePath);
+            return;
+        }
+
         const wasEditMode = state.previewEditMode;
 
-        state.previewImagePath = '';
-        state.previewImageName = '';
-        state.previewImageVersion = '';
-        state.previewImageSize = 0;
-        state.previewContentType = '';
-        state.previewTextContent = '';
-        state.previewEditMode = false;
+        resetViewerPreviewState();
         if (wasEditMode) {
             applyEditorLayout();
         }
         renderViewerPanel();
-        setFileBrowserTab('files');
     };
 
     window.downloadPreviewImage = function() {
@@ -6020,6 +6029,16 @@
             state.activeEditorPath === state.previewImagePath &&
             fileViewerEditorHost
         );
+    }
+
+    function resetViewerPreviewState() {
+        state.previewImagePath = '';
+        state.previewImageName = '';
+        state.previewImageVersion = '';
+        state.previewImageSize = 0;
+        state.previewContentType = '';
+        state.previewTextContent = '';
+        state.previewEditMode = false;
     }
 
     function restoreEditorPaneHost() {
@@ -7270,6 +7289,7 @@
         editor = createEditorRecord(path, displayName, content, true);
         state.editors.push(editor);
         state.activeEditorPath = path;
+        state.editorPaneSuspended = false;
         applyEditorLayout();
         persistEditorDrafts();
         focusEditor();
@@ -7291,6 +7311,7 @@
 
         state.editors.push(editor);
         state.activeEditorPath = path;
+        state.editorPaneSuspended = false;
         applyEditorLayout();
         focusEditor();
         return editor;
@@ -7816,6 +7837,7 @@
     function activateEditor(path) {
         rememberActiveEditorScroll();
         state.activeEditorPath = path;
+        state.editorPaneSuspended = false;
         if (state.previewEditMode && path) {
             state.previewImagePath = path;
             state.previewImageName = baseName(path);
@@ -7998,7 +8020,23 @@
             editorPane.style.display = 'none';
             splitter.style.display = 'none';
             state.activeEditorPath = null;
+            state.editorPaneSuspended = false;
             editorTabs.innerHTML = '';
+            syncActiveEditor(false);
+            if (state.maximized === 'editor') {
+                state.maximized = 'terminal';
+            }
+            applyMaximizeState();
+            scheduleFitActiveTerminal();
+            return;
+        }
+
+        if (state.editorPaneSuspended && !embedInViewer) {
+            restoreEditorPaneHost();
+            editorPane.style.display = 'none';
+            splitter.style.display = 'none';
+            state.activeEditorPath = null;
+            renderEditorTabs();
             syncActiveEditor(false);
             if (state.maximized === 'editor') {
                 state.maximized = 'terminal';
@@ -8056,29 +8094,35 @@
 
     function closeEditor(path) {
         const editor = findEditor(path);
+        const closingEmbeddedViewerEditor = shouldEmbedViewerEditor() && state.previewImagePath === path;
         if (!editor) {
-            return;
+            return false;
         }
 
         if (editor.dirty && !confirm(t('editor.closeWithoutSaving', { name: editor.name }))) {
-            return;
+            return false;
         }
 
         const index = state.editors.findIndex(function(item) {
             return item.path === path;
         });
         if (index === -1) {
-            return;
+            return false;
         }
 
         state.editors.splice(index, 1);
 
-        if (state.activeEditorPath === path) {
+        if (closingEmbeddedViewerEditor) {
+            state.editorPaneSuspended = state.editors.length > 0;
+            state.activeEditorPath = null;
+        } else if (state.activeEditorPath === path) {
             const fallback = state.editors[index] || state.editors[index - 1] || null;
             state.activeEditorPath = fallback ? fallback.path : null;
         }
 
-        if (state.previewImagePath === path && state.previewEditMode) {
+        if (closingEmbeddedViewerEditor) {
+            resetViewerPreviewState();
+        } else if (state.previewImagePath === path && state.previewEditMode) {
             state.previewEditMode = false;
         }
 
@@ -8091,11 +8135,14 @@
         } else {
             scheduleFitActiveTerminal();
         }
+
+        return true;
     }
 
     function resetEditorState() {
         state.editors = [];
         state.activeEditorPath = null;
+        state.editorPaneSuspended = false;
         state.editorSearchVisible = false;
         state.editorSearchMatches = [];
         state.editorSearchCurrentIndex = -1;
