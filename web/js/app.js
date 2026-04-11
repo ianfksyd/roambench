@@ -2068,6 +2068,12 @@
             return;
         }
 
+        if (shouldHandleViewerImageNavigationKey(e)) {
+            e.preventDefault();
+            navigateViewerImageByOffset(e.key === 'ArrowLeft' ? -1 : 1);
+            return;
+        }
+
         if (e.key === 'Escape' && state.fileBrowserOpen && state.fileBrowserTab === 'viewer' && state.previewImagePath) {
             window.closeImagePreview();
             return;
@@ -2102,6 +2108,23 @@
             tagName === 'textarea' ||
             tagName === 'select'
         );
+    }
+
+    function shouldHandleViewerImageNavigationKey(event) {
+        if (!event || event.defaultPrevented) {
+            return false;
+        }
+        if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
+            return false;
+        }
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+            return false;
+        }
+        if (!state.fileBrowserOpen || state.fileBrowserTab !== 'viewer' || state.previewContentType !== 'image' || !state.previewImagePath) {
+            return false;
+        }
+
+        return !isKeyboardTextInput(document.activeElement);
     }
 
     function shouldKeepTabForUI(node) {
@@ -5903,6 +5926,27 @@
         setPreviewTarget(file, 'image');
         renderViewerPanel(true);
         setFileBrowserOpen(true, 'viewer');
+    }
+
+    function getViewerImageSiblings() {
+        return sortFiles(filterFilesForDisplay(state.files).visibleFiles).filter(function(file) {
+            return !file.isDir && isPreviewableImage(file.name);
+        });
+    }
+
+    function navigateViewerImageByOffset(offset) {
+        const imageFiles = getViewerImageSiblings();
+        const currentIndex = imageFiles.findIndex(function(file) {
+            return getFilePath(file) === state.previewImagePath;
+        });
+        const targetIndex = currentIndex + offset;
+
+        if (currentIndex === -1 || targetIndex < 0 || targetIndex >= imageFiles.length) {
+            return false;
+        }
+
+        previewImage(imageFiles[targetIndex]);
+        return true;
     }
 
     function previewPdf(file) {
