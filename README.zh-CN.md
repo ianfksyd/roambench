@@ -221,7 +221,7 @@ RoamBench 当前默认按这个顺序查找配置文件：
 - [Authentication Guide](docs/authentication.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
-- [GitHub Release Copy](docs/github-release-v0.2.0.md)
+- [GitHub Release Copy](docs/github-release-v0.3.0.md)
 - [GitHub Publishing Notes](docs/github-publishing.md)
 - [Changelog](CHANGELOG.md)
 - [License](LICENSE)

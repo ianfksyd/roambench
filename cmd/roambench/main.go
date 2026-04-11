@@ -23,7 +23,7 @@ import (
 	"github.com/ianf339/roambench/internal/terminal"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	port := flag.Int("port", 0, "Server port (overrides config)")

@@ -6,6 +6,24 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-11
+
+### Added
+
+- Viewer empty state can open a new draft directly from pasted clipboard text or images
+- Added release-note drafts and installer defaults for the `v0.3.0` release flow
+
+### Changed
+
+- Runtime identifiers are now fully aligned on `roambench`; legacy `liteterm` environment variable, cookie, config-path, and state-directory fallbacks were removed
+- Viewer empty-state copy now makes the clipboard-first draft flow more explicit
+- Publish helpers and README release-note links now point at the current `v0.3.0` release draft
+
+### Fixed
+
+- Closing viewer edit mode now returns the viewer to its empty state instead of forcing the editor into split layout
+- Opening a file preview while a viewer draft has content now goes through the same discard flow instead of silently replacing draft state
+
 ## [0.2.2] - 2026-04-10
 
 ### Added

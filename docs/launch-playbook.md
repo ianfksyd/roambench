@@ -101,7 +101,7 @@ What to do:
 
 - keep the English README as the default landing page
 - pin the screenshot-heavy README
-- publish the current public build as `v0.2.0`
+- publish the current public build as the next tagged release (currently `v0.3.0`)
 - keep the repo description tight and technical
 
 Angle:
@@ -204,7 +204,7 @@ Use this helper to generate community drafts and (optionally) post to X when cre
 - Example:
 
 ```bash
-scripts/publish-roambench.sh --tag v0.2.1 --targets x,reddit,hn,ph,v2ex,cn --dry-run
+scripts/publish-roambench.sh --tag v0.3.0 --targets x,reddit,hn,ph,v2ex,cn --dry-run
 ```
 
 Script output includes:
