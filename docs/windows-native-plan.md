@@ -2,7 +2,7 @@
 
 ## 目标
 
-将 RoamBench/LiteTerm 打包为 Windows 原生桌面应用，用户下载即用，无需 WSL。同时集成 opencode 自动安装功能。
+将 RoamBench 打包为 Windows 原生桌面应用，用户下载即用，无需 WSL。同时集成 opencode 自动安装功能。
 
 ---
 

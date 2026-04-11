@@ -25,15 +25,10 @@ This checklist separates the public-facing brand rename from the code-level rena
 - publish the first release using the `RoamBench` title pattern
 - add a note that commands still use `./roambench` until the code-level rename ships
 
-## Phase 3: Code-Level Rename With Compatibility
+## Phase 3: Code-Level Rename Cleanup
 
-- rename the binary from `liteterm` to `roambench`
-- keep `liteterm` as a compatibility alias for at least one release
-- support both `roambench.toml` and `liteterm.toml`
-- support both `ROAMBENCH_*` and `LITETERM_*` environment variables
-- support both `~/.config/roambench` and `~/.config/liteterm`
-- support both `~/.local/state/roambench` and `~/.local/state/liteterm`
-- keep existing browser local storage keys readable so users do not lose workspace state
+- keep the binary, config, state directory, cookies, and browser storage keys aligned on `roambench`
+- remove remaining pre-rebrand aliases from startup, auth, persistence, and packaging flows
 - review CLI help text, example configs, Makefile targets, and service logs
 
 ## Phase 4: Deployment And Packaging
@@ -44,17 +39,16 @@ This checklist separates the public-facing brand rename from the code-level rena
 - update shell completion, packaging metadata, and install snippets
 - update screenshots and demo assets after the binary rename lands
 
-## Phase 5: Compatibility Window
+## Phase 5: Final Verification
 
-- document the old and new names in `CHANGELOG.md`
-- mark `roambench` identifiers as deprecated, not removed, in the first rename release
-- keep compatibility for at least one minor release
-- only remove old identifiers after docs and release notes have warned users clearly
+- document the naming cleanup in `CHANGELOG.md`
+- verify configs, release assets, and local state paths only use `roambench`
+- check browser storage migration expectations before removing fallback readers
 
 ## Recommended Order
 
 1. finish the public-facing docs rebrand
 2. reserve domain and GitHub namespace
-3. ship a compatibility release with dual names
+3. ship a release that consolidates remaining names
 4. switch defaults to `roambench`
-5. remove old `roambench` identifiers later
+5. remove leftover pre-rebrand identifiers later

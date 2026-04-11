@@ -49,9 +49,6 @@ func authCookie(r *http.Request) *http.Cookie {
 	if cookie, err := r.Cookie(auth.CookieName); err == nil {
 		return cookie
 	}
-	if cookie, err := r.Cookie(auth.LegacyCookieName); err == nil {
-		return cookie
-	}
 	return nil
 }
 

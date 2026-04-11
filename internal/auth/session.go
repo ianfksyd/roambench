@@ -13,7 +13,6 @@ import (
 )
 
 const CookieName = "roambench_session"
-const LegacyCookieName = "liteterm_session"
 
 var ErrSessionExpired = errors.New("session expired")
 

@@ -248,17 +248,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, cookieName := range []string{auth.CookieName, auth.LegacyCookieName} {
-		http.SetCookie(w, &http.Cookie{
-			Name:     cookieName,
-			Value:    cookie,
-			Path:     s.cookiePath(),
-			HttpOnly: true,
-			Secure:   isSecureRequest(r, s.cfg.Server.TrustProxy),
-			SameSite: http.SameSiteStrictMode,
-			MaxAge:   int(s.cfg.Auth.GetSessionTimeout().Seconds()),
-		})
-	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.CookieName,
+		Value:    cookie,
+		Path:     s.cookiePath(),
+		HttpOnly: true,
+		Secure:   isSecureRequest(r, s.cfg.Server.TrustProxy),
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(s.cfg.Auth.GetSessionTimeout().Seconds()),
+	})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"authenticated": true,
@@ -271,21 +269,19 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	for _, cookieName := range []string{auth.CookieName, auth.LegacyCookieName} {
-		cookie, err := r.Cookie(cookieName)
-		if err == nil {
-			s.sessions.InvalidateSession(cookie.Value)
-		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     cookieName,
-			Value:    "",
-			Path:     s.cookiePath(),
-			HttpOnly: true,
-			Secure:   isSecureRequest(r, s.cfg.Server.TrustProxy),
-			SameSite: http.SameSiteStrictMode,
-			MaxAge:   -1,
-		})
+	cookie, err := r.Cookie(auth.CookieName)
+	if err == nil {
+		s.sessions.InvalidateSession(cookie.Value)
 	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.CookieName,
+		Value:    "",
+		Path:     s.cookiePath(),
+		HttpOnly: true,
+		Secure:   isSecureRequest(r, s.cfg.Server.TrustProxy),
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
 

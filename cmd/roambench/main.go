@@ -69,14 +69,14 @@ func main() {
 
 	// Check for password hash from env vars.
 	if cfg.Auth.PasswordHash == "" {
-		if envHash := firstNonEmpty(os.Getenv("ROAMBENCH_PASSWORD_HASH"), os.Getenv("LITETERM_PASSWORD_HASH")); envHash != "" {
+		if envHash := strings.TrimSpace(os.Getenv("ROAMBENCH_PASSWORD_HASH")); envHash != "" {
 			cfg.Auth.PasswordHash = envHash
 		}
 	}
 
 	// Check for single user from env vars.
 	if cfg.Auth.SingleUser == "" {
-		if envUser := firstNonEmpty(os.Getenv("ROAMBENCH_USER"), os.Getenv("LITETERM_USER")); envUser != "" {
+		if envUser := strings.TrimSpace(os.Getenv("ROAMBENCH_USER")); envUser != "" {
 			cfg.Auth.SingleUser = envUser
 		}
 	}
@@ -199,13 +199,4 @@ func isLoopbackHost(host string) bool {
 	trimmed := strings.Trim(host, "[]")
 	ip := net.ParseIP(trimmed)
 	return ip != nil && ip.IsLoopback()
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

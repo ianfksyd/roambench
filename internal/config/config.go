@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -95,9 +94,6 @@ func FindAndLoad() *Config {
 		"roambench.toml",
 		os.ExpandEnv("$HOME/.config/roambench/roambench.toml"),
 		"/etc/roambench/roambench.toml",
-		"liteterm.toml",
-		os.ExpandEnv("$HOME/.config/liteterm/liteterm.toml"),
-		"/etc/liteterm/liteterm.toml",
 	}
 	for _, p := range paths {
 		if cfg, err := Load(p); err == nil {
@@ -138,17 +134,7 @@ func (c *TerminalConfig) GetPersistDir() string {
 
 	homeDir, err := os.UserHomeDir()
 	if err == nil && homeDir != "" {
-		candidates := []string{
-			filepath.Join(homeDir, ".local", "state", "roambench", "terminals"),
-			filepath.Join(homeDir, ".local", "state", "liteterm", "terminals"),
-		}
-		sort.Strings(candidates)
-		for _, p := range candidates {
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
-		}
-		return candidates[0]
+		return filepath.Join(homeDir, ".local", "state", "roambench", "terminals")
 	}
 
 	return filepath.Join(os.TempDir(), "roambench", "terminals")

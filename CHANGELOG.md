@@ -44,7 +44,7 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 - Terminal panes now expose a visible right-side scrollbar instead of relying only on overlay system scrollbars or keyboard history navigation
 - Workspace persistence is no longer browser-only; the server now keeps the authoritative workspace copy for the current signed-in user
 - README positioning now leads with phone-friendly Codex / Claude Code reconnection and a shorter fast-path setup
-- Public-facing docs and launch copy now use the `RoamBench` product name while technical identifiers are now `roambench` with `liteterm` retained for compatibility
+- Public-facing docs and launch copy now use the `RoamBench` product name with technical identifiers aligned on `roambench`
 
 ### Fixed
 

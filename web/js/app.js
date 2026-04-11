@@ -5,7 +5,7 @@
     const MIN_EDITOR_HEIGHT = 140;
     const MIN_TERMINAL_HEIGHT = 140;
     const TERMINAL_SETTINGS_STORAGE_KEY = 'roambench.terminal-settings.v2';
-    const LEGACY_TERMINAL_SETTINGS_STORAGE_KEYS = ['liteterm.terminal-settings', 'roambench.terminal-settings'];
+    const TERMINAL_SETTINGS_FALLBACK_KEYS = ['roambench.terminal-settings'];
     const LANGUAGE_STORAGE_KEY = 'roambench.language.v1';
     const TERMINAL_WORKSPACES_STORAGE_KEY = 'roambench.terminal-workspaces.v1';
     const EDITOR_DRAFTS_STORAGE_KEY = 'roambench.editor-drafts.v1';
@@ -84,8 +84,8 @@
             'workspace.closeView': 'Close View',
             'workspace.duplicateHint': 'This terminal is already visible in another pane.',
             'viewer.tab': 'Viewer',
-            'viewer.emptyTitle': 'Select a file',
-            'viewer.emptyHint': 'Open an image, PDF, or text file from Files.',
+            'viewer.emptyTitle': 'Paste from clipboard',
+            'viewer.emptyHint': 'Paste text or an image here, or open a file from Files.',
             'viewer.copyText': 'Copy Text',
             'viewer.edit': 'Edit',
             'viewer.new': 'New',
@@ -286,8 +286,8 @@
             'workspace.closeView': '关闭视图',
             'workspace.duplicateHint': '这个终端已经显示在另一个窗格中。',
             'viewer.tab': '查看器',
-            'viewer.emptyTitle': '选择一个文件',
-            'viewer.emptyHint': '在文件标签中打开图片、PDF 或文本文件。',
+            'viewer.emptyTitle': '从剪贴板粘贴',
+            'viewer.emptyHint': '在这里粘贴文字或截图，或在文件标签中打开文件。',
             'viewer.copyText': '复制全文',
             'viewer.edit': '编辑',
             'viewer.new': '新建',
@@ -488,8 +488,8 @@
             'workspace.closeView': 'View を閉じる',
             'workspace.duplicateHint': 'この端末は別のペインですでに表示されています。',
             'viewer.tab': 'Viewer',
-            'viewer.emptyTitle': 'ファイルを選択',
-            'viewer.emptyHint': 'Files から画像、PDF、またはテキストファイルを開いてください。',
+            'viewer.emptyTitle': 'クリップボードから貼り付け',
+            'viewer.emptyHint': 'ここにテキストや画像を貼り付けるか、Files からファイルを開いてください。',
             'viewer.copyText': 'テキストをコピー',
             'viewer.edit': '編集',
             'viewer.new': '新規',
@@ -2381,6 +2381,13 @@
         const terminal = getActiveTerminal();
         let text;
 
+        if (shouldHandleViewerEmptyClipboardPaste(event)) {
+            if (openViewerDraftFromClipboard(event.clipboardData)) {
+                event.preventDefault();
+                return;
+            }
+        }
+
         if (!shouldHandleTerminalClipboardEvent() || !event.clipboardData) {
             return;
         }
@@ -2798,25 +2805,25 @@
         }
 
         if (!parsed) {
-            LEGACY_TERMINAL_SETTINGS_STORAGE_KEYS.some(function(key) {
-                let legacy = null;
+            TERMINAL_SETTINGS_FALLBACK_KEYS.some(function(key) {
+                let fallback = null;
 
                 try {
-                    legacy = JSON.parse(window.localStorage.getItem(key) || 'null');
+                    fallback = JSON.parse(window.localStorage.getItem(key) || 'null');
                 } catch (_) {
-                    legacy = null;
+                    fallback = null;
                 }
 
-                if (!legacy || typeof legacy !== 'object') {
+                if (!fallback || typeof fallback !== 'object') {
                     return false;
                 }
 
                 parsed = {
-                    fontFamily: legacy.fontFamily,
-                    fontSize: legacy.fontSize,
-                    cursorBlink: legacy.cursorBlink,
-                    themePreset: typeof legacy.themePreset === 'string' && TERMINAL_THEME_PRESETS[legacy.themePreset]
-                        ? legacy.themePreset
+                    fontFamily: fallback.fontFamily,
+                    fontSize: fallback.fontSize,
+                    cursorBlink: fallback.cursorBlink,
+                    themePreset: typeof fallback.themePreset === 'string' && TERMINAL_THEME_PRESETS[fallback.themePreset]
+                        ? fallback.themePreset
                         : DEFAULT_TERMINAL_SETTINGS.themePreset
                 };
 
@@ -5414,6 +5421,10 @@
         updateHiddenToggle();
         scheduleFitActiveTerminal();
 
+        if (open && state.fileBrowserTab === 'viewer' && state.viewerDraft && !state.previewImagePath) {
+            focusViewerDraftPrimaryField();
+        }
+
         if (open && !state.currentPath) {
             loadDirectory('~');
         }
@@ -5423,6 +5434,9 @@
         const nextTab = tab === 'viewer' ? 'viewer' : 'files';
         state.fileBrowserTab = nextTab;
         syncFileBrowserLayout();
+        if (nextTab === 'viewer' && state.fileBrowserOpen && state.viewerDraft && !state.previewImagePath) {
+            focusViewerDraftPrimaryField();
+        }
     }
 
     function syncFileBrowserLayout() {
@@ -5934,6 +5948,9 @@
     }
 
     function previewImage(file) {
+        if (!discardViewerDraft({ render: false })) {
+            return;
+        }
         setPreviewTarget(file, 'image');
         renderViewerPanel(true);
         setFileBrowserOpen(true, 'viewer');
@@ -5961,6 +5978,9 @@
     }
 
     function previewPdf(file) {
+        if (!discardViewerDraft({ render: false })) {
+            return;
+        }
         setPreviewTarget(file, 'pdf');
         renderViewerPanel(true);
         setFileBrowserOpen(true, 'viewer');
@@ -5969,6 +5989,10 @@
     async function previewTextFile(file, options) {
         const path = joinPath(state.currentPath, file.name);
         const config = options || {};
+
+        if (!discardViewerDraft({ render: false })) {
+            return;
+        }
 
         setPreviewTarget(file, 'text');
         renderViewerPanel(true);
@@ -6144,6 +6168,56 @@
         return '.png';
     }
 
+    function createViewerDraft() {
+        return {
+            kind: 'text',
+            filename: defaultDraftFilename('text'),
+            textContent: '',
+            imageBlob: null,
+            imageObjectUrl: '',
+            imageMime: '',
+            saving: false
+        };
+    }
+
+    function viewerDraftHasContent(draft) {
+        var target = draft || state.viewerDraft;
+        return Boolean(target && (target.textContent || target.imageBlob));
+    }
+
+    function focusViewerDraftPrimaryField() {
+        window.requestAnimationFrame(function() {
+            if (!state.viewerDraft) {
+                return;
+            }
+            if (state.viewerDraft.kind === 'image') {
+                if (fileViewerDraftFilename) {
+                    fileViewerDraftFilename.focus();
+                }
+                return;
+            }
+            if (fileViewerDraftTextarea) {
+                var end = fileViewerDraftTextarea.value.length;
+                fileViewerDraftTextarea.focus();
+                fileViewerDraftTextarea.setSelectionRange(end, end);
+            }
+        });
+    }
+
+    function ensureViewerDraft(options) {
+        var config = options || {};
+        if (!state.viewerDraft) {
+            state.viewerDraft = createViewerDraft();
+        }
+        if (config.render !== false) {
+            renderViewerPanel();
+        }
+        if (config.focus !== false) {
+            focusViewerDraftPrimaryField();
+        }
+        return state.viewerDraft;
+    }
+
     function revokeDraftImageUrl() {
         if (state.viewerDraft && state.viewerDraft.imageObjectUrl) {
             try {
@@ -6180,6 +6254,115 @@
         return trimmed.slice(0, dot) + nextExt;
     }
 
+    function discardViewerDraft(options) {
+        var config = options || {};
+        if (!state.viewerDraft) {
+            return true;
+        }
+        if (!config.force && state.viewerDraft.saving) {
+            return false;
+        }
+        if (!config.force && viewerDraftHasContent(state.viewerDraft)) {
+            if (!window.confirm(t('viewer.newDraft.discardConfirm'))) {
+                return false;
+            }
+        }
+        revokeDraftImageUrl();
+        state.viewerDraft = null;
+        setViewerDraftStatus('');
+        if (config.render !== false) {
+            renderViewerPanel();
+        }
+        return true;
+    }
+
+    function getClipboardImageFile(clipboard) {
+        var imageFile = null;
+        if (!clipboard || !clipboard.items) {
+            return null;
+        }
+        for (var i = 0; i < clipboard.items.length; i += 1) {
+            var item = clipboard.items[i];
+            if (item && item.kind === 'file' && item.type && item.type.indexOf('image/') === 0) {
+                imageFile = item.getAsFile();
+                if (imageFile) {
+                    return imageFile;
+                }
+            }
+        }
+        return null;
+    }
+
+    function acceptDraftText(text, options) {
+        var config = options || {};
+        var pastedText = typeof text === 'string' ? text : '';
+        var wasImage;
+
+        if (!state.viewerDraft || !pastedText) {
+            return false;
+        }
+
+        wasImage = state.viewerDraft.kind === 'image';
+        if (wasImage) {
+            if (!config.skipConfirm && !window.confirm(t('viewer.newDraft.switchToText'))) {
+                return false;
+            }
+            revokeDraftImageUrl();
+            state.viewerDraft.imageBlob = null;
+            state.viewerDraft.imageMime = '';
+            state.viewerDraft.filename = replaceFilenameExtension(state.viewerDraft.filename, '.txt')
+                || defaultDraftFilename('text');
+        } else if (!state.viewerDraft.filename) {
+            state.viewerDraft.filename = defaultDraftFilename('text');
+        }
+
+        state.viewerDraft.kind = 'text';
+        state.viewerDraft.textContent = pastedText;
+        setViewerDraftStatus('');
+        renderViewerPanel();
+        if (config.focus !== false) {
+            focusViewerDraftPrimaryField();
+        }
+        return true;
+    }
+
+    function openViewerDraftFromClipboard(clipboard) {
+        var imageFile = getClipboardImageFile(clipboard);
+        var pastedText = clipboard && clipboard.getData ? clipboard.getData('text/plain') : '';
+
+        if (!imageFile && !pastedText) {
+            return false;
+        }
+
+        ensureViewerDraft({ render: false, focus: false });
+        if (imageFile) {
+            if (!acceptDraftImage(imageFile)) {
+                return false;
+            }
+            focusViewerDraftPrimaryField();
+            return true;
+        }
+        return acceptDraftText(pastedText, { focus: true, skipConfirm: true });
+    }
+
+    function shouldHandleViewerEmptyClipboardPaste(event) {
+        var activeElement = document.activeElement;
+
+        if (!event || event.defaultPrevented || !event.clipboardData) {
+            return false;
+        }
+        if (!state.fileBrowserOpen || state.fileBrowserTab !== 'viewer') {
+            return false;
+        }
+        if (state.previewImagePath || state.viewerDraft) {
+            return false;
+        }
+        if (isKeyboardTextInput(activeElement) && (!fileViewerView || !fileViewerView.contains(activeElement))) {
+            return false;
+        }
+        return true;
+    }
+
     window.toggleViewerDraft = function() {
         if (state.viewerDraft) {
             cancelViewerDraft();
@@ -6188,48 +6371,16 @@
         openViewerDraft();
     };
 
-    function openViewerDraft() {
-        state.viewerDraft = {
-            kind: 'text',
-            filename: defaultDraftFilename('text'),
-            textContent: '',
-            imageBlob: null,
-            imageObjectUrl: '',
-            imageMime: '',
-            saving: false
-        };
-        renderViewerPanel();
-        if (fileViewerDraftTextarea) {
-            window.requestAnimationFrame(function() {
-                fileViewerDraftTextarea.focus();
-            });
-        }
+    function openViewerDraft(options) {
+        ensureViewerDraft(options);
     }
 
     window.cancelViewerDraft = function() {
-        if (!state.viewerDraft) {
-            return;
-        }
-        var hasContent = Boolean(
-            state.viewerDraft.textContent
-            || state.viewerDraft.imageBlob
-        );
-        if (hasContent && !state.viewerDraft.saving) {
-            if (!window.confirm(t('viewer.newDraft.discardConfirm'))) {
-                return;
-            }
-        }
-        closeViewerDraft();
+        discardViewerDraft();
     };
 
     function closeViewerDraft() {
-        if (!state.viewerDraft) {
-            return;
-        }
-        revokeDraftImageUrl();
-        state.viewerDraft = null;
-        setViewerDraftStatus('');
-        renderViewerPanel();
+        discardViewerDraft({ force: true });
     }
 
     window.clearViewerDraftImage = function() {
@@ -6258,22 +6409,12 @@
             return;
         }
 
-        var imageFile = null;
-        if (clipboard.items) {
-            for (var i = 0; i < clipboard.items.length; i += 1) {
-                var item = clipboard.items[i];
-                if (item && item.kind === 'file' && item.type && item.type.indexOf('image/') === 0) {
-                    imageFile = item.getAsFile();
-                    if (imageFile) {
-                        break;
-                    }
-                }
-            }
-        }
+        var imageFile = getClipboardImageFile(clipboard);
 
         if (imageFile) {
-            event.preventDefault();
-            acceptDraftImage(imageFile);
+            if (acceptDraftImage(imageFile)) {
+                event.preventDefault();
+            }
             return;
         }
 
@@ -6282,33 +6423,19 @@
             if (!pastedText) {
                 return;
             }
-            event.preventDefault();
-            if (!window.confirm(t('viewer.newDraft.switchToText'))) {
-                return;
-            }
-            revokeDraftImageUrl();
-            state.viewerDraft.kind = 'text';
-            state.viewerDraft.imageBlob = null;
-            state.viewerDraft.imageMime = '';
-            state.viewerDraft.textContent = pastedText;
-            state.viewerDraft.filename = replaceFilenameExtension(state.viewerDraft.filename, '.txt')
-                || defaultDraftFilename('text');
-            setViewerDraftStatus('');
-            renderViewerPanel();
-            if (fileViewerDraftTextarea) {
-                fileViewerDraftTextarea.focus();
-                fileViewerDraftTextarea.setSelectionRange(pastedText.length, pastedText.length);
+            if (acceptDraftText(pastedText)) {
+                event.preventDefault();
             }
         }
     }
 
     function acceptDraftImage(file) {
         if (!state.viewerDraft || !file) {
-            return;
+            return false;
         }
         if (state.viewerDraft.kind === 'text' && state.viewerDraft.textContent) {
             if (!window.confirm(t('viewer.newDraft.switchToImage'))) {
-                return;
+                return false;
             }
         }
         revokeDraftImageUrl();
@@ -6335,6 +6462,7 @@
         }
         setViewerDraftStatus(t('viewer.newDraft.imagePasted', { size: formatBytesShort(file.size) }));
         renderViewerPanel();
+        return true;
     }
 
     window.saveViewerDraft = async function() {
