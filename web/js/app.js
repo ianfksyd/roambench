@@ -8453,15 +8453,91 @@
         return SYNTAX_LANGUAGE_ALIASES[candidate] || candidate || 'plaintext';
     }
 
+    const KNOWN_TEXT_BASENAMES = new Set([
+        'dockerfile',
+        'makefile',
+        '.envrc',
+        '.gitignore',
+        '.gitattributes',
+        '.gitmodules',
+        '.dockerignore',
+        '.editorconfig',
+        '.npmrc',
+        '.yarnrc',
+        '.npmignore',
+        '.prettierignore',
+        '.eslintignore',
+        '.stylelintignore',
+        '.babelrc',
+        '.browserslistrc',
+        '.nvmrc',
+        '.bashrc',
+        '.bash_profile',
+        '.bash_aliases',
+        '.bash_logout',
+        '.zshrc',
+        '.profile',
+        '.tmux.conf',
+        'license',
+        'copying'
+    ]);
+
+    const SHELL_STYLE_TEXT_BASENAMES = new Set([
+        'dockerfile',
+        'makefile',
+        '.envrc',
+        '.bashrc',
+        '.bash_profile',
+        '.bash_aliases',
+        '.bash_logout',
+        '.zshrc',
+        '.profile',
+        '.tmux.conf'
+    ]);
+
+    const DATA_STYLE_TEXT_BASENAMES = new Set([
+        '.editorconfig',
+        '.npmrc',
+        '.yarnrc',
+        '.nvmrc'
+    ]);
+
+    function normalizeKnownTextFilename(path) {
+        return baseName(path || '').trim().toLowerCase();
+    }
+
+    function isDotEnvLikeFilename(path) {
+        return /^\.env(?:\..+)?$/i.test(normalizeKnownTextFilename(path));
+    }
+
+    function isKnownTextFilename(path) {
+        const name = normalizeKnownTextFilename(path);
+
+        if (!name) {
+            return false;
+        }
+        if (name === 'readme' || name.startsWith('readme.')) {
+            return true;
+        }
+        if (isDotEnvLikeFilename(name)) {
+            return true;
+        }
+
+        return KNOWN_TEXT_BASENAMES.has(name);
+    }
+
     function getSyntaxLanguageForPath(path) {
-        const name = baseName(path || '').toLowerCase();
+        const name = normalizeKnownTextFilename(path);
         const ext = name.indexOf('.') >= 0 ? name.slice(name.lastIndexOf('.') + 1) : '';
 
         if (!name) {
             return 'plaintext';
         }
-        if (name === 'dockerfile' || name === '.env' || name === 'makefile') {
+        if (isDotEnvLikeFilename(name) || SHELL_STYLE_TEXT_BASENAMES.has(name)) {
             return 'shell';
+        }
+        if (DATA_STYLE_TEXT_BASENAMES.has(name)) {
+            return 'data';
         }
         if (name === 'readme' || name.startsWith('readme.')) {
             return 'markdown';
@@ -9057,6 +9133,10 @@
     }
 
     function isPreviewableText(name) {
+        if (isKnownTextFilename(name)) {
+            return true;
+        }
+
         return /\.(txt|md|markdown|rmd|py|pyi|js|jsx|ts|tsx|json|ya?ml|toml|ini|cfg|conf|log|sh|bash|zsh|go|rs|java|c|cc|cpp|cxx|h|hpp|css|scss|html?|xml|sql|csv)$/i.test(name || '');
     }
 
