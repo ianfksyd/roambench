@@ -4824,18 +4824,6 @@
             const actions = document.createElement('span');
             actions.className = 'tab-actions';
 
-            const rename = document.createElement('button');
-            rename.type = 'button';
-            rename.className = 'tab-action tab-rename';
-            rename.textContent = '\u270E';
-            rename.title = t('workspace.renameView');
-            rename.setAttribute('aria-label', t('workspace.renameView'));
-            rename.onclick = function(e) {
-                e.stopPropagation();
-                renameWorkspace(workspace.id);
-            };
-            actions.appendChild(rename);
-
             const close = document.createElement('button');
             close.type = 'button';
             close.className = 'tab-action tab-close';
@@ -4847,6 +4835,18 @@
                 closeWorkspaceTab(workspace.id);
             };
             actions.appendChild(close);
+
+            const rename = document.createElement('button');
+            rename.type = 'button';
+            rename.className = 'tab-action tab-rename';
+            rename.textContent = '\u270E';
+            rename.title = t('workspace.renameView');
+            rename.setAttribute('aria-label', t('workspace.renameView'));
+            rename.onclick = function(e) {
+                e.stopPropagation();
+                renameWorkspace(workspace.id);
+            };
+            actions.appendChild(rename);
 
             tab.appendChild(actions);
 
