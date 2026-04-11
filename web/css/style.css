@@ -820,6 +820,7 @@ body.view-login #terminal-view {
     align-items: center;
     flex: 1;
     min-width: 0;
+    overflow: hidden;
     height: 100%;
     padding: 0;
     border: 0;
@@ -885,15 +886,22 @@ body.view-login #terminal-view {
     display: flex;
     align-items: center;
     margin-left: 6px;
+    flex-shrink: 0;
+    gap: 2px;
+    min-width: max-content;
 }
 
 .tab-action {
-    margin-left: 6px;
+    margin-left: 0;
     font-size: 13px;
-    opacity: 0.5;
+    opacity: 0.75;
     cursor: pointer;
     padding: 2px 4px;
     border-radius: 4px;
+}
+
+.tab.active .tab-action {
+    opacity: 1;
 }
 
 button.tab-action {
