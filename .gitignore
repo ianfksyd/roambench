@@ -1,14 +1,20 @@
 # Build artifacts
 /liteterm
 /liteterm.bak
+/liteterm.prev
 /liteterm.new
 /liteterm.next
 /roambench
+/roambench.prev
+/roambench.new
+/roambench.next
 /dist/
 
 # Local configuration
 /liteterm.toml
 /liteterm.lan.toml
+/roambench.toml
+/roambench.lan.toml
 
 # Local assistant and editor state
 /.claude/
