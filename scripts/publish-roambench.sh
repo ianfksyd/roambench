@@ -39,31 +39,31 @@ done
 RELEASE_URL="https://github.com/${REPO}/releases/tag/${TAG}"
 
 X_TWEET=$(cat <<EOF
-RoamBench is here.
+Keep your AI coding sessions running.
 
-A lightweight, self-hosted remote workbench for terminal-first workflows.
-Run 2/4 split CLI panes, keep tmux sessions alive, and continue long-running coding tasks from desktop to phone.
+RoamBench is a lightweight, self-hosted remote workbench for terminal-first workflows.
+Keep tmux sessions alive, reopen 2/4 split CLI panes, and reconnect from another device when you need to.
 
 ${RELEASE_URL}
 EOF
 )
 
 X_TWEET2=$(cat <<EOF
-If you're working with Codex, Claude Code, or other terminal agents, RoamBench helps you stay in flow across devices without a heavy browser IDE.
-Available for Linux amd64/arm64.
+Built for Codex, Claude Code, Kimi-CLI, OpenCode, and other long-running terminal workflows.
+It sits between SSH and a heavy browser IDE when you just need to resume work, inspect output, or make a small fix.
 EOF
 )
 
-EN_HN_TITLE="Show HN: RoamBench, a lightweight self-hosted remote workbench for terminal-first coding"
+EN_HN_TITLE="Show HN: RoamBench, a small self-hosted remote workbench between SSH and browser IDEs"
 EN_HN_BODY=$(cat <<EOF
-I built RoamBench to reconnect terminal-first workflows across desktop and phone.
+I built RoamBench because SSH felt too raw on mobile and full browser IDEs felt too heavy for long-running CLI workflows.
 
-It focuses on long-running agents and multi-pane CLI workspaces (2/4 panels), with persistent terminals and lightweight file editing.
+RoamBench keeps the pieces I actually wanted:
 
-- Self-hosted, private by default
-- Works with tmux-centered workflows
-- Mobile reconnect for monitoring and quick edits
-- Linux static binaries for amd64/arm64
+- tmux-backed session recovery
+- 2/4-pane CLI workspaces for Codex, Claude Code, and similar tools
+- lightweight file browsing and small edits next to the terminal
+- a single-user self-hosted setup that stays fast to reopen from phone or laptop
 
 Release:
 ${RELEASE_URL}
@@ -71,12 +71,12 @@ EOF
 )
 
 EN_POST_CN=$(cat <<EOF
-我做了一个轻量自托管远程工作台 RoamBench，面向 terminal-first 工作流（Codex / Claude Code / Kimi-CLI / OpenCode）。
+我做了一个轻量自托管远程工作台 RoamBench，让 AI coding session 可以一直跑着，你随时都能从别的设备接回。
 
 核心体验：
 - 2/4 分屏 CLI 工作区并发
 - tmux 会话持久，任务不中断
-- 手机可重新连接同一会话，随时查看进度
+- 不用完整浏览器 IDE 也能看输出、补小修改
 - Linux amd64 / arm64 静态发布包
 
 下载体验：${RELEASE_URL}
@@ -84,22 +84,22 @@ EOF
 )
 
 REDDIT_TEMPLATE=$(cat <<EOF
-I built RoamBench, a lightweight self-hosted remote workbench for terminal-first coding.
-I wanted reconnectable CLI sessions from phone without a heavy browser IDE, so I made this:
+I built RoamBench because I wanted reconnectable CLI sessions across devices without a heavy browser IDE.
+It is a lightweight self-hosted remote workbench for terminal-first coding:
 
 - 2/4 split terminal panes
 - Persistent tmux sessions
-- Lightweight file edits and quick command recovery
+- Lightweight file edits next to the terminal
 - Linux static binaries for amd64 / arm64
 
 Release notes: ${RELEASE_URL}
 EOF
 )
 
-PH_TITLE="RoamBench: lightweight remote terminal workbench for Codex / Claude Code workflows"
+PH_TITLE="RoamBench: lightweight remote workbench for terminal-first AI coding"
 PH_BODY=$(cat <<EOF
-RoamBench helps terminal-first coders keep long-running work in one place across desktop and phone.
-Built for split-workspace CLI workflows, it keeps tmux sessions stable and supports quick remote edits.
+RoamBench helps terminal-first coders keep long-running work alive across desktop and phone.
+Built for split-workspace CLI workflows, it keeps tmux sessions stable and supports quick remote edits without a heavy browser IDE.
 
 Highlights:
 - 2/4 pane workflows

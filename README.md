@@ -9,65 +9,55 @@
   </picture>
 </p>
 
-> Reconnect to Codex, Claude Code, and other terminal-first coding workflows from your phone.
+> Keep your AI coding sessions running. Reconnect from anywhere.
 
-- Keep terminal sessions alive with `tmux`
+- Keep `tmux` sessions alive
 - Run `2 / 4`-pane workspaces for Codex, Claude Code, Kimi-CLI, OpenCode, and other terminal-first tools
-- Start, supervise, resume, and lightly edit long-running work with low overhead from anywhere
+- Reconnect from another device, inspect output, and make small file edits without dragging in a full browser IDE
 
 RoamBench is a compact self-hosted remote workbench for one person.
 
 RoamBench is the public-facing product name.
 
-Think of it as the "enough" layer between SSH and a full browser IDE: open your machine from anywhere, keep terminal sessions alive, inspect files, copy and edit files, and kick off long-running work from a laptop or phone without dragging in a heavy stack.
+Think of it as the "enough" layer between SSH and a heavy browser IDE: open your machine from anywhere, reconnect to long-running terminal sessions, inspect files, and make small fixes from a laptop or phone without hauling in a full remote desktop stack.
 
-Built for:
+## Why People Open It
 
-- vibe coding and agent-driven development
-- side-by-side Codex, Claude Code, Kimi-CLI, OpenCode, and other long-running CLI workflows
-- remote scripts, data jobs, and long-running CLI tasks
-- checking progress and making small fixes away from your desk
-- directing terminal-first tools such as `openclaw` without needing a heavy desktop IDE
+- reconnect to a Codex / Claude Code / Kimi-CLI / OpenCode session from another device, including your phone
+- keep multiple terminal-first agents running side by side in `2 / 4` panes
+- watch scripts, data jobs, and long-running CLI tasks without babysitting SSH
+- inspect files, copy outputs, and make lightweight edits away from your desk
+- steer terminal-first tools such as `openclaw` without loading a heavy desktop IDE
 
-It combines:
+## Why Not SSH Or A Browser IDE
 
-- persistent terminal sessions backed by `tmux`
-- server-synced workspace tabs with `1 / 2 / 4` terminal layouts, including practical `2 / 4`-pane split views
-- a built-in file browser, text editor, and image viewer
-- file copy, rename / move, upload, download, and other lightweight file actions
-- safer editing tools and large-directory navigation helpers
-- browser-local UI settings for language, font, colors, and layout
-- a lightweight, low-overhead footprint that stays fast to reconnect and resume
+RoamBench is deliberately narrow: it keeps the highest-value pieces of remote work without trying to become a full browser IDE.
 
-## Why It Exists
+| Need | SSH | VS Code Remote / Browser IDE | RoamBench |
+| --- | --- | --- | --- |
+| Reconnect to the same long-running session from a phone | awkward | possible, but heavy | built for it |
+| Keep `tmux`-backed session recovery easy | manual | not the focus | built-in |
+| Run `2 / 4`-pane CLI workflows for coding agents | manual setup | IDE-first | built-in |
+| Inspect files and make small edits next to terminals | extra tools | yes, with more overhead | built-in |
+| Stay single-user and lightweight on a self-hosted box | yes | usually heavier | yes |
 
-RoamBench takes inspiration from tools like `rstudio-server`, but strips the idea down aggressively.
+It is not a multi-user platform. It is not trying to replace your full local editor for large edits. It stays opinionated so the UI can remain fast, small, and usable on mobile.
 
-The goal is not to recreate a full desktop IDE in the browser. The goal is to keep the highest-value pieces:
+## Screenshots
 
-- terminal access
-- file access
-- fast edits
-- session recovery
-- workspace layout that follows you across devices
+Desktop workspace with `4` terminals for long-running agent and CLI tasks:
 
-That tradeoff matters on phones and small screens, where a "full IDE in the browser" usually becomes slow and awkward. RoamBench is designed for "get in, start work, check work, fix small things, get out."
+![RoamBench workspace screenshot](docs/screenshot-main.png)
 
-## What It Is And Isn't
+Built-in file browser and editor for lightweight fixes:
 
-- It is a compact, single-user, self-hosted remote workbench.
-- It is good for starting, supervising, and lightly intervening in work from anywhere.
-- It is especially useful when the terminal is the main control surface for coding agents and automation tasks.
-- It is comfortable for running multiple terminal-first tools side by side in `2 / 4`-pane layouts.
-- It is not a multi-user platform.
-- It is not trying to replace a full local editor for heavy code editing.
-- It stays intentionally opinionated so the UI can remain fast, small, and usable on mobile.
+![RoamBench file browser screenshot](docs/screenshot-file-browser.png)
 
-## Screenshot
+Mobile reconnect to the same workspace:
 
-![RoamBench screenshot](docs/screenshot-main.png)
+![RoamBench mobile screenshot](docs/screenshot-mobile.jpg)
 
-## Features
+## Workflow Highlights
 
 - Single-user authentication with `password` or `pam`
 - IP allowlist support

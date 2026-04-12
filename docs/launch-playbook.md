@@ -9,15 +9,32 @@ Current technical identifiers: `roambench`
 
 Use this as the top-level promise:
 
-- English: `Reconnect to Codex, Claude Code, and other terminal-first coding workflows from your phone.`
-- 中文：`一个能让你在手机上接回 Codex、Claude Code 等 terminal-first coding 工作流的轻量远程工作台。`
-- 日本語: `スマホから Codex や Claude Code などの terminal-first coding ワークフローに復帰できる、軽量リモート作業台。`
+- English: `Keep your AI coding sessions running. Reconnect from anywhere.`
+- 中文：`让 AI coding session 一直跑着，你随时都能从别的设备接回。`
+- 日本語: `AI coding session を走らせ続けたまま、どこからでも復帰できる。`
 
 Back it up with these three points:
 
 - keep terminal sessions alive with `tmux`
 - run `2 / 4`-pane workspaces for multiple CLI tools side by side
-- stay lightweight enough to reconnect, inspect, and make small edits quickly
+- inspect output and make small file edits without a heavy browser IDE
+
+If the launch materials do not yet include a real mobile screenshot or GIF, keep phone as a supporting use case, not the main headline.
+
+## README Structure
+
+The README should feel like a product landing page for a technical buyer.
+
+Recommended section order:
+
+1. one-line hook
+2. three proof bullets
+3. use cases people instantly recognize
+4. comparison table against SSH and heavier browser IDEs
+5. screenshots
+6. fast path install
+
+If a section reads like a feature dump, compress it until the use case is obvious again.
 
 ## Demo Story
 
@@ -48,8 +65,10 @@ Before launch, capture at least these assets:
 - `docs/screenshot-file-browser.png`
   - supporting desktop screenshot
   - show the built-in file browser or editor next to the terminal workflow
-- `docs/screenshot-mobile.png`
+- `docs/screenshot-mobile.jpg`
   - phone screenshot reconnecting to the same session
+- `docs/screenshot-mobile-login.jpg`
+  - optional supporting login screenshot for mobile access flow
 - `docs/demo-resume.gif`
   - short clip: start task on desktop, reopen on phone, inspect output, make a small file change
 
@@ -100,7 +119,8 @@ Focus on channels where self-hosted, terminal-heavy, and AI-coding users already
 What to do:
 
 - keep the English README as the default landing page
-- pin the screenshot-heavy README
+- keep the README screenshot-heavy near the top
+- add a comparison table near the top (`SSH` vs browser IDE vs RoamBench)
 - publish the current public build as the next tagged release (currently `v0.3.0`)
 - keep the repo description tight and technical
 
@@ -116,9 +136,9 @@ Use a concrete title, not marketing language.
 
 Good title options:
 
-- `Show HN: RoamBench, reconnect to Codex and Claude Code from your phone`
-- `Show HN: RoamBench, reconnect to terminal-first coding workflows from your phone`
 - `Show HN: RoamBench, a small self-hosted remote workbench between SSH and browser IDEs`
+- `Show HN: RoamBench, reconnect terminal-first coding workflows from anywhere`
+- `Show HN: RoamBench, a lightweight remote workbench for terminal-first coding`
 
 Opening paragraph structure:
 
@@ -188,8 +208,11 @@ Current primary docs:
 ## Final Pre-Launch Checklist
 
 - README hero line is sharp
+- README opening is scenario-led, not feature-led
+- comparison table is visible without much scrolling
 - desktop screenshot shows `2 / 4` split views clearly
-- mobile screenshot exists
+- file browser screenshot exists
+- if the hero is phone-led, mobile screenshot exists
 - release notes mention Codex / Claude Code style workflows
 - quickstart path works without editing multiple config fields
 - one concrete "lightweight" proof point is ready
