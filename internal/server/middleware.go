@@ -57,12 +57,15 @@ func secureHeaders(cfg *config.Config, next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		// Chromium-family browsers often hand off inline PDFs to an internal extension/blob viewer.
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' 'unsafe-inline'; "+
+				"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "+
 				"style-src 'self' 'unsafe-inline'; "+
 				"connect-src 'self' ws: wss:; "+
-				"img-src 'self' data: blob:")
+				"img-src 'self' data: blob:; "+
+				"frame-src 'self' blob: data: chrome-extension: edge-extension: moz-extension:; "+
+				"child-src 'self' blob: data: chrome-extension: edge-extension: moz-extension:")
 		if isSecureRequest(r, cfg.Server.TrustProxy) {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}

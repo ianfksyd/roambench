@@ -106,7 +106,7 @@ func TestLegacyAuthStatusRouteWithoutCookieReturnsUnauthenticated(t *testing.T) 
 	}
 }
 
-func TestSecureHeadersAllowsInlineStylesForTerminalRenderer(t *testing.T) {
+func TestSecureHeadersAllowViewerCDNForOptionalPreviewLibraries(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Server.AllowAllIPs = true
 
@@ -122,8 +122,104 @@ func TestSecureHeadersAllowsInlineStylesForTerminalRenderer(t *testing.T) {
 	if !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
 		t.Fatalf("Content-Security-Policy = %q, want inline style allowance for terminal renderer", csp)
 	}
-	if strings.Contains(csp, "cdn.jsdelivr.net") {
-		t.Fatalf("Content-Security-Policy = %q, want terminal assets served locally", csp)
+	if !strings.Contains(csp, "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net") {
+		t.Fatalf("Content-Security-Policy = %q, want jsDelivr allowed for optional preview libraries", csp)
+	}
+	if !strings.Contains(csp, "frame-src 'self' blob: data: chrome-extension: edge-extension: moz-extension:") {
+		t.Fatalf("Content-Security-Policy = %q, want PDF viewer frame sources allowed", csp)
+	}
+	if !strings.Contains(csp, "child-src 'self' blob: data: chrome-extension: edge-extension: moz-extension:") {
+		t.Fatalf("Content-Security-Policy = %q, want PDF viewer child sources allowed", csp)
+	}
+}
+
+func TestSecureHeadersDenyFramingByDefault(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+
+	handler := secureHeaders(cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options = %q, want %q", got, "DENY")
+	}
+}
+
+func TestDownloadInlinePDFAllowsSameOriginFrame(t *testing.T) {
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current error: %v", err)
+	}
+
+	tempDir, err := os.MkdirTemp(currentUser.HomeDir, "roambench-download-test-")
+	if err != nil {
+		t.Fatalf("MkdirTemp error: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	pdfPath := filepath.Join(tempDir, "sample.pdf")
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4\n"), 0644); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+
+	fb := filebrowser.New()
+	handler := secureHeaders(cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fb.Download(currentUser.Username, r.URL.Query().Get("path"), w, r)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/download?path="+url.QueryEscape(pdfPath)+"&inline=1", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+		t.Fatalf("X-Frame-Options = %q, want %q", got, "SAMEORIGIN")
+	}
+}
+
+func TestDownloadInlineSymlinkToHTMLDeniesFrame(t *testing.T) {
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current error: %v", err)
+	}
+
+	tempDir, err := os.MkdirTemp(currentUser.HomeDir, "roambench-download-test-")
+	if err != nil {
+		t.Fatalf("MkdirTemp error: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	htmlPath := filepath.Join(tempDir, "sample.html")
+	if err := os.WriteFile(htmlPath, []byte("<html></html>"), 0644); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	symlinkPath := filepath.Join(tempDir, "safe.pdf")
+	if err := os.Symlink(htmlPath, symlinkPath); err != nil {
+		t.Fatalf("Symlink error: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+
+	fb := filebrowser.New()
+	handler := secureHeaders(cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fb.Download(currentUser.Username, r.URL.Query().Get("path"), w, r)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/download?path="+url.QueryEscape(symlinkPath)+"&inline=1", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options = %q, want %q", got, "DENY")
 	}
 }
 

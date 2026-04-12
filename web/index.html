@@ -529,7 +529,7 @@
             <div id="viewer-empty" class="viewer-empty">
                 <div class="viewer-empty-kicker" data-i18n="viewer.tab">Viewer</div>
                 <div class="viewer-empty-title" data-i18n="viewer.emptyTitle">Select a file</div>
-                <div class="viewer-empty-copy" data-i18n="viewer.emptyHint">Open an image, PDF, or text file from Files.</div>
+                <div class="viewer-empty-copy" data-i18n="viewer.emptyHint">Open an image, PDF, PPTX, or text file from Files.</div>
             </div>
             <div id="viewer-canvas" class="viewer-canvas" style="display:none">
                 <div id="viewer-loading-indicator" class="viewer-loading-indicator" aria-hidden="true">
@@ -542,6 +542,10 @@
                     <img id="image-preview-img" class="viewer-image viewer-image-full" alt="Image preview">
                 </div>
                 <iframe id="viewer-pdf-frame" class="viewer-pdf-frame" title="PDF preview" style="display:none"></iframe>
+                <div id="viewer-pptx-stage" class="viewer-pptx-stage" style="display:none">
+                    <div id="viewer-pptx-status" class="viewer-pptx-status" style="display:none" role="status" aria-live="polite"></div>
+                    <div id="viewer-pptx-host" class="viewer-pptx-host"></div>
+                </div>
                 <pre id="viewer-text-content" class="viewer-text-content" style="display:none"></pre>
                 <div id="viewer-editor-host" class="viewer-editor-host" style="display:none"></div>
             </div>

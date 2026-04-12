@@ -210,7 +210,11 @@ func (fb *FileBrowser) Download(username, path string, w http.ResponseWriter, r 
 		fb.writeFileError(w, err)
 		return
 	}
-	fb.serveResolvedFile(w, r, resolved, wantsInline(r))
+	inline := wantsInline(r)
+	if allowsEmbeddedViewerFrame(resolved, inline) {
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	}
+	fb.serveResolvedFile(w, r, resolved, inline)
 }
 
 func (fb *FileBrowser) Preview(username, path string, size int, w http.ResponseWriter, r *http.Request) {
@@ -246,6 +250,19 @@ func (fb *FileBrowser) Preview(username, path string, size int, w http.ResponseW
 func wantsInline(r *http.Request) bool {
 	inline := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("inline")))
 	return inline == "1" || inline == "true" || inline == "yes"
+}
+
+func allowsEmbeddedViewerFrame(resolved string, inline bool) bool {
+	if !inline {
+		return false
+	}
+
+	switch strings.ToLower(filepath.Ext(resolved)) {
+	case ".pdf", ".pptx":
+		return true
+	default:
+		return false
+	}
 }
 
 func bytesContainNUL(data []byte) bool {
