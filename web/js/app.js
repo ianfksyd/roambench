@@ -5530,11 +5530,79 @@
         fileList.appendChild(errorDiv);
     }
 
-    function getFileIconMarkup(isDir) {
-        if (isDir) {
-            return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.7l1.8 2H18.5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path><path d="M3.5 9h17"></path></svg>';
+    function getFileExtensionLabel(name) {
+        var trimmed = String(name || '').trim();
+        var lastDot = trimmed.lastIndexOf('.');
+
+        if (lastDot === -1) {
+            return '';
         }
-        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5A1.5 1.5 0 0 1 7.5 3.5z"></path><path d="M14 3.5v4h4"></path><path d="M8.5 12.5h7"></path><path d="M8.5 16h7"></path></svg>';
+
+        return trimmed.slice(lastDot + 1).toLowerCase();
+    }
+
+    function getFileTypeBadgeInfo(file) {
+        var extension = getFileExtensionLabel(file && file.name);
+        var label = extension ? extension.toUpperCase() : 'FILE';
+        var tone = 'generic';
+
+        if (file && file.isDir) {
+            return {
+                label: 'DIR',
+                tone: 'folder'
+            };
+        }
+
+        if (extension === 'jpeg') {
+            label = 'JPG';
+        } else if (extension === 'markdown') {
+            label = 'MD';
+        } else if (label.length > 5) {
+            label = label.slice(0, 5);
+        }
+
+        if (extension === 'pdf') {
+            tone = 'pdf';
+        } else if ([
+            'xlsx', 'xls', 'csv', 'tsv', 'numbers'
+        ].indexOf(extension) !== -1) {
+            tone = 'sheet';
+        } else if ([
+            'ppt', 'pptx', 'key'
+        ].indexOf(extension) !== -1) {
+            tone = 'slides';
+        } else if ([
+            'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic', 'bmp', 'avif'
+        ].indexOf(extension) !== -1) {
+            tone = 'image';
+        } else if ([
+            'zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar'
+        ].indexOf(extension) !== -1) {
+            tone = 'archive';
+        } else if ([
+            'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'json', 'html', 'css', 'go', 'py', 'sh', 'sql', 'yml', 'yaml', 'toml', 'env'
+        ].indexOf(extension) !== -1) {
+            tone = 'code';
+        } else if ([
+            'doc', 'docx', 'txt', 'md', 'rtf', 'pages'
+        ].indexOf(extension) !== -1) {
+            tone = 'text';
+        }
+
+        return {
+            label: label || 'FILE',
+            tone: tone
+        };
+    }
+
+    function createFileTypeBadge(file) {
+        var info = getFileTypeBadgeInfo(file);
+        var badge = document.createElement('span');
+
+        badge.className = 'file-type-badge is-' + info.tone;
+        badge.textContent = info.label;
+        badge.setAttribute('aria-hidden', 'true');
+        return badge;
     }
 
     window.setFileSort = function(key) {
@@ -5664,15 +5732,11 @@
                 main.appendChild(checkbox);
             }
 
-            const icon = document.createElement('span');
-            icon.className = 'file-icon ' + (file.isDir ? 'folder' : 'file');
-            icon.innerHTML = getFileIconMarkup(file.isDir);
-
             const name = document.createElement('span');
             name.className = 'file-name';
             appendHighlightedFileName(name, file.name, fileSet.query);
 
-            main.appendChild(icon);
+            main.appendChild(createFileTypeBadge(file));
             main.appendChild(name);
 
             const size = document.createElement('span');
