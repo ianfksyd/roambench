@@ -6008,30 +6008,7 @@
             return;
         }
 
-        if (isPreviewableText(file.name)) {
-            previewTextFile(file);
-            return;
-        }
-
-        openTextFile(file);
-    }
-
-    async function openTextFile(file) {
-        const path = joinPath(state.currentPath, file.name);
-
-        try {
-            await openEditorPath(path, file.name);
-            setFileBrowserOpen(false);
-        } catch (err) {
-            if (isHandledAuthError(err)) {
-                return;
-            }
-
-            const message = t('files.downloadInstead', { name: file.name, message: err.message });
-            if (confirm(message)) {
-                downloadPath(path);
-            }
-        }
+        previewTextFile(file);
     }
 
     function deleteFile(file) {
@@ -10191,14 +10168,6 @@
 
     function isPreviewableXlsx(name) {
         return /\.xlsx$/i.test(name || '');
-    }
-
-    function isPreviewableText(name) {
-        if (isKnownTextFilename(name)) {
-            return true;
-        }
-
-        return /\.(txt|md|markdown|rmd|py|pyi|js|jsx|ts|tsx|json|ya?ml|toml|ini|cfg|conf|log|sh|bash|zsh|go|rs|java|c|cc|cpp|cxx|h|hpp|css|scss|html?|xml|sql|csv)$/i.test(name || '');
     }
 
     function supportsLowResPreview(name) {
