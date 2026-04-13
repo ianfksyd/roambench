@@ -1019,11 +1019,47 @@ button.tab-action:focus-visible {
     min-height: 44px;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+}
+
+.editor-toolbar-meta {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.editor-toolbar-stats {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.editor-toolbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex: 0 1 auto;
+    min-width: 0;
     flex-wrap: wrap;
+}
+
+.editor-toolbar-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 2px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.035);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
 .editor-save-as-btn,
@@ -1041,9 +1077,27 @@ button.tab-action:focus-visible {
     color: var(--accent);
 }
 
+.editor-action-btn {
+    min-width: 34px;
+    padding: 0 10px;
+    font-weight: 700;
+}
+
+.editor-save-btn.active {
+    background: linear-gradient(135deg, rgba(86, 211, 100, 0.26), rgba(78, 201, 176, 0.2));
+    border-color: rgba(86, 211, 100, 0.34);
+    color: #d8ffe6;
+}
+
+.editor-close-btn:hover:not(:disabled) {
+    color: #ffd6d6;
+    border-color: rgba(255, 120, 120, 0.24);
+    background: rgba(255, 120, 120, 0.12);
+}
+
 .editor-path {
     flex: 1;
-    min-width: 180px;
+    min-width: 140px;
     font-size: 12px;
     font-family: monospace;
     color: var(--text);
@@ -2940,13 +2994,157 @@ button.tab-action:focus-visible {
 .viewer-editor-host {
     display: flex;
     overflow: hidden;
+    padding: 18px;
+    box-sizing: border-box;
+    background:
+        radial-gradient(circle at top left, rgba(86, 156, 214, 0.14), transparent 36%),
+        linear-gradient(180deg, rgba(16, 21, 28, 0.92), rgba(12, 17, 24, 0.96));
 }
 
 .editor-pane.editor-pane-embedded {
+    width: 100%;
     height: auto !important;
     min-height: 0;
     border-bottom: 0;
     flex: 1;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    overflow: hidden;
+    background: linear-gradient(180deg, rgba(28, 34, 43, 0.98), rgba(19, 23, 31, 0.98));
+    box-shadow:
+        0 20px 48px rgba(0, 0, 0, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.editor-pane.editor-pane-embedded .editor-tab-bar {
+    min-height: 44px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.editor-pane.editor-pane-embedded .editor-tab {
+    min-height: 44px;
+    padding: 0 16px;
+}
+
+.editor-pane.editor-pane-embedded .editor-toolbar {
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 16px 12px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+    border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.editor-pane.editor-pane-embedded .editor-toolbar-meta {
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.editor-pane.editor-pane-embedded .editor-toolbar-stats {
+    gap: 10px;
+}
+
+.editor-pane.editor-pane-embedded .editor-path {
+    flex: 1 1 280px;
+    min-width: 0;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(9, 14, 20, 0.48);
+    color: #eef5fc;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.editor-pane.editor-pane-embedded .editor-caret,
+.editor-pane.editor-pane-embedded .editor-status {
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(9, 14, 20, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.editor-pane.editor-pane-embedded .editor-toolbar-actions {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+}
+
+.editor-pane.editor-pane-embedded .editor-toolbar-actions::-webkit-scrollbar {
+    display: none;
+}
+
+.editor-pane.editor-pane-embedded .editor-toolbar-group {
+    flex: 0 0 auto;
+    padding: 4px;
+    border-radius: 14px;
+    background: rgba(9, 14, 20, 0.38);
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+        0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.editor-pane.editor-pane-embedded .editor-toolbar-actions .header-btn {
+    min-height: 36px;
+    min-width: 40px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(255, 255, 255, 0.04);
+    color: #dfeaf6;
+}
+
+.editor-pane.editor-pane-embedded .editor-toolbar-actions .header-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.editor-pane.editor-pane-embedded .editor-tool-btn {
+    letter-spacing: 0.02em;
+}
+
+.editor-pane.editor-pane-embedded .editor-tool-btn.active {
+    background: linear-gradient(135deg, rgba(42, 112, 104, 0.9), rgba(37, 88, 82, 0.92));
+    border-color: rgba(103, 222, 204, 0.28);
+    color: #b8fff0;
+    box-shadow: 0 10px 24px rgba(17, 84, 74, 0.26);
+}
+
+.editor-pane.editor-pane-embedded .editor-save-btn {
+    background: linear-gradient(135deg, rgba(30, 87, 68, 0.78), rgba(34, 100, 79, 0.86));
+    border-color: rgba(111, 228, 184, 0.2);
+    color: #dbffeb;
+}
+
+.editor-pane.editor-pane-embedded .editor-save-btn.active {
+    background: linear-gradient(135deg, rgba(48, 140, 104, 0.96), rgba(35, 117, 87, 0.96));
+    border-color: rgba(133, 255, 205, 0.28);
+    color: #ffffff;
+    box-shadow: 0 12px 26px rgba(37, 122, 90, 0.3);
+}
+
+.editor-pane.editor-pane-embedded .editor-save-as-btn {
+    background: rgba(255, 255, 255, 0.06);
+    color: #ecf4fc;
+}
+
+.editor-pane.editor-pane-embedded .editor-close-btn {
+    color: #f6d8d8;
+}
+
+.editor-pane.editor-pane-embedded .editor-body,
+.editor-pane.editor-pane-embedded .editor-code-host {
+    background: #12161d;
+}
+
+.editor-pane.editor-pane-embedded .editor-line-numbers {
+    background: #0f1319;
+    border-right-color: rgba(255, 255, 255, 0.05);
+}
+
+.editor-pane.editor-pane-embedded .editor-highlight,
+.editor-pane.editor-pane-embedded .editor-textarea {
+    padding: 16px 18px;
 }
 
 .viewer-image {
@@ -3165,8 +3363,22 @@ button.tab-action:focus-visible {
         gap: 6px;
     }
 
-    .editor-path {
+    .editor-toolbar-meta {
         flex-basis: 100%;
+        flex-wrap: wrap;
+    }
+
+    .editor-toolbar-actions {
+        flex-basis: 100%;
+        justify-content: flex-start;
+    }
+
+    .editor-toolbar-group {
+        max-width: 100%;
+    }
+
+    .editor-path {
+        flex-basis: auto;
     }
 
     .editor-search-group {

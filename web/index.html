@@ -100,16 +100,26 @@
             <div class="editor-pane" id="editor-pane" style="display:none">
                 <div class="editor-tab-bar" id="editor-tab-bar"></div>
                 <div class="editor-toolbar">
-                    <span class="editor-path" id="editor-path" data-i18n="editor.noFileOpen">No file open</span>
-                    <span class="editor-caret" id="editor-caret"></span>
-                    <span class="editor-status" id="editor-status"></span>
-                    <button class="header-btn editor-tool-btn" id="editor-line-numbers-btn" onclick="toggleEditorLineNumbers()" title="Line Numbers" aria-label="Line Numbers" data-i18n-title="editor.lineNumbers" data-i18n-aria-label="editor.lineNumbers" data-i18n="editor.lineNumbersShort">123</button>
-                    <button class="header-btn editor-tool-btn" id="editor-find-btn" onclick="openEditorFind()" title="Find / Replace" aria-label="Find / Replace" data-i18n-title="editor.find" data-i18n-aria-label="editor.find" data-i18n="editor.findShort">Find</button>
-                    <button class="header-btn editor-tool-btn" id="editor-goto-btn" onclick="openEditorGoToLine()" title="Go to Line" aria-label="Go to Line" data-i18n-title="editor.goToLine" data-i18n-aria-label="editor.goToLine" data-i18n="editor.goToLineShort">Go</button>
-                    <button class="header-btn" id="editor-save-btn" onclick="saveActiveEditor()" title="Save" data-i18n-title="editor.save">&#128190;</button>
-                    <button class="header-btn editor-save-as-btn" id="editor-save-as-btn" onclick="saveActiveEditorAs()" title="Save As" data-i18n-title="editor.saveAs" data-i18n="editor.saveAsShort">As</button>
-                    <button class="header-btn" id="editor-max-btn" onclick="toggleMaximize('editor')" title="Maximize Editor" data-i18n-title="editor.maximize">&#x26F6;</button>
-                    <button class="header-btn" onclick="closeActiveEditor()" title="Close Editor" data-i18n-title="editor.close">&#x2715;</button>
+                    <div class="editor-toolbar-meta">
+                        <span class="editor-path" id="editor-path" data-i18n="editor.noFileOpen">No file open</span>
+                        <div class="editor-toolbar-stats">
+                            <span class="editor-caret" id="editor-caret"></span>
+                            <span class="editor-status" id="editor-status"></span>
+                        </div>
+                    </div>
+                    <div class="editor-toolbar-actions">
+                        <div class="editor-toolbar-group editor-toolbar-group-tools">
+                            <button class="header-btn editor-tool-btn" id="editor-line-numbers-btn" onclick="toggleEditorLineNumbers()" title="Line Numbers" aria-label="Line Numbers" data-i18n-title="editor.lineNumbers" data-i18n-aria-label="editor.lineNumbers" data-i18n="editor.lineNumbersShort">123</button>
+                            <button class="header-btn editor-tool-btn" id="editor-find-btn" onclick="openEditorFind()" title="Find / Replace" aria-label="Find / Replace" data-i18n-title="editor.find" data-i18n-aria-label="editor.find" data-i18n="editor.findShort">Find</button>
+                            <button class="header-btn editor-tool-btn" id="editor-goto-btn" onclick="openEditorGoToLine()" title="Go to Line" aria-label="Go to Line" data-i18n-title="editor.goToLine" data-i18n-aria-label="editor.goToLine" data-i18n="editor.goToLineShort">Go</button>
+                        </div>
+                        <div class="editor-toolbar-group editor-toolbar-group-file">
+                            <button class="header-btn editor-action-btn editor-save-btn" id="editor-save-btn" onclick="saveActiveEditor()" title="Save" data-i18n-title="editor.save">&#128190;</button>
+                            <button class="header-btn editor-action-btn editor-save-as-btn" id="editor-save-as-btn" onclick="saveActiveEditorAs()" title="Save As" data-i18n-title="editor.saveAs" data-i18n="editor.saveAsShort">As</button>
+                            <button class="header-btn editor-action-btn" id="editor-max-btn" onclick="toggleMaximize('editor')" title="Maximize Editor" data-i18n-title="editor.maximize">&#x26F6;</button>
+                            <button class="header-btn editor-action-btn editor-close-btn" onclick="closeActiveEditor()" title="Close Editor" data-i18n-title="editor.close">&#x2715;</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="editor-search-bar" id="editor-search-bar" style="display:none">
                     <div class="editor-search-group editor-search-group-find">

@@ -5547,10 +5547,7 @@
             fileDragDepth = 0;
             setFileDropActive(false);
             resetFileSelection();
-            if (state.previewEditMode) {
-                state.previewEditMode = false;
-                applyEditorLayout();
-            }
+            exitViewerEditMode();
         }
         syncFileBrowserContainerMode();
         syncFileBrowserLayout();
@@ -5569,6 +5566,9 @@
     function setFileBrowserTab(tab) {
         const nextTab = tab === 'viewer' ? 'viewer' : 'files';
         state.fileBrowserTab = nextTab;
+        if (nextTab !== 'viewer') {
+            exitViewerEditMode();
+        }
         syncFileBrowserLayout();
         if (nextTab === 'viewer' && state.fileBrowserOpen && state.viewerDraft && !state.previewImagePath) {
             focusViewerDraftPrimaryField();
@@ -6278,6 +6278,15 @@
             state.activeEditorPath === state.previewImagePath &&
             fileViewerEditorHost
         );
+    }
+
+    function exitViewerEditMode() {
+        if (!state.previewEditMode) {
+            return;
+        }
+
+        state.previewEditMode = false;
+        applyEditorLayout();
     }
 
     function resetViewerPreviewState() {
