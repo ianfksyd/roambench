@@ -4,6 +4,10 @@
 
     const MIN_EDITOR_HEIGHT = 140;
     const MIN_TERMINAL_HEIGHT = 140;
+    const EMBEDDED_FILE_PANEL_DEFAULT_WIDTH_RATIO = 0.38;
+    const EMBEDDED_FILE_PANEL_DEFAULT_MAX_WIDTH = 520;
+    const EMBEDDED_FILE_PANEL_MAX_WIDTH = 920;
+    const EMBEDDED_FILE_PANEL_MIN_TERMINAL_WIDTH = 320;
     const TERMINAL_SETTINGS_STORAGE_KEY = 'roambench.terminal-settings.v2';
     const TERMINAL_SETTINGS_FALLBACK_KEYS = ['roambench.terminal-settings'];
     const LANGUAGE_STORAGE_KEY = 'roambench.language.v1';
@@ -835,6 +839,8 @@
         ctrlActive: false,
         fileBrowserOpen: false,
         fileBrowserSingleDesktopDismissed: false,
+        embeddedFileBrowserWidth: null,
+        embeddedFileBrowserDrag: null,
         fileBrowserTab: 'files',
         fileSelectionMode: false,
         selectedFilePaths: [],
@@ -906,6 +912,7 @@
     const memoryIndicator = document.getElementById('memory-indicator');
     const memoryIndicatorText = document.getElementById('memory-indicator-text');
     const filePanel = document.getElementById('file-panel');
+    const filePanelResizer = document.getElementById('file-panel-resizer');
     const fileOverlay = document.getElementById('file-overlay');
     const filePathLabel = document.getElementById('file-path');
     const fileFilterWrap = document.getElementById('file-filter-wrap');
@@ -1013,6 +1020,9 @@
     window.addEventListener('pointermove', handleEditorDrag);
     window.addEventListener('pointerup', endEditorDrag);
     window.addEventListener('pointercancel', endEditorDrag);
+    window.addEventListener('pointermove', handleEmbeddedFileBrowserDrag);
+    window.addEventListener('pointerup', endEmbeddedFileBrowserDrag);
+    window.addEventListener('pointercancel', endEmbeddedFileBrowserDrag);
     window.addEventListener('pointerup', endWorkspaceTabDrag);
     window.addEventListener('pointercancel', endWorkspaceTabDrag);
     window.addEventListener('resize', updateWorkspaceTabScrollButtons);
@@ -1341,6 +1351,7 @@
 
         if (!stored) {
             state.showEditorLineNumbers = true;
+            state.embeddedFileBrowserWidth = null;
             return;
         }
 
@@ -1351,12 +1362,16 @@
         }
 
         state.showEditorLineNumbers = !payload || payload.showLineNumbers !== false;
+        state.embeddedFileBrowserWidth = payload && Number.isFinite(payload.embeddedFileBrowserWidth) && payload.embeddedFileBrowserWidth > 0
+            ? Number(payload.embeddedFileBrowserWidth)
+            : null;
     }
 
     function persistEditorUIPreferences() {
         try {
             window.localStorage.setItem(EDITOR_UI_STORAGE_KEY, JSON.stringify({
-                showLineNumbers: state.showEditorLineNumbers
+                showLineNumbers: state.showEditorLineNumbers,
+                embeddedFileBrowserWidth: state.embeddedFileBrowserWidth
             }));
         } catch (_) {
             // Ignore storage failures.
@@ -2023,6 +2038,9 @@
         editorReplaceInput.addEventListener('keydown', handleEditorReplaceKeyDown);
         editorGoToLineInput.addEventListener('keydown', handleEditorGoToLineKeyDown);
         splitter.addEventListener('pointerdown', beginEditorDrag);
+        if (filePanelResizer) {
+            filePanelResizer.addEventListener('pointerdown', beginEmbeddedFileBrowserDrag);
+        }
         window.addEventListener('beforeunload', handleBeforeUnload);
         filePanel.addEventListener('dragenter', handleFilePanelDragEnter);
         filePanel.addEventListener('dragover', handleFilePanelDragOver);
@@ -5388,6 +5406,76 @@
         return Boolean(state.fileBrowserOpen && isSinglePaneDesktopWorkspace(getActiveWorkspace()));
     }
 
+    function getEmbeddedFileBrowserContainerWidth() {
+        if (terminalContainer) {
+            return terminalContainer.getBoundingClientRect().width || 0;
+        }
+        return window.innerWidth || document.documentElement.clientWidth || 0;
+    }
+
+    function getEmbeddedFileBrowserDefaultWidth() {
+        return Math.round(Math.min(
+            getEmbeddedFileBrowserContainerWidth() * EMBEDDED_FILE_PANEL_DEFAULT_WIDTH_RATIO,
+            EMBEDDED_FILE_PANEL_DEFAULT_MAX_WIDTH
+        ));
+    }
+
+    function getEmbeddedFileBrowserMinWidth() {
+        return getEmbeddedFileBrowserDefaultWidth();
+    }
+
+    function getEmbeddedFileBrowserMaxWidth() {
+        const minWidth = getEmbeddedFileBrowserMinWidth();
+
+        return Math.max(minWidth, Math.round(Math.min(
+            EMBEDDED_FILE_PANEL_MAX_WIDTH,
+            getEmbeddedFileBrowserContainerWidth() - EMBEDDED_FILE_PANEL_MIN_TERMINAL_WIDTH
+        )));
+    }
+
+    function clampEmbeddedFileBrowserWidth(width) {
+        const minWidth = getEmbeddedFileBrowserMinWidth();
+        const maxWidth = getEmbeddedFileBrowserMaxWidth();
+        const nextWidth = Number(width);
+
+        if (!Number.isFinite(nextWidth)) {
+            return minWidth;
+        }
+
+        return Math.max(minWidth, Math.min(Math.round(nextWidth), maxWidth));
+    }
+
+    function syncEmbeddedFileBrowserWidth() {
+        let minWidth;
+        let width;
+
+        if (!terminalContainer) {
+            return;
+        }
+
+        if (!shouldEmbedFileBrowser()) {
+            terminalContainer.style.removeProperty('--embedded-file-panel-width');
+            terminalContainer.style.removeProperty('--embedded-file-panel-min-width');
+            if (filePanelResizer) {
+                filePanelResizer.classList.remove('disabled');
+            }
+            return;
+        }
+
+        minWidth = getEmbeddedFileBrowserMinWidth();
+        width = clampEmbeddedFileBrowserWidth(
+            Number.isFinite(state.embeddedFileBrowserWidth) && state.embeddedFileBrowserWidth > 0
+                ? state.embeddedFileBrowserWidth
+                : minWidth
+        );
+
+        terminalContainer.style.setProperty('--embedded-file-panel-min-width', minWidth + 'px');
+        terminalContainer.style.setProperty('--embedded-file-panel-width', width + 'px');
+        if (filePanelResizer) {
+            filePanelResizer.classList.toggle('disabled', getEmbeddedFileBrowserMaxWidth() <= minWidth + 1);
+        }
+    }
+
     function syncFileBrowserContainerMode() {
         const embedded = shouldEmbedFileBrowser();
 
@@ -5396,6 +5484,7 @@
         }
         filePanel.classList.toggle('open', state.fileBrowserOpen);
         fileOverlay.style.display = state.fileBrowserOpen && !embedded ? 'block' : 'none';
+        syncEmbeddedFileBrowserWidth();
     }
 
     function syncWorkspaceFileBrowserDefaults(reason) {
@@ -9187,6 +9276,63 @@
 
         return saveEditorToPath(editor, nextPath);
     };
+
+    function beginEmbeddedFileBrowserDrag(e) {
+        if (!shouldEmbedFileBrowser() || !filePanel || !filePanelResizer || filePanelResizer.classList.contains('disabled')) {
+            return;
+        }
+
+        state.embeddedFileBrowserDrag = {
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startWidth: filePanel.getBoundingClientRect().width,
+            width: filePanel.getBoundingClientRect().width
+        };
+
+        filePanelResizer.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'col-resize';
+        if (filePanelResizer.setPointerCapture) {
+            filePanelResizer.setPointerCapture(e.pointerId);
+        }
+        e.preventDefault();
+    }
+
+    function handleEmbeddedFileBrowserDrag(e) {
+        const drag = state.embeddedFileBrowserDrag;
+        let nextWidth;
+
+        if (!drag || drag.pointerId !== e.pointerId || !terminalContainer) {
+            return;
+        }
+
+        nextWidth = clampEmbeddedFileBrowserWidth(drag.startWidth + (drag.startX - e.clientX));
+        drag.width = nextWidth;
+        terminalContainer.style.setProperty('--embedded-file-panel-width', nextWidth + 'px');
+        scheduleFitActiveTerminal();
+    }
+
+    function endEmbeddedFileBrowserDrag(e) {
+        const drag = state.embeddedFileBrowserDrag;
+
+        if (!drag || drag.pointerId !== e.pointerId) {
+            return;
+        }
+
+        state.embeddedFileBrowserDrag = null;
+        state.embeddedFileBrowserWidth = clampEmbeddedFileBrowserWidth(drag.width || drag.startWidth);
+        persistEditorUIPreferences();
+        if (filePanelResizer) {
+            filePanelResizer.classList.remove('dragging');
+            if (filePanelResizer.releasePointerCapture) {
+                filePanelResizer.releasePointerCapture(e.pointerId);
+            }
+        }
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        syncEmbeddedFileBrowserWidth();
+        scheduleFitActiveTerminal();
+    }
 
     function beginEditorDrag(e) {
         if (state.editors.length === 0) {

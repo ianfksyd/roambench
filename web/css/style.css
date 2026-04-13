@@ -1603,11 +1603,17 @@ button.tab-action:focus-visible {
     box-shadow: -24px 0 60px rgba(0, 0, 0, 0.38);
 }
 
+.file-panel-resizer {
+    display: none;
+}
+
 .file-panel.open {
     right: 0;
 }
 
 .terminal-container.file-browser-embedded {
+    --embedded-file-panel-width: min(38vw, 520px);
+    --embedded-file-panel-min-width: min(38vw, 520px);
     gap: 10px;
     padding: 10px;
 }
@@ -1620,14 +1626,65 @@ button.tab-action:focus-visible {
     position: relative;
     top: auto;
     right: auto;
-    width: min(38vw, 520px);
-    max-width: 46%;
+    width: var(--embedded-file-panel-width);
+    min-width: var(--embedded-file-panel-min-width);
+    max-width: min(920px, calc(100% - 320px));
     height: auto;
-    flex: 0 0 min(38vw, 520px);
+    flex: 0 0 var(--embedded-file-panel-width);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
     transition: none;
+}
+
+.terminal-container.file-browser-embedded .file-panel-resizer {
+    position: absolute;
+    top: 10px;
+    bottom: 10px;
+    left: -15px;
+    width: 20px;
+    display: block;
+    z-index: 3;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.terminal-container.file-browser-embedded .file-panel-resizer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.terminal-container.file-browser-embedded .file-panel-resizer::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 4px;
+    height: 56px;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: rgba(215, 226, 237, 0.44);
+    box-shadow: 0 0 0 1px rgba(9, 14, 20, 0.24);
+}
+
+.terminal-container.file-browser-embedded .file-panel-resizer:hover::after,
+.terminal-container.file-browser-embedded .file-panel-resizer.dragging::after {
+    background: rgba(143, 210, 255, 0.82);
+}
+
+.terminal-container.file-browser-embedded .file-panel-resizer.disabled {
+    cursor: default;
+    pointer-events: none;
+}
+
+.terminal-container.file-browser-embedded .file-panel-resizer.disabled::after {
+    opacity: 0.38;
 }
 
 .file-overlay {
