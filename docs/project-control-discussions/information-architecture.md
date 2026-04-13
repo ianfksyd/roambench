@@ -5,7 +5,7 @@
 1. **不破坏现有 Terminal 体验** — 用户打开 RoamBench 仍然看到熟悉的终端工作区
 2. **通过标签切换进入项目面板** — 顶层只有两个模式：Terminal 和 Project Panel
 3. **项目面板内是逐层递进** — Project → Workstream → Task → Session，不是平铺 8 个导航
-4. **Terminal 同时也是 Session 的执行视图** — 点击某个 Task 的 Session 时，可以直接 attach 到对应终端
+4. **Terminal 是部分 Session 的执行视图** — 仅当 runtime 支持 interactive attach 时，Session Detail 才显示 attach 入口
 
 ## 1. 顶层模式切换
 
@@ -92,7 +92,7 @@ graph TD
 ```mermaid
 graph LR
     subgraph "Workstream Board"
-        P["Planned"] --> R["Running"] --> W["Waiting Human"] --> B["Blocked"] --> D["Done"]
+        P["Planned"] --> R["Running"] --> W["Waiting Human"] --> B["Blocked"] --> D["Execution Complete"]
     end
 
     R --> TC["点击 Task 卡片<br/>→ Task Detail"]
@@ -104,7 +104,13 @@ graph LR
     style D fill:#16213e,color:#fff
 ```
 
-每张 Task 卡片显示：标题、agent、runtime、状态、风险、最近摘要。
+每张 Task 卡片显示：标题、agent、runtime、`Task.state`、`acceptance_status` badge、风险、最近摘要。
+
+设计约束：
+
+- 看板的主列由 `Task.state` 驱动，不使用含糊的 `Done`
+- `execution_complete` 只表示执行完成；是否通过业务验收，必须通过 `acceptance_status` badge 单独呈现
+- `accepted` 的任务可以继续停留在 `Execution Complete` 列并显示绿色 badge，或由 UI 通过过滤器默认折叠
 
 ### 3.3 Task Detail（任务详情）
 
@@ -128,7 +134,7 @@ graph TD
     style SS fill:#e94560,color:#fff
 ```
 
-**注意**：Terminal 不再作为 Task Detail 的一个 tab。而是在 Session Detail 里提供 "Attach Terminal" 操作，自然地跳回终端模式。
+**注意**：Terminal 不再作为 Task Detail 的一个 tab。而是在 Session Detail 里按 runtime capability 提供 "Attach Terminal" 操作，自然地跳回终端模式。
 
 ### 3.4 Session Detail（会话详情）
 
@@ -142,15 +148,16 @@ graph TD
     SD --> SL["Session Log<br/>关键输出摘要"]
     SD --> SC["Claims<br/>本次会话的主张"]
     SD --> SA["Artifacts<br/>本次会话的产物"]
-    SD --> AT["⏎ Attach Terminal<br/>跳回终端模式，连接到此 Session"]
+    SD --> AT["⏎ Attach Terminal<br/>若 runtime 支持 interactive attach"]
 
     style SD fill:#0f3460,color:#fff
     style AT fill:#e94560,color:#fff
 ```
 
-`Attach Terminal` 是 Project Panel 和 Terminal Workspaces 之间的桥梁：
+`Attach Terminal` 是 Project Panel 和 Terminal Workspaces 之间的**能力化桥梁**：
 
-- 点击后切换回 Terminal 模式，自动连接到该 Session 对应的 tmux session
+- 对本地 shell、SSH / tmux 等支持 interactive attach 的 runtime：点击后切换回 Terminal 模式，并连接到对应 Session
+- 对 container、managed backend 等不支持 attach 的 runtime：不显示该操作，Session Detail 自身就是主要执行观察面
 - 用户可以直接操作终端，完成后切回 Project Panel 继续追踪
 
 ### 3.5 Approvals Inbox（审批收件箱）
@@ -186,7 +193,7 @@ graph LR
 
     TW -->|"顶部标签切换"| PP
     PP -->|"顶部标签切换"| TW
-    PP -->|"Session Detail → Attach Terminal"| TW
+    PP -->|"Session Detail → Attach Terminal（if supported）"| TW
     TW -->|"未来: 终端内识别 Task 上下文"| PP
 
     style TW fill:#0f3460,color:#fff
@@ -196,7 +203,7 @@ graph LR
 关键设计：
 
 - 两个模式是**平级标签切换**，不是层级嵌套
-- Project Panel → Terminal 的桥是 "Attach Terminal"
+- Project Panel → Terminal 的桥是 capability-gated 的 "Attach Terminal"
 - Terminal → Project Panel 的桥是顶部标签（未来可做：终端内识别当前 Task 上下文后，提供快捷跳转）
 
 ## 5. 核心对象关系
@@ -298,7 +305,9 @@ stateDiagram-v2
 stateDiagram-v2
     [*] --> not_ready
     not_ready --> ready_for_acceptance : 满足送交验收门槛
+    ready_for_acceptance --> not_ready : 依赖/策略/证据失效
     ready_for_acceptance --> under_human_review : 进入人类验收队列
+    under_human_review --> not_ready : 系统性失效，checkpoint 过期
     under_human_review --> accepted : 人类显式批准
     under_human_review --> rejected : 人类显式拒绝
     rejected --> not_ready : 返工后重新申请
@@ -306,6 +315,13 @@ stateDiagram-v2
     note right of accepted
         必须生成显式
         final acceptance Decision
+    end note
+
+    note right of under_human_review
+        若任务因依赖失效或策略失效
+        回退到 not_ready
+        pending final_acceptance checkpoint
+        必须同步过期
     end note
 ```
 
