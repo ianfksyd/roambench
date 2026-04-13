@@ -6,6 +6,24 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-04-13
+
+### Added
+
+- Viewer can now preview DOCX and XLSX files directly in the browser
+- PPTX preview now uses in-view slide rendering with next / previous navigation
+
+### Changed
+
+- Release docs and release-note references now point at the `v0.3.2` flow
+
+### Fixed
+
+- File selections now open in Viewer first, so extensionless plain-text files no longer force the split editor layout
+- Single-pane desktop workspaces can widen the embedded file panel with a horizontal drag handle while keeping the current default width as the minimum
+- Inline PDF preview no longer gets blocked by Chromium-family extension-backed PDF viewers
+- PDF / Office file rows now use clearer file-type badges in the file browser
+
 ## [0.3.1] - 2026-04-12
 
 ### Added

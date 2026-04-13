@@ -11,7 +11,7 @@ These pieces are already present in the repo:
 - English-first product README: [README.md](../README.md)
 - Simplified Chinese README: [README.zh-CN.md](../README.zh-CN.md)
 - Short Japanese README: [README.ja.md](../README.ja.md)
-- Release-note draft: [docs/github-release-v0.3.1.md](github-release-v0.3.1.md)
+- Release-note draft: [docs/github-release-v0.3.2.md](github-release-v0.3.2.md)
 - Release packaging guide: [docs/release-packaging.md](release-packaging.md)
 - GitHub publishing metadata: [docs/github-publishing.md](github-publishing.md)
 - Launch/distribution playbook: [docs/launch-playbook.md](launch-playbook.md)

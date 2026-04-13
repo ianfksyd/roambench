@@ -121,7 +121,7 @@ What to do:
 - keep the English README as the default landing page
 - keep the README screenshot-heavy near the top
 - add a comparison table near the top (`SSH` vs browser IDE vs RoamBench)
-- publish the current public build as the next tagged release (currently `v0.3.1`)
+- publish the current public build as the next tagged release (currently `v0.3.2`)
 - keep the repo description tight and technical
 
 Angle:
@@ -227,7 +227,7 @@ Use this helper to generate community drafts and (optionally) post to X when cre
 - Example:
 
 ```bash
-scripts/publish-roambench.sh --tag v0.3.1 --targets x,reddit,hn,ph,v2ex,cn --dry-run
+scripts/publish-roambench.sh --tag v0.3.2 --targets x,reddit,hn,ph,v2ex,cn --dry-run
 ```
 
 Script output includes:
