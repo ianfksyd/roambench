@@ -144,7 +144,9 @@ func normalizeWorkspaceTerminalIDs(ids []string) []string {
 }
 
 func storagePathSegment(value string) string {
-	return strings.ReplaceAll(value, string(os.PathSeparator), "_")
+	value = strings.ReplaceAll(value, string(os.PathSeparator), "_")
+	value = strings.ReplaceAll(value, "..", "_")
+	return value
 }
 
 func (s *Server) handleWorkspaceState(w http.ResponseWriter, r *http.Request) {
