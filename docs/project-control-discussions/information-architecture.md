@@ -1,69 +1,205 @@
 # Information Architecture
 
-## 1. 一级导航与页面层级
+## 设计原则
+
+1. **不破坏现有 Terminal 体验** — 用户打开 RoamBench 仍然看到熟悉的终端工作区
+2. **通过标签切换进入项目面板** — 顶层只有两个模式：Terminal 和 Project Panel
+3. **项目面板内是逐层递进** — Project → Workstream → Task → Session，不是平铺 8 个导航
+4. **Terminal 同时也是 Session 的执行视图** — 点击某个 Task 的 Session 时，可以直接 attach 到对应终端
+
+## 1. 顶层模式切换
+
+```mermaid
+graph LR
+    APP["RoamBench"]
+    APP --> TW["🖥 Terminal Workspaces<br/><i>现有功能，默认视图</i>"]
+    APP --> PP["📋 Project Panel<br/><i>新增，项目控制视图</i>"]
+    APP --> BADGE["🔔 Approvals Badge<br/><i>全局待办计数</i>"]
+
+    style APP fill:#1a1a2e,color:#fff
+    style TW fill:#0f3460,color:#fff
+    style PP fill:#533483,color:#fff
+    style BADGE fill:#e94560,color:#fff
+```
+
+- **Terminal Workspaces**：现有的 1/2/4 分屏终端，完全保留，是默认首页
+- **Project Panel**：新增标签，切入项目控制视图
+- **Approvals Badge**：全局悬浮或嵌入 header，显示待审批数量，点击进入审批列表
+
+## 2. 项目面板：逐层递进结构
 
 ```mermaid
 graph TD
-    APP["RoamBench Control Plane"]
+    PP["Project Panel"]
 
-    APP --> PROJ["Projects"]
-    APP --> WS["Workstreams"]
-    APP --> TASK["Tasks"]
-    APP --> TL["Timeline"]
-    APP --> EV["Evidence"]
-    APP --> APR["Approvals"]
-    APP --> HIST["History / Replay"]
-    APP --> RT["Runtimes"]
+    PP --> PL["Project List<br/><i>选择项目</i>"]
+    PL --> PD["Project Dashboard<br/><i>当前项目总览</i>"]
 
-    PROJ --> PD["Project Dashboard"]
-    PD --> PD_RW["Running Workstreams"]
-    PD --> PD_RT["Running Tasks"]
-    PD --> PD_BT["Blocked Tasks"]
-    PD --> PD_PA["Pending Approvals"]
-    PD --> PD_HR["High-Risk Changes"]
-    PD --> PD_RF["Recent Failures"]
-    PD --> PD_RH["Runtime Health"]
-    PD --> PD_RD["Recent Decisions"]
+    PD --> WS_BOARD["Workstream Board<br/><i>看板：多条工作线</i>"]
+    PD --> APPROVALS["Approvals Inbox<br/><i>待审批事项</i>"]
+    PD --> RUNTIMES["Runtime Status<br/><i>运行环境健康</i>"]
 
-    WS --> WSB["Workstream Board"]
-    WSB --> WSB_P["Planned"]
-    WSB --> WSB_R["Running"]
-    WSB --> WSB_W["Waiting Human"]
-    WSB --> WSB_B["Blocked"]
-    WSB --> WSB_D["Done"]
+    WS_BOARD --> TD["Task Detail<br/><i>单个任务详情</i>"]
 
-    TASK --> TD["Task Detail"]
-    TD --> TD_OV["Overview"]
-    TD --> TD_TL["Timeline"]
-    TD --> TD_EV["Evidence"]
-    TD --> TD_DF["Files & Diff"]
-    TD --> TD_TM["Terminal"]
-    TD --> TD_AU["Audit"]
+    TD --> SD["Session Detail<br/><i>单次执行实例</i>"]
 
-    APR --> AI["Approvals Inbox"]
-    AI --> AI_CP["Pending Checkpoints"]
-    AI --> AI_CR["Conflicting Reviews"]
-    AI --> AI_BE["Budget Exceeded"]
-    AI --> AI_FA["Final Acceptance"]
+    SD --> TERM["→ Attach Terminal<br/><i>跳回 Terminal 模式</i>"]
 
-    RT --> RM["Runtime Manager"]
-    RM --> RM_L["Local"]
-    RM --> RM_R["Remote SSH"]
-    RM --> RM_C["Container"]
-
-    style APP fill:#1a1a2e,color:#fff
-    style PROJ fill:#16213e,color:#fff
-    style WS fill:#16213e,color:#fff
-    style TASK fill:#16213e,color:#fff
-    style TL fill:#16213e,color:#fff
-    style EV fill:#16213e,color:#fff
-    style APR fill:#16213e,color:#fff
-    style HIST fill:#16213e,color:#fff
-    style RT fill:#16213e,color:#fff
-    style TD_TM fill:#e94560,color:#fff
+    style PP fill:#533483,color:#fff
+    style PL fill:#16213e,color:#fff
+    style PD fill:#16213e,color:#fff
+    style WS_BOARD fill:#0f3460,color:#fff
+    style TD fill:#0f3460,color:#fff
+    style SD fill:#0f3460,color:#fff
+    style TERM fill:#e94560,color:#fff
+    style APPROVALS fill:#e94560,color:#fff
+    style RUNTIMES fill:#16213e,color:#fff
 ```
 
-## 2. 核心对象关系
+用户的浏览路径是：
+
+```
+Project Panel → 选择项目 → Project Dashboard → 点击某条工作线
+→ Workstream Board → 点击某个任务 → Task Detail → 点击某个 Session
+→ Session Detail → Attach Terminal（跳回终端模式）
+```
+
+## 3. 每一层看到什么
+
+### 3.1 Project Dashboard（项目总览）
+
+从 Project List 点击某个项目后进入。一屏展示项目态势。
+
+```mermaid
+graph TD
+    PD["Project Dashboard"]
+
+    PD --> M1["Running Workstreams<br/>进行中的工作线"]
+    PD --> M2["Running Tasks / Blocked Tasks<br/>任务状态分布"]
+    PD --> M3["Pending Approvals<br/>待审批计数 + 快捷入口"]
+    PD --> M4["Recent Failures<br/>最近失败"]
+    PD --> M5["Recent Decisions<br/>最近裁决"]
+    PD --> M6["Runtime Health<br/>运行环境状态"]
+    PD --> M7["Project Timeline<br/>最近事件流（折叠）"]
+
+    style PD fill:#16213e,color:#fff
+```
+
+### 3.2 Workstream Board（工作线看板）
+
+点击 Dashboard 中某条工作线，或直接从 Dashboard 的工作线列表进入。
+
+```mermaid
+graph LR
+    subgraph "Workstream Board"
+        P["Planned"] --> R["Running"] --> W["Waiting Human"] --> B["Blocked"] --> D["Done"]
+    end
+
+    R --> TC["点击 Task 卡片<br/>→ Task Detail"]
+
+    style P fill:#1a1a2e,color:#fff
+    style R fill:#0f3460,color:#fff
+    style W fill:#e94560,color:#fff
+    style B fill:#533483,color:#fff
+    style D fill:#16213e,color:#fff
+```
+
+每张 Task 卡片显示：标题、agent、runtime、状态、风险、最近摘要。
+
+### 3.3 Task Detail（任务详情）
+
+点击 Board 中某个 Task 卡片后进入。这是信息最密的页面。
+
+```mermaid
+graph TD
+    TD["Task Detail"]
+
+    TD --> TAB1["Overview<br/>一句话状态 + 风险 + 下一步"]
+    TD --> TAB2["Timeline<br/>事件流"]
+    TD --> TAB3["Evidence<br/>证据审阅"]
+    TD --> TAB4["Files & Diff<br/>变更与比较"]
+    TD --> TAB5["Sessions<br/>执行实例列表"]
+    TD --> TAB6["Audit<br/>审批 / 拒绝 / 恢复记录"]
+
+    TAB5 --> SS["点击 Session<br/>→ Session Detail"]
+
+    style TD fill:#0f3460,color:#fff
+    style TAB5 fill:#533483,color:#fff
+    style SS fill:#e94560,color:#fff
+```
+
+**注意**：Terminal 不再作为 Task Detail 的一个 tab。而是在 Session Detail 里提供 "Attach Terminal" 操作，自然地跳回终端模式。
+
+### 3.4 Session Detail（会话详情）
+
+点击 Task Detail 的 Sessions 列表中某个 Session 后进入。
+
+```mermaid
+graph TD
+    SD["Session Detail"]
+
+    SD --> SI["Session Info<br/>agent、runtime、role、状态、时长"]
+    SD --> SL["Session Log<br/>关键输出摘要"]
+    SD --> SC["Claims<br/>本次会话的主张"]
+    SD --> SA["Artifacts<br/>本次会话的产物"]
+    SD --> AT["⏎ Attach Terminal<br/>跳回终端模式，连接到此 Session"]
+
+    style SD fill:#0f3460,color:#fff
+    style AT fill:#e94560,color:#fff
+```
+
+`Attach Terminal` 是 Project Panel 和 Terminal Workspaces 之间的桥梁：
+
+- 点击后切换回 Terminal 模式，自动连接到该 Session 对应的 tmux session
+- 用户可以直接操作终端，完成后切回 Project Panel 继续追踪
+
+### 3.5 Approvals Inbox（审批收件箱）
+
+从 Project Dashboard 的 "Pending Approvals" 或全局 Badge 进入。
+
+```mermaid
+graph TD
+    AI["Approvals Inbox"]
+
+    AI --> CP["Pending Checkpoints<br/><i>canonical record source</i>"]
+
+    CP --> F1["🔴 destructive_command"]
+    CP --> F2["🟡 conflicting_reviews"]
+    CP --> F3["🟠 budget_exceeded"]
+    CP --> F4["🟣 final_acceptance"]
+    CP --> F5["⚪ protected_path_change"]
+
+    F1 --> ACT["Approve / Reject / Reroute"]
+
+    style AI fill:#e94560,color:#fff
+    style CP fill:#16213e,color:#fff
+```
+
+所有审批项都是 `pending checkpoints` 的过滤视图，不是独立数据源。
+
+## 4. 两个模式之间的桥接
+
+```mermaid
+graph LR
+    TW["Terminal Workspaces<br/><i>现有终端</i>"]
+    PP["Project Panel<br/><i>项目控制</i>"]
+
+    TW -->|"顶部标签切换"| PP
+    PP -->|"顶部标签切换"| TW
+    PP -->|"Session Detail → Attach Terminal"| TW
+    TW -->|"未来: 终端内识别 Task 上下文"| PP
+
+    style TW fill:#0f3460,color:#fff
+    style PP fill:#533483,color:#fff
+```
+
+关键设计：
+
+- 两个模式是**平级标签切换**，不是层级嵌套
+- Project Panel → Terminal 的桥是 "Attach Terminal"
+- Terminal → Project Panel 的桥是顶部标签（未来可做：终端内识别当前 Task 上下文后，提供快捷跳转）
+
+## 5. 核心对象关系
 
 ```mermaid
 erDiagram
@@ -97,7 +233,7 @@ erDiagram
     Policy ||--o{ Task : "governs via policy_version_id"
 ```
 
-## 3. 三条核心链
+## 6. 三条核心链
 
 ```mermaid
 graph LR
@@ -123,7 +259,7 @@ graph LR
     style E1 fill:#e94560,color:#fff
 ```
 
-## 4. Task 状态机
+## 7. Task 状态机
 
 ```mermaid
 stateDiagram-v2
@@ -156,7 +292,7 @@ stateDiagram-v2
     end note
 ```
 
-## 5. Acceptance Status 生命周期
+## 8. Acceptance Status 生命周期
 
 ```mermaid
 stateDiagram-v2
@@ -173,7 +309,7 @@ stateDiagram-v2
     end note
 ```
 
-## 6. Session 状态机
+## 9. Session 状态机
 
 ```mermaid
 stateDiagram-v2
@@ -197,7 +333,7 @@ stateDiagram-v2
     crashed --> terminated
 ```
 
-## 7. 协作协议流程
+## 10. 协作协议流程
 
 ```mermaid
 sequenceDiagram
@@ -227,7 +363,7 @@ sequenceDiagram
     end
 ```
 
-## 8. 自治与预算控制
+## 11. 自治与预算控制
 
 ```mermaid
 graph TB
@@ -260,7 +396,7 @@ graph TB
     style L3 fill:#533483,color:#fff
 ```
 
-## 9. 三层摘要
+## 12. 三层摘要
 
 ```mermaid
 graph TB
@@ -277,7 +413,7 @@ graph TB
     style L3_S fill:#1a1a2e,color:#fff
 ```
 
-## 10. 实施阶段
+## 13. 实施阶段
 
 ```mermaid
 gantt
