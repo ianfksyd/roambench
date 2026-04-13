@@ -42,10 +42,6 @@ RoamBench 的边界是刻意收窄的：它只保留远程工作里最值钱的�
 
 ![RoamBench screenshot](docs/screenshot-main.png)
 
-内置文件浏览器和编辑器，适合补轻量修改：
-
-![RoamBench file browser screenshot](docs/screenshot-file-browser.png)
-
 移动端重连到同一个 workspace：
 
 ![RoamBench mobile screenshot](docs/screenshot-mobile.jpg)

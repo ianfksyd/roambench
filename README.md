@@ -49,10 +49,6 @@ Desktop workspace with `4` terminals for long-running agent and CLI tasks:
 
 ![RoamBench workspace screenshot](docs/screenshot-main.png)
 
-Built-in file browser and editor for lightweight fixes:
-
-![RoamBench file browser screenshot](docs/screenshot-file-browser.png)
-
 Mobile reconnect to the same workspace:
 
 ![RoamBench mobile screenshot](docs/screenshot-mobile.jpg)

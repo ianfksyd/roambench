@@ -42,10 +42,6 @@ RoamBench は意図的に狭い製品です。リモート作業で価値が高�
 
 ![RoamBench workspace screenshot](docs/screenshot-main.png)
 
-軽い修正向けの内蔵ファイルブラウザとエディタ:
-
-![RoamBench file browser screenshot](docs/screenshot-file-browser.png)
-
 同じ workspace へモバイルから再接続:
 
 ![RoamBench mobile screenshot](docs/screenshot-mobile.jpg)

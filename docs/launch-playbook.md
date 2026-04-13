@@ -62,9 +62,6 @@ Before launch, capture at least these assets:
   - desktop screenshot
   - use `4` panes
   - label panes clearly with real tool names
-- `docs/screenshot-file-browser.png`
-  - supporting desktop screenshot
-  - show the built-in file browser or editor next to the terminal workflow
 - `docs/screenshot-mobile.jpg`
   - phone screenshot reconnecting to the same session
 - `docs/screenshot-mobile-login.jpg`
@@ -211,7 +208,6 @@ Current primary docs:
 - README opening is scenario-led, not feature-led
 - comparison table is visible without much scrolling
 - desktop screenshot shows `2 / 4` split views clearly
-- file browser screenshot exists
 - if the hero is phone-led, mobile screenshot exists
 - release notes mention Codex / Claude Code style workflows
 - quickstart path works without editing multiple config fields
