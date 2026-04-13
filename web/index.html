@@ -45,6 +45,11 @@
                 <img class="header-brand-icon" src="__ROAMBENCH_BASE_PATH__/favicon.svg" alt="RoamBench">
             </button>
             <span class="header-title" id="header-title">RoamBench</span>
+            <div class="app-mode-switcher" role="tablist" aria-label="App Mode">
+                <button class="header-btn app-mode-btn active" id="app-mode-terminal" type="button">Terminal</button>
+                <button class="header-btn app-mode-btn" id="app-mode-project" type="button">Project Panel</button>
+            </div>
+            <button class="header-btn approvals-badge" id="approvals-badge" type="button" aria-live="polite">0</button>
             <div class="header-memory" id="memory-indicator" aria-live="polite">
                 <svg class="header-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M7 7h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"></path>
@@ -76,6 +81,7 @@
                 </svg>
             </button>
         </div>
+        <div id="terminal-shell">
         <div class="tab-bar-row">
             <button class="header-btn tab-bar-add-btn" id="workspace-add-btn" onclick="createWorkspaceTab()" title="New View" data-i18n-title="workspace.newView">+</button>
             <button class="header-btn tab-scroll-btn tab-scroll-left" id="workspace-tabs-scroll-left" onclick="scrollWorkspaceTabs(-1)" title="Scroll views left" aria-label="Scroll views left" disabled>&#x276E;</button>
@@ -166,6 +172,8 @@
             <button onclick="sendKey('left')">&#x2190;</button>
             <button onclick="sendKey('right')">&#x2192;</button>
         </div>
+        </div>
+        <div id="project-panel" class="project-panel" style="display:none"></div>
     </div>
 
     <div id="terminal-settings" class="terminal-settings-modal" style="display:none">
@@ -579,5 +587,6 @@
     <script src="__ROAMBENCH_BASE_PATH__/vendor/xterm/xterm.min.js"></script>
     <script src="__ROAMBENCH_BASE_PATH__/vendor/xterm/xterm-addon-fit.min.js"></script>
     <script src="__ROAMBENCH_BASE_PATH__/js/app.js"></script>
+    <script src="__ROAMBENCH_BASE_PATH__/js/project-panel.js"></script>
 </body>
 </html>

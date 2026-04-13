@@ -831,6 +831,7 @@
 
     const state = {
         username: '',
+        appMode: 'terminal',
         terminals: {},       // id -> { term, ws, fitAddon, wrapper, name }
         workspaces: [],      // [{ id, layout, terminalIds[4] }]
         activeWorkspaceId: null,
@@ -1618,7 +1619,7 @@
     function syncVisibleTerminalConnections() {
         var desired = {};
 
-        if (isTerminalViewVisible()) {
+        if (isTerminalViewVisible() && state.appMode === 'terminal') {
             getVisibleTerminalIds().forEach(function(id) {
                 desired[id] = true;
             });
@@ -2027,6 +2028,17 @@
         document.addEventListener('keydown', handleGlobalKeyDown);
         document.addEventListener('copy', handleDocumentCopy);
         document.addEventListener('paste', handleDocumentPaste);
+        if (document.getElementById('app-mode-terminal')) {
+            document.getElementById('app-mode-terminal').addEventListener('click', function() {
+                setAppMode('terminal');
+            });
+        }
+        if (document.getElementById('app-mode-project')) {
+            document.getElementById('app-mode-project').addEventListener('click', function() {
+                setAppMode('project');
+            });
+        }
+        renderAppMode();
         fileFilterInput.addEventListener('input', handleFileFilterInput);
         fileFilterInput.addEventListener('keydown', handleFileFilterKeyDown);
         editorTextarea.addEventListener('input', handleEditorInput);
@@ -3097,6 +3109,7 @@
         setFileBrowserOpen(false);
         window.closeImagePreview();
         state.username = '';
+        state.appMode = 'terminal';
         state.currentPath = '';
         state.files = [];
         state.showHidden = false;
@@ -3116,6 +3129,7 @@
         showView('login');
         setLoginPasswordVisible(false);
         setLoginError(message || '');
+        document.dispatchEvent(new CustomEvent('roambench:auth', { detail: { authenticated: false, username: '' } }));
     }
 
     function showTerminalView(username) {
@@ -3127,6 +3141,7 @@
         showView('terminal');
         restoreEditorDrafts();
         startMemoryStatusPolling();
+        document.dispatchEvent(new CustomEvent('roambench:auth', { detail: { authenticated: true, username: username } }));
     }
 
     function handleUnauthorized(message) {
@@ -3299,6 +3314,7 @@
         document.getElementById('login-view').style.display = name === 'login' ? 'flex' : 'none';
         document.getElementById('terminal-view').style.display = name === 'terminal' ? 'flex' : 'none';
         if (name === 'terminal') {
+            renderAppMode();
             syncVisibleTerminalConnections();
             applyMaximizeState();
             scheduleFitActiveTerminal();
@@ -3313,6 +3329,92 @@
             document.getElementById('file-overlay').style.display = 'none';
             terminalSettingsModal.style.display = 'none';
         }
+    }
+
+    function renderAppMode() {
+        var terminalShell = document.getElementById('terminal-shell');
+        var projectPanel = document.getElementById('project-panel');
+        var terminalBtn = document.getElementById('app-mode-terminal');
+        var projectBtn = document.getElementById('app-mode-project');
+        var isProjectMode = state.appMode === 'project';
+
+        if (terminalShell) {
+            terminalShell.style.display = isProjectMode ? 'none' : 'block';
+        }
+        if (projectPanel) {
+            projectPanel.style.display = isProjectMode ? 'flex' : 'none';
+        }
+        if (terminalBtn) {
+            terminalBtn.classList.toggle('active', !isProjectMode);
+            terminalBtn.setAttribute('aria-selected', isProjectMode ? 'false' : 'true');
+        }
+        if (projectBtn) {
+            projectBtn.classList.toggle('active', isProjectMode);
+            projectBtn.setAttribute('aria-selected', isProjectMode ? 'true' : 'false');
+        }
+        if (isProjectMode) {
+            setFileBrowserOpen(false);
+            window.closeImagePreview();
+            window.closeTerminalSettings();
+        }
+    }
+
+    function setAppMode(mode) {
+        var nextMode = mode === 'project' ? 'project' : 'terminal';
+        if (state.appMode === nextMode) {
+            renderAppMode();
+            syncVisibleTerminalConnections();
+            if (nextMode === 'terminal') {
+                scheduleFitActiveTerminal();
+            }
+            return;
+        }
+        state.appMode = nextMode;
+        renderAppMode();
+        syncVisibleTerminalConnections();
+        if (nextMode === 'terminal') {
+            scheduleFitActiveTerminal();
+        }
+        document.dispatchEvent(new CustomEvent('roambench:modechange', { detail: { mode: nextMode } }));
+    }
+
+    function focusTerminalSession(terminalId) {
+        var existingWorkspace = null;
+        var fallbackWorkspace;
+
+        if (!terminalId || !state.terminals[terminalId]) {
+            return false;
+        }
+
+        state.workspaces.forEach(function(workspace) {
+            if (existingWorkspace || !workspace) {
+                return;
+            }
+            if (workspace.terminalIds.indexOf(terminalId) !== -1) {
+                existingWorkspace = workspace;
+            }
+        });
+
+        if (!existingWorkspace) {
+            fallbackWorkspace = getActiveWorkspace();
+            if (fallbackWorkspace) {
+                clearTerminalAssignment(terminalId);
+                fallbackWorkspace.terminalIds[0] = terminalId;
+                rebalanceWorkspaceAssignments(fallbackWorkspace.id);
+                existingWorkspace = fallbackWorkspace;
+            } else {
+                existingWorkspace = createWorkspace('1', [terminalId], '', getNextWorkspaceLabelNumber());
+                state.workspaces = [existingWorkspace];
+            }
+        }
+
+        state.activeWorkspaceId = existingWorkspace.id;
+        state.activeId = terminalId;
+        saveWorkspaceState();
+        renderTabBar();
+        renderActiveWorkspace();
+        setAppMode('terminal');
+        return true;
     }
 
     // ========== Terminals ==========
@@ -10496,4 +10598,26 @@
         }
     }
 
+    window.RoamBenchApp = {
+        t: t,
+        withBasePath: withBasePath,
+        getLanguage: function() {
+            return state.language;
+        },
+        getUsername: function() {
+            return state.username;
+        },
+        getMode: function() {
+            return state.appMode;
+        },
+        setMode: setAppMode,
+        attachTerminal: focusTerminalSession,
+        refreshLayout: function() {
+            renderAppMode();
+            if (state.appMode === 'terminal') {
+                scheduleFitActiveTerminal();
+            }
+        }
+    };
 })();
+

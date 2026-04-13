@@ -31,6 +31,7 @@ type Server struct {
 	terminals      *terminal.Manager
 	workspaceState *workspaceStateStore
 	fileBrowser    *filebrowser.FileBrowser
+	projectControl *projectControlStore
 	mux            *http.ServeMux
 	upgrader       websocket.Upgrader
 	httpServer     *http.Server
@@ -51,6 +52,7 @@ func NewServer(
 		terminals:      terminals,
 		workspaceState: newWorkspaceStateStore(cfg.Terminal.GetPersistDir()),
 		fileBrowser:    fb,
+		projectControl: newProjectControlStore(cfg.Terminal.GetPersistDir()),
 		mux:            http.NewServeMux(),
 	}
 	s.upgrader = websocket.Upgrader{
@@ -81,6 +83,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/ui-config", s.handleUIConfig)
 	s.mux.HandleFunc("/api/workspace-state", authRequired(s.sessions, s.handleWorkspaceState))
 	s.mux.HandleFunc("/api/system/memory", authRequired(s.sessions, s.handleMemoryStatus))
+	s.mux.HandleFunc("/api/project-control/checkpoints/", authRequired(s.sessions, s.handleProjectControlCheckpointDecision))
+	s.mux.HandleFunc("/api/project-control/projects", authRequired(s.sessions, s.handleProjectControlProjects))
+	s.mux.HandleFunc("/api/project-control/workstreams", authRequired(s.sessions, s.handleProjectControlWorkstreams))
+	s.mux.HandleFunc("/api/project-control/tasks", authRequired(s.sessions, s.handleProjectControlTasks))
+	s.mux.HandleFunc("/api/project-control", authRequired(s.sessions, s.handleProjectControlSnapshot))
 
 	// Terminals (auth required)
 	s.mux.HandleFunc("/api/terminals/ws/", authRequired(s.sessions, s.handleTerminalWebSocket))

@@ -275,6 +275,410 @@ body.view-login #terminal-view {
     letter-spacing: 0.02em;
 }
 
+.app-mode-switcher {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.app-mode-btn {
+    min-width: 0;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.app-mode-btn.active {
+    background: rgba(86, 156, 214, 0.22);
+    color: #fff;
+}
+
+.approvals-badge {
+    min-width: 40px;
+    padding: 0 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.approvals-badge.has-pending {
+    background: rgba(244, 71, 71, 0.2);
+    color: #fff;
+    box-shadow: inset 0 0 0 1px rgba(244, 71, 71, 0.35);
+}
+
+#terminal-shell {
+    display: block;
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.project-panel {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg);
+}
+
+.project-panel-sidebar {
+    width: 300px;
+    max-width: 34vw;
+    border-right: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+    padding: 16px;
+    overflow: auto;
+}
+
+.project-panel-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: auto;
+    padding: 18px 20px 28px;
+}
+
+.project-sidebar-section,
+.project-main-section,
+.project-card-list,
+.project-approval-card {
+    margin-bottom: 18px;
+}
+
+.project-sidebar-kicker,
+.project-section-kicker {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+
+.project-nav-btn,
+.project-card,
+.project-list-button,
+.project-inline-btn,
+.project-breadcrumb {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.project-nav-btn,
+.project-list-button {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.project-nav-btn.active,
+.project-card:hover,
+.project-list-button:hover,
+.project-inline-btn:hover,
+.project-breadcrumb:hover {
+    border-color: var(--primary);
+    background: rgba(86, 156, 214, 0.12);
+}
+
+.project-nav-title,
+.project-card-title,
+.project-task-title,
+.project-runtime-name,
+.project-list-title {
+    font-weight: 600;
+}
+
+.project-nav-meta,
+.project-card-meta,
+.project-runtime-meta,
+.project-list-meta,
+.project-task-meta,
+.project-approval-note,
+.project-breadcrumb-sep {
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.project-runtime-card,
+.project-card-list,
+.project-approval-card,
+.project-metric,
+.project-card,
+.project-task-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 14px;
+}
+
+.project-runtime-card,
+.project-card-list,
+.project-approval-card {
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14);
+}
+
+.project-runtime-health,
+.project-card-copy,
+.project-task-copy,
+.project-list-item,
+.project-empty-state,
+.project-banner {
+    color: var(--text);
+    line-height: 1.45;
+}
+
+.project-runtime-health,
+.project-card-copy,
+.project-task-copy,
+.project-list-item {
+    margin-top: 6px;
+}
+
+.project-section-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.project-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.project-section-header h2 {
+    font-size: 24px;
+    margin-bottom: 6px;
+}
+
+.project-metrics-grid,
+.project-card-grid,
+.project-two-column,
+.project-tab-sections {
+    display: grid;
+    gap: 14px;
+}
+
+.project-metrics-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 18px;
+}
+
+.project-card-grid,
+.project-two-column {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-tab-sections {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-metric-label {
+    color: var(--text-dim);
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+
+.project-metric-value {
+    font-size: 28px;
+    font-weight: 700;
+}
+
+.project-metric.tone-danger .project-metric-value {
+    color: #ff8a8a;
+}
+
+.project-metric.tone-success .project-metric-value {
+    color: var(--success);
+}
+
+.project-board {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(180px, 1fr));
+    gap: 14px;
+    overflow: auto;
+}
+
+.project-board-column {
+    min-height: 220px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.project-board-column-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+}
+
+.project-task-card {
+    width: 100%;
+    cursor: pointer;
+    text-align: left;
+    margin-bottom: 10px;
+}
+
+.project-task-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0;
+}
+
+.project-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.project-pill.acceptance-accepted,
+.project-pill.state-execution_complete {
+    background: rgba(86, 211, 100, 0.18);
+}
+
+.project-pill.acceptance-rejected,
+.project-pill.state-blocked {
+    background: rgba(244, 71, 71, 0.18);
+}
+
+.project-pill.acceptance-ready_for_acceptance,
+.project-pill.state-waiting_review,
+.project-pill.state-waiting_human {
+    background: rgba(242, 193, 78, 0.18);
+}
+
+.project-inline-btn {
+    width: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.project-inline-btn.primary {
+    background: rgba(86, 156, 214, 0.2);
+    border-color: rgba(86, 156, 214, 0.45);
+}
+
+.project-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.project-breadcrumb {
+    width: auto;
+    padding: 6px 10px;
+    border-radius: 999px;
+}
+
+.project-breadcrumb.current {
+    color: var(--text-dim);
+    font-size: 13px;
+}
+
+.project-banner,
+.project-empty-state {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 16px;
+}
+
+.project-banner.error,
+.project-empty-state.error {
+    border-color: rgba(244, 71, 71, 0.4);
+    background: rgba(244, 71, 71, 0.12);
+}
+
+.project-list-item.muted {
+    color: var(--text-dim);
+}
+
+.project-approval-header,
+.project-approval-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.project-approval-actions {
+    margin-top: 12px;
+}
+
+@media (max-width: 1180px) {
+    .project-panel {
+        flex-direction: column;
+    }
+
+    .project-panel-sidebar {
+        width: 100%;
+        max-width: none;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .project-metrics-grid,
+    .project-card-grid,
+    .project-two-column,
+    .project-tab-sections {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 860px) {
+    .header {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 8px;
+    }
+
+    .project-metrics-grid,
+    .project-card-grid,
+    .project-two-column,
+    .project-tab-sections,
+    .project-board {
+        grid-template-columns: 1fr;
+    }
+
+    .app-mode-switcher {
+        order: 3;
+        width: 100%;
+        justify-content: stretch;
+    }
+
+    .app-mode-btn {
+        flex: 1 1 50%;
+    }
+}
+
 #memory-indicator-text {
     overflow: hidden;
     text-overflow: ellipsis;
