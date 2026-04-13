@@ -150,7 +150,7 @@ func TestSecureHeadersDenyFramingByDefault(t *testing.T) {
 	}
 }
 
-func TestDownloadInlinePDFAllowsSameOriginFrame(t *testing.T) {
+func TestDownloadInlinePDFUsesExtensionCompatibleFramePolicy(t *testing.T) {
 	currentUser, err := user.Current()
 	if err != nil {
 		t.Fatalf("user.Current error: %v", err)
@@ -179,8 +179,11 @@ func TestDownloadInlinePDFAllowsSameOriginFrame(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
-		t.Fatalf("X-Frame-Options = %q, want %q", got, "SAMEORIGIN")
+	if got := rec.Header().Get("X-Frame-Options"); got != "" {
+		t.Fatalf("X-Frame-Options = %q, want empty for extension-backed PDF viewers", got)
+	}
+	if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self' chrome-extension: edge-extension: moz-extension:" {
+		t.Fatalf("Content-Security-Policy = %q, want extension-compatible frame ancestors", got)
 	}
 }
 

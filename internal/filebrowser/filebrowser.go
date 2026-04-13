@@ -29,10 +29,11 @@ type FileInfo struct {
 }
 
 const (
-	maxTextFileSize    = 2 << 20
-	defaultPreviewSize = 96
-	minPreviewSize     = 32
-	maxPreviewSize     = 256
+	maxTextFileSize              = 2 << 20
+	defaultPreviewSize           = 96
+	minPreviewSize               = 32
+	maxPreviewSize               = 256
+	embeddedViewerFrameAncestors = "frame-ancestors 'self' chrome-extension: edge-extension: moz-extension:"
 )
 
 type FileBrowser struct{}
@@ -212,7 +213,10 @@ func (fb *FileBrowser) Download(username, path string, w http.ResponseWriter, r 
 	}
 	inline := wantsInline(r)
 	if allowsEmbeddedViewerFrame(resolved, inline) {
-		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		// Chromium-family browsers often hand off inline PDFs to an internal extension viewer,
+		// which is blocked by SAMEORIGIN even when the request starts from our own page.
+		w.Header().Del("X-Frame-Options")
+		w.Header().Set("Content-Security-Policy", embeddedViewerFrameAncestors)
 	}
 	fb.serveResolvedFile(w, r, resolved, inline)
 }
