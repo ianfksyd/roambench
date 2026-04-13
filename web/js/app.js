@@ -900,6 +900,8 @@
     let viewerLoadSequence = 0;
     let pptxViewerLibraryPromise = null;
     let pptxViewerInstance = null;
+    let pptxViewerResizeObserver = null;
+    let pptxViewerResizeFrame = 0;
     let docxViewerLibraryPromise = null;
     let xlsxViewerLibraryPromise = null;
     let editorHighlightFrame = 0;
@@ -7033,6 +7035,14 @@
     }
 
     function resetPptxViewerState() {
+        if (pptxViewerResizeObserver) {
+            pptxViewerResizeObserver.disconnect();
+            pptxViewerResizeObserver = null;
+        }
+        if (pptxViewerResizeFrame) {
+            window.cancelAnimationFrame(pptxViewerResizeFrame);
+            pptxViewerResizeFrame = 0;
+        }
         if (pptxViewerInstance && typeof pptxViewerInstance.destroy === 'function') {
             try {
                 pptxViewerInstance.destroy();
@@ -7100,11 +7110,132 @@
         renderHost.appendChild(canvasWrap);
         fileViewerPptxHost.appendChild(renderHost);
         return {
+            root: renderHost,
+            toolbar: toolbar,
+            canvasWrap: canvasWrap,
             canvas: canvas,
             prevBtn: prevBtn,
             nextBtn: nextBtn,
             page: page
         };
+    }
+
+    function getPptxSlideAspectRatio(viewer) {
+        if (!viewer || typeof viewer.getSlideDimensions !== 'function') {
+            return 4 / 3;
+        }
+
+        const slideSize = viewer.getSlideDimensions();
+        const width = slideSize && Number(slideSize.cx);
+        const height = slideSize && Number(slideSize.cy);
+
+        if (!width || !height) {
+            return 4 / 3;
+        }
+
+        return width / height;
+    }
+
+    function syncPptxCanvasSize(viewer, renderHost) {
+        if (!renderHost || !renderHost.canvas) {
+            return false;
+        }
+
+        const canvas = renderHost.canvas;
+        const canvasWrap = renderHost.canvasWrap;
+        const toolbar = renderHost.toolbar;
+        const slideRatio = getPptxSlideAspectRatio(viewer);
+        const stageRect = fileViewerPptxStage ? fileViewerPptxStage.getBoundingClientRect() : null;
+        const wrapRect = canvasWrap ? canvasWrap.getBoundingClientRect() : null;
+        const toolbarRect = toolbar ? toolbar.getBoundingClientRect() : null;
+        const gutter = 36;
+        let maxWidth = wrapRect ? Math.floor(wrapRect.width) : 0;
+        let maxHeight = wrapRect ? Math.floor(wrapRect.height) : 0;
+
+        if (!maxWidth && stageRect) {
+            maxWidth = Math.max(0, Math.floor(stageRect.width - gutter));
+        }
+        if (!maxHeight && stageRect) {
+            maxHeight = Math.max(0, Math.floor(stageRect.height - (toolbarRect ? toolbarRect.height : 0) - gutter));
+        }
+        if (!maxWidth || !maxHeight) {
+            return false;
+        }
+
+        let displayWidth = maxWidth;
+        let displayHeight = Math.round(displayWidth / slideRatio);
+
+        if (displayHeight > maxHeight) {
+            displayHeight = maxHeight;
+            displayWidth = Math.round(displayHeight * slideRatio);
+        }
+        if (!displayWidth || !displayHeight) {
+            return false;
+        }
+
+        const pixelRatio = window.devicePixelRatio || 1;
+        const targetWidth = Math.max(1, Math.round(displayWidth * pixelRatio));
+        const targetHeight = Math.max(1, Math.round(displayHeight * pixelRatio));
+
+        if (
+            canvas.width === targetWidth &&
+            canvas.height === targetHeight &&
+            canvas.style.width === displayWidth + 'px' &&
+            canvas.style.height === displayHeight + 'px'
+        ) {
+            return false;
+        }
+
+        canvas.style.width = displayWidth + 'px';
+        canvas.style.height = displayHeight + 'px';
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        return true;
+    }
+
+    function schedulePptxViewerResize(viewer, renderHost) {
+        if (!viewer || !renderHost || !renderHost.canvas) {
+            return;
+        }
+
+        if (pptxViewerResizeFrame) {
+            window.cancelAnimationFrame(pptxViewerResizeFrame);
+        }
+
+        pptxViewerResizeFrame = window.requestAnimationFrame(function() {
+            pptxViewerResizeFrame = 0;
+
+            if (viewer !== pptxViewerInstance || !renderHost.canvas.isConnected) {
+                return;
+            }
+            if (!syncPptxCanvasSize(viewer, renderHost)) {
+                return;
+            }
+
+            Promise.resolve(viewer.render(renderHost.canvas)).then(function() {
+                updatePptxViewerControls(viewer, renderHost);
+            }).catch(function(err) {
+                console.warn('PPTX resize render failed', err);
+            });
+        });
+    }
+
+    function observePptxViewerResize(viewer, renderHost) {
+        if (pptxViewerResizeObserver) {
+            pptxViewerResizeObserver.disconnect();
+            pptxViewerResizeObserver = null;
+        }
+        if (typeof window.ResizeObserver !== 'function' || !renderHost || !renderHost.canvasWrap) {
+            return;
+        }
+
+        pptxViewerResizeObserver = new window.ResizeObserver(function() {
+            schedulePptxViewerResize(viewer, renderHost);
+        });
+        pptxViewerResizeObserver.observe(renderHost.canvasWrap);
+        if (fileViewerPptxStage) {
+            pptxViewerResizeObserver.observe(fileViewerPptxStage);
+        }
     }
 
     function updatePptxViewerControls(viewer, renderHost) {
@@ -7446,6 +7577,7 @@
                 slideSizeMode: 'fit'
             });
             await Promise.resolve(viewer.loadFromUrl(fullSrc));
+            syncPptxCanvasSize(viewer, renderHost);
 
             if (!isActiveViewerRequest(requestToken, imageKey)) {
                 if (typeof viewer.destroy === 'function') {
@@ -7463,6 +7595,7 @@
             }
 
             renderHost.prevBtn.addEventListener('click', function() {
+                syncPptxCanvasSize(viewer, renderHost);
                 Promise.resolve(viewer.previousSlide(renderHost.canvas)).then(function() {
                     updatePptxViewerControls(viewer, renderHost);
                 }).catch(function(err) {
@@ -7471,6 +7604,7 @@
                 });
             });
             renderHost.nextBtn.addEventListener('click', function() {
+                syncPptxCanvasSize(viewer, renderHost);
                 Promise.resolve(viewer.nextSlide(renderHost.canvas)).then(function() {
                     updatePptxViewerControls(viewer, renderHost);
                 }).catch(function(err) {
@@ -7480,6 +7614,7 @@
             });
             updatePptxViewerControls(viewer, renderHost);
             pptxViewerInstance = viewer;
+            observePptxViewerResize(viewer, renderHost);
 
             fileViewerCanvas.classList.add('is-ready');
             fileViewerCanvas.classList.remove('is-loading');

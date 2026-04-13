@@ -2738,6 +2738,7 @@ button.tab-action:focus-visible {
 }
 
 .viewer-pptx-render-host {
+    height: 100%;
     min-height: 100%;
     display: flex;
     flex-direction: column;
@@ -2787,7 +2788,9 @@ button.tab-action:focus-visible {
 
 .viewer-pptx-canvas-wrap {
     display: flex;
-    align-items: flex-start;
+    flex: 1;
+    width: 100%;
+    align-items: center;
     justify-content: center;
     min-height: 0;
 }
@@ -2795,6 +2798,7 @@ button.tab-action:focus-visible {
 .viewer-pptx-canvas {
     display: block;
     max-width: 100%;
+    max-height: 100%;
     height: auto;
     background: #fff;
     border-radius: 12px;
