@@ -9,25 +9,20 @@
   </picture>
 </p>
 
-> Keep your AI coding sessions running. Reconnect from anywhere.
+> Start, supervise, and resume long-running AI agent work from anywhere.
 
-- Keep `tmux` sessions alive
-- Run `2 / 4`-pane workspaces for Codex, Claude Code, Kimi-CLI, OpenCode, and other terminal-first tools
-- Reconnect from another device, inspect output, and make small file edits without dragging in a full browser IDE
+RoamBench is a self-hosted workbench for developers who run multiple AI coding agents across long tasks. It keeps your terminal sessions alive, lets you reconnect from any device, and gives you just enough file tooling to stay productive without dragging in a full browser IDE.
 
-RoamBench is a compact self-hosted remote workbench for one person.
+## The Problem It Solves
 
-RoamBench is the public-facing product name.
+When you run Codex, Claude Code, OpenCode, Kimi-CLI, or similar terminal-first tools on a remote machine, you hit a recurring set of problems:
 
-Think of it as the "enough" layer between SSH and a heavy browser IDE: open your machine from anywhere, reconnect to long-running terminal sessions, inspect files, and make small fixes from a laptop or phone without hauling in a full remote desktop stack.
+- sessions die when you close the laptop or switch devices
+- multiple agents running in parallel are hard to track
+- long tasks that span hours or days need reconnection without losing state
+- you need to check output, inspect files, or make small fixes from a phone
 
-## Why People Open It
-
-- reconnect to a Codex / Claude Code / Kimi-CLI / OpenCode session from another device, including your phone
-- keep multiple terminal-first agents running side by side in `2 / 4` panes
-- watch scripts, data jobs, and long-running CLI tasks without babysitting SSH
-- inspect files, copy outputs, and make lightweight edits away from your desk
-- steer terminal-first tools such as `openclaw` without loading a heavy desktop IDE
+RoamBench solves these by providing a lightweight web layer over `tmux` that keeps everything alive and accessible.
 
 ## Why Not SSH Or A Browser IDE
 
@@ -35,7 +30,7 @@ RoamBench is deliberately narrow: it keeps the highest-value pieces of remote wo
 
 | Need | SSH | VS Code Remote / Browser IDE | RoamBench |
 | --- | --- | --- | --- |
-| Reconnect to the same long-running session from a phone | awkward | possible, but heavy | built for it |
+| Reconnect to a long-running agent session from a phone | awkward | possible, but heavy | built for it |
 | Keep `tmux`-backed session recovery easy | manual | not the focus | built-in |
 | Run `2 / 4`-pane CLI workflows for coding agents | manual setup | IDE-first | built-in |
 | Inspect files and make small edits next to terminals | extra tools | yes, with more overhead | built-in |
@@ -53,38 +48,53 @@ Mobile reconnect to the same workspace:
 
 ![RoamBench mobile screenshot](docs/screenshot-mobile.jpg)
 
-## Workflow Highlights
+## Current Capabilities
 
-- Single-user authentication with `password` or `pam`
-- IP allowlist support
-- terminal session persistence across page reloads and server restarts when `tmux` is available
+### Terminal & Session Management
+
+- single-user authentication with `password` or `pam`, plus IP allowlist
+- terminal session persistence across page reloads, reconnects, and server restarts when `tmux` is available
 - disk-backed terminal metadata with a configurable storage cap
-- multi-pane workspace tabs with `1 / 2 / 4` layouts and cross-browser sync for the same RoamBench user
+- multi-pane workspace tabs with `1 / 2 / 4` layouts and cross-browser sync
 - unique terminal assignment across workspaces
+- visible right-side scrollbar in each terminal pane
+
+### File Workspace
+
+- directory listing with sorting, hidden-file toggle, breadcrumb navigation, and current-directory filtering
+- text file editing with draft recovery, find / replace, go-to-line, and optional line numbers
+- `New File`, `New Folder`, `Save As`, rename / move, copy, upload, download, delete
+- image preview in the built-in viewer
+
+### Agent Workflows
+
 - well suited for keeping multiple terminal-first tools running side by side, including Codex, Claude Code, Kimi-CLI, OpenCode, and similar CLI workflows
-- built-in file workspace for `New File`, `New Folder`, `Save As`, rename / move, copy, upload, download, delete, and inline image viewing
-- draft restore, unsaved-change warnings, clearer save-state feedback, find / replace, go-to-line, and optional line numbers in the editor
-- breadcrumb navigation and current-directory filtering in the file browser
-- visible right-side terminal scrollbar in each pane
+- steer terminal-first tools such as `openclaw` without loading a heavy desktop IDE
+- reconnect to long-running agent sessions from another device, including your phone
+- watch scripts, data jobs, and long-running CLI tasks without babysitting SSH
+
+### General
+
 - lightweight, low-overhead behavior intended to stay responsive on modest self-hosted machines
 - live memory indicator in the header
 - interface language switching for English, Simplified Chinese, and Japanese
 
-## Current Model
+## Roadmap: Toward A Project Control Layer
 
-RoamBench is intentionally simple:
+RoamBench today provides the execution layer: persistent terminals, multi-pane workspaces, and file tools. The next major evolution is adding a **project control layer** on top of this foundation, so that managing complex multi-agent work becomes structured rather than ad-hoc.
 
-- it is designed for one Unix user per server process
-- the login username must match the Unix account running the RoamBench process
-- terminal sessions live on the server
-- workspace tabs are stored on the server and cached in the browser
-- UI preferences remain browser-local
+Planned direction:
 
-That means:
+- **Task-first model** — organize work around tasks with goals, status, and evidence, not just terminal tabs
+- **Timeline and evidence** — see what happened, what changed, and what the agent claims, without reading long CLI output
+- **Human checkpoints** — get notified only when a decision actually requires human judgment
+- **Shared project history** — track decisions, failures, and recoveries across agents and sessions
+- **Local + remote runtime** — manage agents on your local machine and remote servers from the same interface
+- **Agent-neutral** — not locked to one AI provider; works with any terminal-first agent
 
-- terminal sessions can survive refresh, reconnect, and server restart when `tmux` is available
-- workspace names, `1 / 2 / 4` layouts, and per-view terminal placement can follow the same RoamBench user across browsers and devices
-- language, font, theme, and editor view preferences remain local to each browser
+The terminal layer stays. It becomes one view inside a task, not the entire product surface.
+
+For the full design discussion, see [`docs/project-control-discussions/`](docs/project-control-discussions/).
 
 ## Requirements
 
@@ -197,7 +207,6 @@ RoamBench currently looks for config files in this order:
 You can also pass an explicit config path:
 
 ```bash
-./roambench --config /path/to/roambench.toml
 APP_BIN=<path-to-binary> # e.g. ./roambench
 "$APP_BIN" --config /path/to/roambench.toml
 ```
@@ -208,24 +217,6 @@ Useful CLI flags:
 - `--host`: override config host
 - `--port`: override config port
 - `--password-hash`: generate a `bcrypt` hash from stdin and exit
-
-More details:
-
-- [Roadmap](docs/roadmap.md)
-- [Launch Playbook](docs/launch-playbook.md)
-- [GitHub Release Checklist](docs/github-release-checklist.md)
-- [Release Packaging Guide](docs/release-packaging.md)
-- [Lightweight Evidence](docs/lightweight-evidence.md)
-- [Rebrand Checklist](docs/rebrand-checklist.md)
-- [Deployment Hardening](docs/deployment-hardening.md)
-- [Configuration Guide](docs/configuration.md)
-- [Authentication Guide](docs/authentication.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security Policy](SECURITY.md)
-- [GitHub Release Copy](docs/github-release-v0.3.2.md)
-- [GitHub Publishing Notes](docs/github-publishing.md)
-- [Changelog](CHANGELOG.md)
-- [License](LICENSE)
 
 ## Terminal Persistence
 
@@ -250,18 +241,6 @@ The browser UI supports workspace tabs with `1 / 2 / 4` terminal panes.
 - workspace state is persisted on the server for the current RoamBench user
 - the browser keeps a local cached copy as a fallback
 
-## File Tools
-
-RoamBench includes a lightweight browser-side workspace for server files:
-
-- directory listing with sorting, hidden-file toggle, breadcrumb navigation, and current-directory filtering
-- text file editing with draft recovery, find / replace, go-to-line, and optional line numbers
-- `New File`, `New Folder`, `Save As`, rename / move, and copy
-- upload and download
-- image preview in the built-in viewer
-
-The file browser is rooted in the authenticated user's home directory.
-
 ## Security Notes
 
 - RoamBench is single-user only
@@ -277,6 +256,17 @@ The file browser is rooted in the authenticated user's home directory.
 - [internal/filebrowser](internal/filebrowser) - file browser backend
 - [web](web) - embedded front-end assets
 
+## More
+
+- [Roadmap](docs/roadmap.md)
+- [Configuration Guide](docs/configuration.md)
+- [Authentication Guide](docs/authentication.md)
+- [Deployment Hardening](docs/deployment-hardening.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+- [License](LICENSE)
+
 ## Status
 
-The project is already usable for self-hosted single-user workflows, especially terminal-first coding, agent supervision, and lightweight remote intervention, but it is still intentionally compact and opinionated.
+RoamBench is already usable for self-hosted single-user workflows, especially terminal-first coding, agent supervision, and lightweight remote intervention. It is intentionally compact and opinionated today, with a clear path toward becoming a project control layer for multi-agent development work.
