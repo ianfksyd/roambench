@@ -23,7 +23,8 @@ import (
 	"github.com/ianf339/roambench/internal/terminal"
 )
 
-const version = "0.3.0"
+// Overridden by build/release ldflags when available.
+var version = "dev"
 
 func main() {
 	port := flag.Int("port", 0, "Server port (overrides config)")

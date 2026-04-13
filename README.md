@@ -172,6 +172,12 @@ make run
 go test ./...
 ```
 
+Release bundles for GitHub Releases:
+
+```bash
+make release-packages TAG=v0.3.1
+```
+
 PAM build:
 
 ```bash
@@ -212,6 +218,7 @@ More details:
 - [Roadmap](docs/roadmap.md)
 - [Launch Playbook](docs/launch-playbook.md)
 - [GitHub Release Checklist](docs/github-release-checklist.md)
+- [Release Packaging Guide](docs/release-packaging.md)
 - [Lightweight Evidence](docs/lightweight-evidence.md)
 - [Rebrand Checklist](docs/rebrand-checklist.md)
 - [Deployment Hardening](docs/deployment-hardening.md)
@@ -219,7 +226,7 @@ More details:
 - [Authentication Guide](docs/authentication.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
-- [GitHub Release Copy](docs/github-release-v0.3.0.md)
+- [GitHub Release Copy](docs/github-release-v0.3.1.md)
 - [GitHub Publishing Notes](docs/github-publishing.md)
 - [Changelog](CHANGELOG.md)
 - [License](LICENSE)

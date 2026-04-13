@@ -3,12 +3,12 @@
 set -euo pipefail
 
 REPO="ianfksyd/roambench"
-TAG="${ROAMBENCH_TAG:-v0.3.0}"
+TAG="${ROAMBENCH_TAG:-v0.3.1}"
 DRY_RUN=1
 TARGETS="x,reddit,hn,ph,v2ex,cn"
 
 usage() {
-	echo "Usage: ${0} [--tag v0.3.0] [--targets x,reddit,hn,ph,v2ex,cn] [--send] [--dry-run]" >&2
+	echo "Usage: ${0} [--tag v0.3.1] [--targets x,reddit,hn,ph,v2ex,cn] [--send] [--dry-run]" >&2
 	exit 1
 }
 

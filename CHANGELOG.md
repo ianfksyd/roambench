@@ -6,6 +6,24 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-12
+
+### Added
+
+- Mobile reconnect screenshots are now included in the README and launch materials
+- Added a reusable release packaging flow for Linux `amd64` / `arm64` archives plus `.sha256` files
+- Added a generic GitHub-release installer script and a release packaging guide
+
+### Changed
+
+- README and launch copy now lean on cross-device reconnection with proof assets, not just phone-first claims
+- Release helpers now have a clean path for building tagged binaries with injected version strings
+
+### Fixed
+
+- File browser rows now show compact file type badges instead of generic file icons
+- Japanese README messaging now matches the updated English and Chinese positioning more closely
+
 ## [0.3.0] - 2026-04-11
 
 ### Added
