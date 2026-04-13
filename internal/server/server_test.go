@@ -122,8 +122,8 @@ func TestSecureHeadersAllowViewerCDNForOptionalPreviewLibraries(t *testing.T) {
 	if !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
 		t.Fatalf("Content-Security-Policy = %q, want inline style allowance for terminal renderer", csp)
 	}
-	if !strings.Contains(csp, "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net") {
-		t.Fatalf("Content-Security-Policy = %q, want jsDelivr allowed for optional preview libraries", csp)
+	if !strings.Contains(csp, "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.sheetjs.com") {
+		t.Fatalf("Content-Security-Policy = %q, want preview CDNs allowed for optional preview libraries", csp)
 	}
 	if !strings.Contains(csp, "frame-src 'self' blob: data: chrome-extension: edge-extension: moz-extension:") {
 		t.Fatalf("Content-Security-Policy = %q, want PDF viewer frame sources allowed", csp)

@@ -60,7 +60,7 @@ func secureHeaders(cfg *config.Config, next http.Handler) http.Handler {
 		// Chromium-family browsers often hand off inline PDFs to an internal extension/blob viewer.
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "+
+				"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.sheetjs.com; "+
 				"style-src 'self' 'unsafe-inline'; "+
 				"connect-src 'self' ws: wss:; "+
 				"img-src 'self' data: blob:; "+

@@ -85,11 +85,18 @@
             'workspace.duplicateHint': 'This terminal is already visible in another pane.',
             'viewer.tab': 'Viewer',
             'viewer.emptyTitle': 'Paste from clipboard',
-            'viewer.emptyHint': 'Paste text or an image here, or open an image, PDF, PPTX, or text file from Files.',
+            'viewer.emptyHint': 'Paste text or an image here, or open an image, PDF, PPTX, DOCX, XLSX, or text file from Files.',
             'viewer.copyText': 'Copy Text',
             'viewer.edit': 'Edit',
             'viewer.pptxLoading': 'Loading PPTX viewer and rendering slides...',
             'viewer.pptxUnavailable': 'PPTX preview is experimental and could not load in this browser. Use Download for now.',
+            'viewer.pptxPrev': 'Previous slide',
+            'viewer.pptxNext': 'Next slide',
+            'viewer.pptxSlideStatus': 'Slide {current} / {total}',
+            'viewer.docxLoading': 'Loading DOCX preview...',
+            'viewer.docxUnavailable': 'DOCX preview could not load in this browser. Use Download for now.',
+            'viewer.xlsxLoading': 'Loading XLSX workbook preview...',
+            'viewer.xlsxUnavailable': 'XLSX preview could not load in this browser. Use Download for now.',
             'viewer.new': 'New',
             'viewer.newDraft.filename': 'File name',
             'viewer.newDraft.hint': 'Paste text or an image here, then Save.',
@@ -289,11 +296,18 @@
             'workspace.duplicateHint': '这个终端已经显示在另一个窗格中。',
             'viewer.tab': '查看器',
             'viewer.emptyTitle': '从剪贴板粘贴',
-            'viewer.emptyHint': '在这里粘贴文字或截图，或在文件标签中打开图片、PDF、PPTX 或文本文件。',
+            'viewer.emptyHint': '在这里粘贴文字或截图，或在文件标签中打开图片、PDF、PPTX、DOCX、XLSX 或文本文件。',
             'viewer.copyText': '复制全文',
             'viewer.edit': '编辑',
             'viewer.pptxLoading': '正在加载 PPTX 预览器并渲染幻灯片……',
             'viewer.pptxUnavailable': 'PPTX 预览仍是实验功能，当前浏览器中加载失败，请先使用下载。',
+            'viewer.pptxPrev': '上一页',
+            'viewer.pptxNext': '下一页',
+            'viewer.pptxSlideStatus': '第 {current} / {total} 页',
+            'viewer.docxLoading': '正在加载 DOCX 预览……',
+            'viewer.docxUnavailable': 'DOCX 预览在当前浏览器中加载失败，请先使用下载。',
+            'viewer.xlsxLoading': '正在加载 XLSX 工作簿预览……',
+            'viewer.xlsxUnavailable': 'XLSX 预览在当前浏览器中加载失败，请先使用下载。',
             'viewer.new': '新建',
             'viewer.newDraft.filename': '文件名',
             'viewer.newDraft.hint': '在此粘贴文本或图片，然后保存。',
@@ -493,11 +507,18 @@
             'workspace.duplicateHint': 'この端末は別のペインですでに表示されています。',
             'viewer.tab': 'Viewer',
             'viewer.emptyTitle': 'クリップボードから貼り付け',
-            'viewer.emptyHint': 'ここにテキストや画像を貼り付けるか、Files から画像、PDF、PPTX、テキストを開いてください。',
+            'viewer.emptyHint': 'ここにテキストや画像を貼り付けるか、Files から画像、PDF、PPTX、DOCX、XLSX、テキストを開いてください。',
             'viewer.copyText': 'テキストをコピー',
             'viewer.edit': '編集',
             'viewer.pptxLoading': 'PPTX ビューアを読み込み、スライドを描画しています...',
             'viewer.pptxUnavailable': 'PPTX プレビューは実験機能のため、このブラウザでは読み込めませんでした。いったんダウンロードを使ってください。',
+            'viewer.pptxPrev': '前のスライド',
+            'viewer.pptxNext': '次のスライド',
+            'viewer.pptxSlideStatus': '{current} / {total} 枚目',
+            'viewer.docxLoading': 'DOCX プレビューを読み込んでいます...',
+            'viewer.docxUnavailable': 'このブラウザでは DOCX プレビューを読み込めませんでした。いったんダウンロードを使ってください。',
+            'viewer.xlsxLoading': 'XLSX ブックのプレビューを読み込んでいます...',
+            'viewer.xlsxUnavailable': 'このブラウザでは XLSX プレビューを読み込めませんでした。いったんダウンロードを使ってください。',
             'viewer.new': '新規',
             'viewer.newDraft.filename': 'ファイル名',
             'viewer.newDraft.hint': 'ここにテキストまたは画像を貼り付けてから保存してください。',
@@ -872,6 +893,9 @@
     let uploadHideTimer = null;
     let viewerLoadSequence = 0;
     let pptxViewerLibraryPromise = null;
+    let pptxViewerInstance = null;
+    let docxViewerLibraryPromise = null;
+    let xlsxViewerLibraryPromise = null;
     let editorHighlightFrame = 0;
     let fileDragDepth = 0;
     let workspaceTabDrag = null;
@@ -914,6 +938,12 @@
     const fileViewerPptxStage = document.getElementById('viewer-pptx-stage');
     const fileViewerPptxHost = document.getElementById('viewer-pptx-host');
     const fileViewerPptxStatus = document.getElementById('viewer-pptx-status');
+    const fileViewerDocxStage = document.getElementById('viewer-docx-stage');
+    const fileViewerDocxHost = document.getElementById('viewer-docx-host');
+    const fileViewerDocxStatus = document.getElementById('viewer-docx-status');
+    const fileViewerXlsxStage = document.getElementById('viewer-xlsx-stage');
+    const fileViewerXlsxHost = document.getElementById('viewer-xlsx-host');
+    const fileViewerXlsxStatus = document.getElementById('viewer-xlsx-status');
     const fileViewerTextContent = document.getElementById('viewer-text-content');
     const fileViewerEditorHost = document.getElementById('viewer-editor-host');
     const fileViewerLoadingIndicator = document.getElementById('viewer-loading-indicator');
@@ -941,6 +971,8 @@
     const PPTX_VIEWER_JSZIP_URL = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
     const PPTX_VIEWER_CHART_URL = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js';
     const PPTX_VIEWER_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/pptxviewjs/dist/PptxViewJS.min.js';
+    const DOCX_VIEWER_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/docx-preview/dist/docx-preview.min.js';
+    const XLSX_VIEWER_SCRIPT_URL = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
     const editorSaveBtn = document.getElementById('editor-save-btn');
     const editorLineNumbersBtn = document.getElementById('editor-line-numbers-btn');
     const editorFindBtn = document.getElementById('editor-find-btn');
@@ -5541,24 +5573,28 @@
         return trimmed.slice(lastDot + 1).toLowerCase();
     }
 
+    var FILE_TYPE_ICON_SVGS = {
+        folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>',
+        file: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>',
+        image: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><circle cx="10" cy="10" r="1.4"></circle><path d="M8.5 17l3-3 2.2 2.2 2.3-2.3 2 2.1"></path></svg>',
+        pdf: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 12h6"></path><path d="M9 15h6"></path><path d="M9 18h4"></path></svg>',
+        sheet: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M8 10.5h8"></path><path d="M8 14.5h8"></path><path d="M12 10v8"></path><path d="M16 10v8"></path></svg>',
+        slides: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><rect x="8.5" y="10" width="7" height="5.5" rx="1"></rect><path d="M12 15.5v3"></path><path d="M9.5 18.5h5"></path></svg>',
+        archive: '<svg viewBox="0 0 24 24"><path d="M5 9h14v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"></path><path d="M9 5h6v4H9z"></path><path d="M10 12h4"></path><path d="M12 9v6"></path></svg>',
+        code: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M10.5 13.5l-2 2 2 2"></path><path d="M14.5 13.5l2 2-2 2"></path><path d="M13 12.5l-2 6"></path></svg>',
+        text: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 11h6"></path><path d="M9 14h6"></path><path d="M9 17h4"></path></svg>'
+    };
+
     function getFileTypeBadgeInfo(file) {
         var extension = getFileExtensionLabel(file && file.name);
-        var label = extension ? extension.toUpperCase() : 'FILE';
         var tone = 'generic';
 
         if (file && file.isDir) {
             return {
-                label: 'DIR',
+                icon: 'folder',
+                title: 'Folder',
                 tone: 'folder'
             };
-        }
-
-        if (extension === 'jpeg') {
-            label = 'JPG';
-        } else if (extension === 'markdown') {
-            label = 'MD';
-        } else if (label.length > 5) {
-            label = label.slice(0, 5);
         }
 
         if (extension === 'pdf') {
@@ -5590,7 +5626,8 @@
         }
 
         return {
-            label: label || 'FILE',
+            icon: tone === 'generic' ? 'file' : tone,
+            title: extension ? extension.toUpperCase() : 'File',
             tone: tone
         };
     }
@@ -5599,9 +5636,10 @@
         var info = getFileTypeBadgeInfo(file);
         var badge = document.createElement('span');
 
-        badge.className = 'file-type-badge is-' + info.tone;
-        badge.textContent = info.label;
+        badge.className = 'file-icon file-type-icon is-' + info.tone;
+        badge.innerHTML = FILE_TYPE_ICON_SVGS[info.icon] || FILE_TYPE_ICON_SVGS.file;
         badge.setAttribute('aria-hidden', 'true');
+        badge.title = info.title;
         return badge;
     }
 
@@ -5960,6 +5998,16 @@
             return;
         }
 
+        if (isPreviewableDocx(file.name)) {
+            previewDocx(file);
+            return;
+        }
+
+        if (isPreviewableXlsx(file.name)) {
+            previewXlsx(file);
+            return;
+        }
+
         if (isPreviewableText(file.name)) {
             previewTextFile(file);
             return;
@@ -6073,6 +6121,24 @@
             return;
         }
         setPreviewTarget(file, 'pptx');
+        renderViewerPanel(true);
+        setFileBrowserOpen(true, 'viewer');
+    }
+
+    function previewDocx(file) {
+        if (!discardViewerDraft({ render: false })) {
+            return;
+        }
+        setPreviewTarget(file, 'docx');
+        renderViewerPanel(true);
+        setFileBrowserOpen(true, 'viewer');
+    }
+
+    function previewXlsx(file) {
+        if (!discardViewerDraft({ render: false })) {
+            return;
+        }
+        setPreviewTarget(file, 'xlsx');
         renderViewerPanel(true);
         setFileBrowserOpen(true, 'viewer');
     }
@@ -6768,6 +6834,8 @@
         const isText = type === 'text';
         const isPdf = type === 'pdf';
         const isPptx = type === 'pptx';
+        const isDocx = type === 'docx';
+        const isXlsx = type === 'xlsx';
         const isImage = type === 'image';
         const isEditMode = isText && state.previewEditMode;
 
@@ -6818,6 +6886,12 @@
         if (fileViewerPptxStage) {
             fileViewerPptxStage.style.display = isPptx ? 'block' : 'none';
         }
+        if (fileViewerDocxStage) {
+            fileViewerDocxStage.style.display = isDocx ? 'block' : 'none';
+        }
+        if (fileViewerXlsxStage) {
+            fileViewerXlsxStage.style.display = isXlsx ? 'block' : 'none';
+        }
         if (fileViewerTextContent) {
             fileViewerTextContent.style.display = isText && !isEditMode ? 'block' : 'none';
         }
@@ -6840,6 +6914,14 @@
         } else if (isPptx) {
             resetViewerImageState();
             loadViewerPptx(imageKey);
+            restoreEditorPaneHost();
+        } else if (isDocx) {
+            resetViewerImageState();
+            loadViewerDocx(imageKey);
+            restoreEditorPaneHost();
+        } else if (isXlsx) {
+            resetViewerImageState();
+            loadViewerXlsx(imageKey);
             restoreEditorPaneHost();
         } else if (isText) {
             resetViewerImageState();
@@ -6869,6 +6951,8 @@
             fileViewerPdfFrame.removeAttribute('src');
         }
         resetPptxViewerState();
+        resetDocxViewerState();
+        resetXlsxViewerState();
         if (fileViewerTextContent) {
             fileViewerTextContent.innerHTML = '';
         }
@@ -6883,22 +6967,100 @@
     }
 
     function resetPptxViewerState() {
+        if (pptxViewerInstance && typeof pptxViewerInstance.destroy === 'function') {
+            try {
+                pptxViewerInstance.destroy();
+            } catch (err) {
+                console.warn('PPTX viewer cleanup failed', err);
+            }
+        }
+        pptxViewerInstance = null;
         if (fileViewerPptxHost) {
             fileViewerPptxHost.innerHTML = '';
         }
         setPptxViewerStatus('');
     }
 
+    function getPptxViewerConstructor() {
+        if (!window.PptxViewJS || typeof window.PptxViewJS.PPTXViewer !== 'function') {
+            return null;
+        }
+        return window.PptxViewJS.PPTXViewer;
+    }
+
     function createPptxRenderHost(requestToken) {
         if (!fileViewerPptxHost) {
-            return '';
+            return null;
         }
 
         const renderHost = document.createElement('div');
         renderHost.id = 'viewer-pptx-render-' + String(requestToken);
         renderHost.className = 'viewer-pptx-render-host';
+
+        const toolbar = document.createElement('div');
+        toolbar.className = 'viewer-pptx-toolbar';
+
+        const prevBtn = document.createElement('button');
+        prevBtn.type = 'button';
+        prevBtn.className = 'viewer-pptx-nav';
+        prevBtn.textContent = '\u2039';
+        prevBtn.disabled = true;
+        prevBtn.setAttribute('aria-label', t('viewer.pptxPrev'));
+        prevBtn.title = t('viewer.pptxPrev');
+
+        const page = document.createElement('span');
+        page.className = 'viewer-pptx-page';
+        page.textContent = '';
+
+        const nextBtn = document.createElement('button');
+        nextBtn.type = 'button';
+        nextBtn.className = 'viewer-pptx-nav';
+        nextBtn.textContent = '\u203a';
+        nextBtn.disabled = true;
+        nextBtn.setAttribute('aria-label', t('viewer.pptxNext'));
+        nextBtn.title = t('viewer.pptxNext');
+
+        const canvasWrap = document.createElement('div');
+        canvasWrap.className = 'viewer-pptx-canvas-wrap';
+
+        const canvas = document.createElement('canvas');
+        canvas.className = 'viewer-pptx-canvas';
+
+        toolbar.appendChild(prevBtn);
+        toolbar.appendChild(page);
+        toolbar.appendChild(nextBtn);
+        canvasWrap.appendChild(canvas);
+        renderHost.appendChild(toolbar);
+        renderHost.appendChild(canvasWrap);
         fileViewerPptxHost.appendChild(renderHost);
-        return '#' + renderHost.id;
+        return {
+            canvas: canvas,
+            prevBtn: prevBtn,
+            nextBtn: nextBtn,
+            page: page
+        };
+    }
+
+    function updatePptxViewerControls(viewer, renderHost) {
+        if (!viewer || !renderHost) {
+            return;
+        }
+
+        const totalSlides = typeof viewer.getSlideCount === 'function' ? Number(viewer.getSlideCount()) : 0;
+        const currentIndex = typeof viewer.getCurrentSlideIndex === 'function' ? Number(viewer.getCurrentSlideIndex()) : 0;
+        const currentSlide = totalSlides > 0 ? currentIndex + 1 : 0;
+
+        if (renderHost.page) {
+            renderHost.page.textContent = totalSlides > 0
+                ? t('viewer.pptxSlideStatus', { current: currentSlide, total: totalSlides })
+                : '';
+        }
+        if (renderHost.prevBtn) {
+            renderHost.prevBtn.disabled = totalSlides <= 1 || currentIndex <= 0;
+        }
+        if (renderHost.nextBtn) {
+            renderHost.nextBtn.disabled = totalSlides <= 1 || currentIndex >= totalSlides - 1;
+        }
     }
 
     function setPptxViewerStatus(message) {
@@ -6912,6 +7074,60 @@
         }
         fileViewerPptxStatus.textContent = message;
         fileViewerPptxStatus.style.display = 'block';
+    }
+
+    function resetDocxViewerState() {
+        if (fileViewerDocxHost) {
+            fileViewerDocxHost.innerHTML = '';
+        }
+        setDocxViewerStatus('');
+    }
+
+    function resetXlsxViewerState() {
+        if (fileViewerXlsxHost) {
+            fileViewerXlsxHost.innerHTML = '';
+        }
+        setXlsxViewerStatus('');
+    }
+
+    function setDocxViewerStatus(message) {
+        if (!fileViewerDocxStatus) {
+            return;
+        }
+        if (!message) {
+            fileViewerDocxStatus.textContent = '';
+            fileViewerDocxStatus.style.display = 'none';
+            return;
+        }
+        fileViewerDocxStatus.textContent = message;
+        fileViewerDocxStatus.style.display = 'block';
+    }
+
+    function setXlsxViewerStatus(message) {
+        if (!fileViewerXlsxStatus) {
+            return;
+        }
+        if (!message) {
+            fileViewerXlsxStatus.textContent = '';
+            fileViewerXlsxStatus.style.display = 'none';
+            return;
+        }
+        fileViewerXlsxStatus.textContent = message;
+        fileViewerXlsxStatus.style.display = 'block';
+    }
+
+    function getDocxViewerApi() {
+        if (!window.docx || typeof window.docx.renderAsync !== 'function') {
+            return null;
+        }
+        return window.docx;
+    }
+
+    function getXlsxViewerApi() {
+        if (!window.XLSX || typeof window.XLSX.read !== 'function' || !window.XLSX.utils || typeof window.XLSX.utils.sheet_to_html !== 'function') {
+            return null;
+        }
+        return window.XLSX;
     }
 
     function loadExternalScript(src, isReady) {
@@ -7015,9 +7231,38 @@
         });
     }
 
+    function ensureDocxViewerLibrary() {
+        const viewerApi = getDocxViewerApi();
+        if (viewerApi && window.JSZip) {
+            return Promise.resolve(viewerApi);
+        }
+
+        if (!docxViewerLibraryPromise) {
+            docxViewerLibraryPromise = loadExternalScript(PPTX_VIEWER_JSZIP_URL, function() {
+                return Boolean(window.JSZip);
+            }).then(function() {
+                return loadExternalScript(DOCX_VIEWER_SCRIPT_URL, function() {
+                    return Boolean(getDocxViewerApi());
+                });
+            }).then(function() {
+                const loadedViewerApi = getDocxViewerApi();
+                if (!loadedViewerApi) {
+                    throw new Error('docx viewer library unavailable');
+                }
+                return loadedViewerApi;
+            }).catch(function(err) {
+                docxViewerLibraryPromise = null;
+                throw err;
+            });
+        }
+
+        return docxViewerLibraryPromise;
+    }
+
     function ensurePptxViewerLibrary() {
-        if (window.PptxViewJS && window.PptxViewJS.Viewer && window.JSZip) {
-            return Promise.resolve(window.PptxViewJS);
+        const viewerCtor = getPptxViewerConstructor();
+        if (viewerCtor && window.JSZip) {
+            return Promise.resolve(viewerCtor);
         }
 
         if (!pptxViewerLibraryPromise) {
@@ -7029,13 +7274,14 @@
                 });
             }).then(function() {
                 return loadExternalScript(PPTX_VIEWER_SCRIPT_URL, function() {
-                    return Boolean(window.PptxViewJS && window.PptxViewJS.Viewer);
+                    return Boolean(getPptxViewerConstructor());
                 });
             }).then(function() {
-                if (!window.PptxViewJS || !window.PptxViewJS.Viewer) {
+                const loadedViewerCtor = getPptxViewerConstructor();
+                if (!loadedViewerCtor) {
                     throw new Error('pptx viewer library unavailable');
                 }
-                return window.PptxViewJS;
+                return loadedViewerCtor;
             }).catch(function(err) {
                 pptxViewerLibraryPromise = null;
                 throw err;
@@ -7043,6 +7289,59 @@
         }
 
         return pptxViewerLibraryPromise;
+    }
+
+    function ensureXlsxViewerLibrary() {
+        const viewerApi = getXlsxViewerApi();
+        if (viewerApi) {
+            return Promise.resolve(viewerApi);
+        }
+
+        if (!xlsxViewerLibraryPromise) {
+            xlsxViewerLibraryPromise = loadExternalScript(XLSX_VIEWER_SCRIPT_URL, function() {
+                return Boolean(getXlsxViewerApi());
+            }).then(function() {
+                const loadedViewerApi = getXlsxViewerApi();
+                if (!loadedViewerApi) {
+                    throw new Error('xlsx viewer library unavailable');
+                }
+                return loadedViewerApi;
+            }).catch(function(err) {
+                xlsxViewerLibraryPromise = null;
+                throw err;
+            });
+        }
+
+        return xlsxViewerLibraryPromise;
+    }
+
+    async function fetchViewerFileResponse(path, version) {
+        const response = await fetchAPI('/api/files/download?path=' + encodeURIComponent(path) + '&v=' + encodeURIComponent(version), {
+            cache: 'no-store'
+        }, { authRequired: true });
+
+        if (!response.ok) {
+            let message = '';
+
+            try {
+                message = (await response.text()).trim();
+            } catch (_) {
+                message = '';
+            }
+            throw buildRequestError(response, message ? { error: message } : null, t('common.requestFailed'));
+        }
+
+        return response;
+    }
+
+    async function fetchViewerFileBlob(path, version) {
+        const response = await fetchViewerFileResponse(path, version);
+        return response.blob();
+    }
+
+    async function fetchViewerFileArrayBuffer(path, version) {
+        const response = await fetchViewerFileResponse(path, version);
+        return response.arrayBuffer();
     }
 
     async function loadViewerPptx(imageKey) {
@@ -7063,7 +7362,7 @@
         }
 
         try {
-            const library = await ensurePptxViewerLibrary();
+            const ViewerCtor = await ensurePptxViewerLibrary();
             if (!isActiveViewerRequest(requestToken, imageKey) || !fileViewerPptxHost) {
                 return;
             }
@@ -7071,17 +7370,50 @@
             resetPptxViewerState();
             setPptxViewerStatus(t('viewer.pptxLoading'));
 
-            const renderHostSelector = createPptxRenderHost(requestToken);
-            if (!renderHostSelector) {
+            const renderHost = createPptxRenderHost(requestToken);
+            if (!renderHost || !renderHost.canvas) {
                 return;
             }
 
-            const viewer = new library.Viewer(renderHostSelector);
-            await Promise.resolve(viewer.load(fullSrc));
+            const viewer = new ViewerCtor({
+                canvas: renderHost.canvas,
+                slideSizeMode: 'fit'
+            });
+            await Promise.resolve(viewer.loadFromUrl(fullSrc));
 
             if (!isActiveViewerRequest(requestToken, imageKey)) {
+                if (typeof viewer.destroy === 'function') {
+                    viewer.destroy();
+                }
                 return;
             }
+
+            await Promise.resolve(viewer.render(renderHost.canvas));
+            if (!isActiveViewerRequest(requestToken, imageKey)) {
+                if (typeof viewer.destroy === 'function') {
+                    viewer.destroy();
+                }
+                return;
+            }
+
+            renderHost.prevBtn.addEventListener('click', function() {
+                Promise.resolve(viewer.previousSlide(renderHost.canvas)).then(function() {
+                    updatePptxViewerControls(viewer, renderHost);
+                }).catch(function(err) {
+                    console.error('PPTX previous-slide render failed', err);
+                    setPptxViewerStatus(t('viewer.pptxUnavailable'));
+                });
+            });
+            renderHost.nextBtn.addEventListener('click', function() {
+                Promise.resolve(viewer.nextSlide(renderHost.canvas)).then(function() {
+                    updatePptxViewerControls(viewer, renderHost);
+                }).catch(function(err) {
+                    console.error('PPTX next-slide render failed', err);
+                    setPptxViewerStatus(t('viewer.pptxUnavailable'));
+                });
+            });
+            updatePptxViewerControls(viewer, renderHost);
+            pptxViewerInstance = viewer;
 
             fileViewerCanvas.classList.add('is-ready');
             fileViewerCanvas.classList.remove('is-loading');
@@ -7098,6 +7430,178 @@
             fileViewerCanvas.classList.remove('is-loading', 'is-ready');
             resetPptxViewerState();
             setPptxViewerStatus(t('viewer.pptxUnavailable'));
+            if (fileViewerLoadingIndicator) {
+                fileViewerLoadingIndicator.style.display = 'none';
+            }
+        }
+    }
+
+    async function loadViewerDocx(imageKey) {
+        const requestToken = ++viewerLoadSequence;
+        const path = state.previewImagePath;
+        const version = String(state.previewImageVersion || Date.now());
+
+        fileViewerCanvas.dataset.imageKey = imageKey;
+        fileViewerCanvas.classList.remove('has-preview', 'is-ready');
+        fileViewerCanvas.classList.add('is-loading');
+        resetDocxViewerState();
+        setDocxViewerStatus(t('viewer.docxLoading'));
+        if (fileViewerLoadingIndicator) {
+            fileViewerLoadingIndicator.style.display = 'inline-flex';
+        }
+
+        try {
+            const viewerApi = await ensureDocxViewerLibrary();
+            if (!isActiveViewerRequest(requestToken, imageKey) || !fileViewerDocxHost) {
+                return;
+            }
+
+            const blob = await fetchViewerFileBlob(path, version);
+            if (!isActiveViewerRequest(requestToken, imageKey) || !fileViewerDocxHost) {
+                return;
+            }
+
+            const renderShell = document.createElement('div');
+            const renderStyles = document.createElement('div');
+            const renderBody = document.createElement('div');
+
+            renderShell.className = 'viewer-docx-render-shell';
+            renderStyles.className = 'viewer-docx-render-styles';
+            renderBody.className = 'viewer-docx-render-body';
+            renderShell.appendChild(renderStyles);
+            renderShell.appendChild(renderBody);
+
+            await Promise.resolve(viewerApi.renderAsync(blob, renderBody, renderStyles, {
+                inWrapper: true,
+                ignoreFonts: true,
+                useBase64URL: true
+            }));
+
+            if (!isActiveViewerRequest(requestToken, imageKey) || !fileViewerDocxHost) {
+                return;
+            }
+
+            resetDocxViewerState();
+            fileViewerDocxHost.appendChild(renderShell);
+            fileViewerCanvas.classList.add('is-ready');
+            fileViewerCanvas.classList.remove('is-loading');
+            setDocxViewerStatus('');
+            if (fileViewerLoadingIndicator) {
+                fileViewerLoadingIndicator.style.display = 'none';
+            }
+        } catch (err) {
+            if (!isActiveViewerRequest(requestToken, imageKey)) {
+                return;
+            }
+
+            console.error('DOCX preview failed', err);
+            fileViewerCanvas.classList.remove('is-loading', 'is-ready');
+            resetDocxViewerState();
+            setDocxViewerStatus(t('viewer.docxUnavailable'));
+            if (fileViewerLoadingIndicator) {
+                fileViewerLoadingIndicator.style.display = 'none';
+            }
+        }
+    }
+
+    function renderXlsxWorkbook(viewerApi, workbook) {
+        if (!fileViewerXlsxHost || !viewerApi || !workbook || !Array.isArray(workbook.SheetNames) || !workbook.SheetNames.length) {
+            return;
+        }
+
+        const renderShell = document.createElement('div');
+        const toolbar = document.createElement('div');
+        const sheetWrap = document.createElement('div');
+        const buttons = [];
+        const sheetNames = workbook.SheetNames.slice();
+
+        renderShell.className = 'viewer-xlsx-render-shell';
+        toolbar.className = 'viewer-xlsx-toolbar';
+        sheetWrap.className = 'viewer-xlsx-sheet';
+
+        function renderSheet(index) {
+            const normalizedIndex = index >= 0 && index < sheetNames.length ? index : 0;
+            const sheetName = sheetNames[normalizedIndex];
+            const worksheet = workbook.Sheets[sheetName];
+
+            buttons.forEach(function(button, buttonIndex) {
+                button.classList.toggle('active', buttonIndex === normalizedIndex);
+            });
+
+            sheetWrap.innerHTML = worksheet
+                ? viewerApi.utils.sheet_to_html(worksheet)
+                : '';
+        }
+
+        sheetNames.forEach(function(sheetName, index) {
+            const button = document.createElement('button');
+
+            button.type = 'button';
+            button.className = 'viewer-xlsx-sheet-tab';
+            button.textContent = sheetName || ('Sheet ' + String(index + 1));
+            button.addEventListener('click', function() {
+                renderSheet(index);
+            });
+            buttons.push(button);
+            toolbar.appendChild(button);
+        });
+
+        renderShell.appendChild(toolbar);
+        renderShell.appendChild(sheetWrap);
+        fileViewerXlsxHost.appendChild(renderShell);
+        renderSheet(0);
+    }
+
+    async function loadViewerXlsx(imageKey) {
+        const requestToken = ++viewerLoadSequence;
+        const path = state.previewImagePath;
+        const version = String(state.previewImageVersion || Date.now());
+
+        fileViewerCanvas.dataset.imageKey = imageKey;
+        fileViewerCanvas.classList.remove('has-preview', 'is-ready');
+        fileViewerCanvas.classList.add('is-loading');
+        resetXlsxViewerState();
+        setXlsxViewerStatus(t('viewer.xlsxLoading'));
+        if (fileViewerLoadingIndicator) {
+            fileViewerLoadingIndicator.style.display = 'inline-flex';
+        }
+
+        try {
+            const viewerApi = await ensureXlsxViewerLibrary();
+            if (!isActiveViewerRequest(requestToken, imageKey) || !fileViewerXlsxHost) {
+                return;
+            }
+
+            const data = await fetchViewerFileArrayBuffer(path, version);
+            if (!isActiveViewerRequest(requestToken, imageKey) || !fileViewerXlsxHost) {
+                return;
+            }
+
+            const workbook = viewerApi.read(data, { type: 'array' });
+            if (!workbook || !Array.isArray(workbook.SheetNames) || !workbook.SheetNames.length) {
+                throw new Error('xlsx workbook contains no worksheets');
+            }
+            if (!isActiveViewerRequest(requestToken, imageKey) || !fileViewerXlsxHost) {
+                return;
+            }
+
+            resetXlsxViewerState();
+            renderXlsxWorkbook(viewerApi, workbook);
+            fileViewerCanvas.classList.add('is-ready');
+            fileViewerCanvas.classList.remove('is-loading');
+            setXlsxViewerStatus('');
+            if (fileViewerLoadingIndicator) {
+                fileViewerLoadingIndicator.style.display = 'none';
+            }
+        } catch (err) {
+            if (!isActiveViewerRequest(requestToken, imageKey)) {
+                return;
+            }
+
+            console.error('XLSX preview failed', err);
+            fileViewerCanvas.classList.remove('is-loading', 'is-ready');
+            resetXlsxViewerState();
+            setXlsxViewerStatus(t('viewer.xlsxUnavailable'));
             if (fileViewerLoadingIndicator) {
                 fileViewerLoadingIndicator.style.display = 'none';
             }
@@ -9679,6 +10183,14 @@
 
     function isPreviewablePptx(name) {
         return /\.pptx$/i.test(name || '');
+    }
+
+    function isPreviewableDocx(name) {
+        return /\.docx$/i.test(name || '');
+    }
+
+    function isPreviewableXlsx(name) {
+        return /\.xlsx$/i.test(name || '');
     }
 
     function isPreviewableText(name) {
