@@ -40,6 +40,7 @@ type projectControlSnapshot struct {
 	Sessions        []projectControlSession    `json:"sessions"`
 	Runtimes        []projectControlRuntime    `json:"runtimes"`
 	Checkpoints     []projectControlCheckpoint `json:"checkpoints"`
+	Decisions       []projectControlDecision   `json:"decisions,omitempty"`
 	Dashboard       projectControlDashboard    `json:"dashboard"`
 }
 
@@ -65,26 +66,28 @@ type projectControlWorkstream struct {
 }
 
 type projectControlTask struct {
-	ID               string                    `json:"id"`
-	ProjectID        string                    `json:"projectId"`
-	WorkstreamID     string                    `json:"workstreamId"`
-	Title            string                    `json:"title"`
-	Goal             string                    `json:"goal"`
-	State            string                    `json:"state"`
-	AcceptanceStatus string                    `json:"acceptanceStatus"`
-	RiskLevel        string                    `json:"riskLevel"`
-	Priority         string                    `json:"priority"`
-	AgentLabel       string                    `json:"agentLabel"`
-	RuntimeID        string                    `json:"runtimeId"`
-	RecentSummary    string                    `json:"recentSummary"`
-	NextStep         string                    `json:"nextStep"`
-	FilesChanged     []string                  `json:"filesChanged"`
-	DiffSummary      string                    `json:"diffSummary"`
-	SessionIDs       []string                  `json:"sessionIds"`
-	Timeline         []projectControlEvent     `json:"timeline"`
-	Evidence         []projectControlEvidence  `json:"evidence"`
-	Audit            []projectControlAuditItem `json:"audit"`
-	RowVersion       int                       `json:"rowVersion,omitempty"`
+	ID                   string                    `json:"id"`
+	ProjectID            string                    `json:"projectId"`
+	WorkstreamID         string                    `json:"workstreamId"`
+	Title                string                    `json:"title"`
+	Goal                 string                    `json:"goal"`
+	State                string                    `json:"state"`
+	AcceptanceStatus     string                    `json:"acceptanceStatus"`
+	AcceptanceDecisionID string                    `json:"acceptanceDecisionId,omitempty"`
+	ArchiveDecisionID    string                    `json:"archiveDecisionId,omitempty"`
+	RiskLevel            string                    `json:"riskLevel"`
+	Priority             string                    `json:"priority"`
+	AgentLabel           string                    `json:"agentLabel"`
+	RuntimeID            string                    `json:"runtimeId"`
+	RecentSummary        string                    `json:"recentSummary"`
+	NextStep             string                    `json:"nextStep"`
+	FilesChanged         []string                  `json:"filesChanged"`
+	DiffSummary          string                    `json:"diffSummary"`
+	SessionIDs           []string                  `json:"sessionIds"`
+	Timeline             []projectControlEvent     `json:"timeline"`
+	Evidence             []projectControlEvidence  `json:"evidence"`
+	Audit                []projectControlAuditItem `json:"audit"`
+	RowVersion           int                       `json:"rowVersion,omitempty"`
 }
 
 type projectControlSession struct {
@@ -114,16 +117,29 @@ type projectControlRuntime struct {
 }
 
 type projectControlCheckpoint struct {
-	ID              string   `json:"id"`
-	TaskID          string   `json:"taskId"`
-	Kind            string   `json:"kind"`
-	Title           string   `json:"title"`
-	Reason          string   `json:"reason"`
-	Status          string   `json:"status"`
-	RequestedAt     string   `json:"requestedAt"`
-	AllowedActions  []string `json:"allowedActions"`
-	DecisionSummary string   `json:"decisionSummary,omitempty"`
-	RowVersion      int      `json:"rowVersion,omitempty"`
+	ID                   string   `json:"id"`
+	TaskID               string   `json:"taskId"`
+	Kind                 string   `json:"kind"`
+	Title                string   `json:"title"`
+	Reason               string   `json:"reason"`
+	Status               string   `json:"status"`
+	RequestedAt          string   `json:"requestedAt"`
+	ResolvedByDecisionID string   `json:"resolvedByDecisionId,omitempty"`
+	AllowedActions       []string `json:"allowedActions"`
+	DecisionSummary      string   `json:"decisionSummary,omitempty"`
+	RowVersion           int      `json:"rowVersion,omitempty"`
+}
+
+type projectControlDecision struct {
+	ID           string `json:"id"`
+	DecisionType string `json:"decisionType"`
+	Actor        string `json:"actor"`
+	Timestamp    string `json:"timestamp"`
+	Summary      string `json:"summary"`
+	ProjectID    string `json:"projectId,omitempty"`
+	WorkstreamID string `json:"workstreamId,omitempty"`
+	TaskID       string `json:"taskId,omitempty"`
+	CheckpointID string `json:"checkpointId,omitempty"`
 }
 
 type projectControlDashboard struct {
@@ -174,6 +190,7 @@ type projectControlState struct {
 	Workstreams     []projectControlWorkstream    `json:"workstreams"`
 	Tasks           []projectControlTask          `json:"tasks"`
 	Checkpoints     []projectControlCheckpoint    `json:"checkpoints"`
+	Decisions       []projectControlDecision      `json:"decisions,omitempty"`
 	Events          []projectControlRecordedEvent `json:"events,omitempty"`
 	UpdatedAt       string                        `json:"updatedAt,omitempty"`
 }
@@ -246,15 +263,17 @@ type projectControlReplayTransition struct {
 }
 
 type projectControlReplayResponse struct {
-	TaskID          string                           `json:"taskId"`
-	ProjectID       string                           `json:"projectId"`
-	WorkstreamID    string                           `json:"workstreamId"`
-	Title           string                           `json:"title"`
-	CurrentState    string                           `json:"currentState"`
-	AcceptanceState string                           `json:"acceptanceState"`
-	Steps           []projectControlRecordedEvent    `json:"steps"`
-	Sections        []projectControlReplaySection    `json:"sections"`
-	Transitions     []projectControlReplayTransition `json:"transitions"`
+	TaskID             string                           `json:"taskId"`
+	ProjectID          string                           `json:"projectId"`
+	WorkstreamID       string                           `json:"workstreamId"`
+	Title              string                           `json:"title"`
+	CurrentState       string                           `json:"currentState"`
+	AcceptanceState    string                           `json:"acceptanceState"`
+	AcceptanceDecision *projectControlDecision          `json:"acceptanceDecision,omitempty"`
+	ArchiveDecision    *projectControlDecision          `json:"archiveDecision,omitempty"`
+	Steps              []projectControlRecordedEvent    `json:"steps"`
+	Sections           []projectControlReplaySection    `json:"sections"`
+	Transitions        []projectControlReplayTransition `json:"transitions"`
 }
 
 type projectControlStore struct {
@@ -330,9 +349,13 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 		req.AcceptanceStatus = "not_ready"
 	case "archive":
 		req.State = "archived"
+	case "request_archive_override":
+		req.State = "execution_complete"
 	case "unarchive":
 		req.State = "planned"
-		req.AcceptanceStatus = "not_ready"
+		if task == nil || task.AcceptanceStatus != "accepted" {
+			req.AcceptanceStatus = "not_ready"
+		}
 	default:
 		return fmt.Errorf("invalid task action: %s", action)
 	}
@@ -383,7 +406,10 @@ func isAllowedProjectControlTaskTransition(from, to string) bool {
 	case "waiting_review", "waiting_human", "blocked", "failed":
 		return to == "running"
 	case "execution_complete":
-		return to == "running" || to == "blocked" || to == "archived"
+		if to == "archived" {
+			return true
+		}
+		return to == "running" || to == "blocked"
 	case "archived":
 		return to == "planned"
 	default:
@@ -491,6 +517,87 @@ func syncProjectControlAcceptanceCheckpoint(state *projectControlState, task pro
 			CheckpointID: checkpoint.ID,
 		})
 	}
+}
+
+func syncProjectControlArchiveOverrideCheckpoint(state *projectControlState, task projectControlTask, now string) {
+	if state == nil {
+		return
+	}
+	pendingIndex := -1
+	for i, checkpoint := range state.Checkpoints {
+		if checkpoint.TaskID == task.ID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			pendingIndex = i
+			break
+		}
+	}
+	if pendingIndex == -1 {
+		return
+	}
+	if task.State == "execution_complete" && task.AcceptanceStatus == "not_ready" {
+		return
+	}
+	checkpoint := state.Checkpoints[pendingIndex]
+	checkpoint.Status = "expired"
+	checkpoint.AllowedActions = []string{}
+	checkpoint.DecisionSummary = "Expired after task left archive override review prerequisites."
+	checkpoint.RowVersion += 1
+	state.Checkpoints[pendingIndex] = checkpoint
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "checkpoint-expired"),
+		Timestamp:    now,
+		Actor:        "policy_engine",
+		Action:       "checkpoint_expired",
+		Detail:       checkpoint.DecisionSummary,
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+		CheckpointID: checkpoint.ID,
+	})
+}
+
+func requestProjectControlArchiveOverrideCheckpoint(state *projectControlState, task projectControlTask, now string) error {
+	if state == nil {
+		return errors.New("missing state")
+	}
+	if task.State != "execution_complete" {
+		return errors.New("archive override requires execution_complete task")
+	}
+	if task.AcceptanceStatus == "accepted" {
+		return errors.New("archive override is only for unaccepted tasks")
+	}
+	if task.AcceptanceStatus == "under_human_review" {
+		return errors.New("archive override unavailable while final acceptance review is pending")
+	}
+	for _, checkpoint := range state.Checkpoints {
+		if checkpoint.TaskID == task.ID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			return errors.New("archive override review already pending")
+		}
+	}
+	checkpointID := projectControlID("checkpoint", task.ID+"-archive-override")
+	checkpoint := projectControlCheckpoint{
+		ID:             checkpointID,
+		TaskID:         task.ID,
+		Kind:           "archive_override",
+		Title:          "Archive override requested",
+		Reason:         "Task is execution-complete but not accepted; explicit human archive override is required.",
+		Status:         "pending",
+		RequestedAt:    now,
+		AllowedActions: []string{"approve", "reject"},
+		RowVersion:     1,
+	}
+	state.Checkpoints = append(state.Checkpoints, checkpoint)
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "checkpoint-raised"),
+		Timestamp:    now,
+		Actor:        "policy_engine",
+		Action:       "checkpoint_raised",
+		Detail:       "Generated archive_override checkpoint for explicit archive approval.",
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+		CheckpointID: checkpoint.ID,
+	})
+	return nil
 }
 
 func checkpointProjectID(state *projectControlState, taskID string) string {
@@ -766,6 +873,12 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 				if !isAllowedProjectControlTaskTransition(originalState, candidate) {
 					return fmt.Errorf("illegal task transition: %s -> %s", originalState, candidate)
 				}
+				if candidate == "archived" && task.AcceptanceStatus != "accepted" {
+					return errors.New("archiving requires accepted task or explicit archive override decision")
+				}
+				if candidate != "archived" || task.AcceptanceStatus == "accepted" {
+					task.ArchiveDecisionID = ""
+				}
 				from := task.State
 				task.State = candidate
 				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
@@ -781,11 +894,19 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			}
 			if value := strings.TrimSpace(req.AcceptanceStatus); value != "" && value != task.AcceptanceStatus {
 				candidate := normalizeProjectControlAcceptanceStatus(value)
-				if err := validateProjectControlAcceptanceTransition(originalAcceptance, candidate, task.State, false); err != nil {
-					return err
+				if !(strings.TrimSpace(strings.ToLower(req.Action)) == "unarchive" && originalAcceptance == "accepted" && candidate == "not_ready") {
+					if err := validateProjectControlAcceptanceTransition(originalAcceptance, candidate, task.State, false); err != nil {
+						return err
+					}
 				}
 				from := task.AcceptanceStatus
 				task.AcceptanceStatus = candidate
+				if candidate != "accepted" && candidate != "rejected" {
+					if !(strings.TrimSpace(strings.ToLower(req.Action)) == "unarchive" && originalAcceptance == "accepted") {
+						task.AcceptanceDecisionID = ""
+					}
+				}
+				task.ArchiveDecisionID = ""
 				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 					ID:           projectControlID("event", "acceptance-state-changed"),
 					Timestamp:    now,
@@ -797,8 +918,22 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 					TaskID:       task.ID,
 				})
 			}
+			if strings.TrimSpace(strings.ToLower(req.Action)) == "request_archive_override" {
+				if originalState != "execution_complete" {
+					return errors.New("archive override requires execution_complete task")
+				}
+				if originalAcceptance != "not_ready" {
+					return errors.New("archive override requires not_ready acceptance status")
+				}
+				if err := requestProjectControlArchiveOverrideCheckpoint(state, task, now); err != nil {
+					return err
+				}
+				task.RecentSummary = "Archive override requested; waiting for explicit human approval before archiving unaccepted work."
+				task.NextStep = "Wait for archive override approval or continue toward final acceptance instead."
+			}
 			task.RowVersion += 1
 			syncProjectControlAcceptanceCheckpoint(state, task, now)
+			syncProjectControlArchiveOverrideCheckpoint(state, task, now)
 			state.Tasks[i] = task
 			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 				ID:           projectControlID("event", "task-updated"),
@@ -837,32 +972,76 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 			return errors.New("checkpoint not found")
 		}
 		checkpoint := state.Checkpoints[idx]
+		if checkpoint.Status != "pending" {
+			return errors.New("checkpoint is not pending")
+		}
+		allowed := false
+		for _, allowedAction := range checkpoint.AllowedActions {
+			if allowedAction == action {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return errors.New("action not allowed for checkpoint")
+		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		decisionAction := "checkpoint_decided"
 		isFinalAcceptance := checkpoint.Kind == "final_acceptance"
+		isArchiveOverride := checkpoint.Kind == "archive_override"
+		if isArchiveOverride && action == "reroute" {
+			return errors.New("reroute not allowed for archive override")
+		}
 		switch action {
 		case "approve":
 			decisionAction = "checkpoint_approved"
 			if isFinalAcceptance {
 				decisionAction = "final_acceptance_approved"
 			}
+			if isArchiveOverride {
+				decisionAction = "archive_override_approved"
+			}
 			checkpoint.Status = "approved"
 			checkpoint.AllowedActions = []string{}
-			checkpoint.DecisionSummary = "Accepted by human operator"
+			if isArchiveOverride {
+				checkpoint.DecisionSummary = "Archive override approved by human operator"
+			} else {
+				checkpoint.DecisionSummary = "Accepted by human operator"
+			}
 		case "reject":
 			decisionAction = "checkpoint_rejected"
 			if isFinalAcceptance {
 				decisionAction = "final_acceptance_rejected"
 			}
+			if isArchiveOverride {
+				decisionAction = "archive_override_rejected"
+			}
 			checkpoint.Status = "rejected"
 			checkpoint.AllowedActions = []string{}
-			checkpoint.DecisionSummary = "Rejected by human operator"
+			if isArchiveOverride {
+				checkpoint.DecisionSummary = "Archive override rejected by human operator"
+			} else {
+				checkpoint.DecisionSummary = "Rejected by human operator"
+			}
 		case "reroute":
 			decisionAction = "checkpoint_rerouted"
 			checkpoint.Status = "rerouted"
 			checkpoint.AllowedActions = []string{}
 			checkpoint.DecisionSummary = "Rerouted by human operator"
 		}
+		decision := projectControlDecision{
+			ID:           projectControlID("decision", decisionAction),
+			DecisionType: decisionAction,
+			Actor:        "human",
+			Timestamp:    now,
+			Summary:      checkpoint.DecisionSummary,
+			ProjectID:    checkpointProjectID(state, checkpoint.TaskID),
+			WorkstreamID: checkpointWorkstreamID(state, checkpoint.TaskID),
+			TaskID:       checkpoint.TaskID,
+			CheckpointID: checkpoint.ID,
+		}
+		state.Decisions = append(state.Decisions, decision)
+		checkpoint.ResolvedByDecisionID = decision.ID
 		checkpoint.RowVersion += 1
 		state.Checkpoints[idx] = checkpoint
 		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
@@ -882,21 +1061,52 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 			}
 			switch action {
 			case "approve":
-				task.AcceptanceStatus = "accepted"
-				task.RecentSummary = "Task accepted by human operator; execution remains visible for audit."
-				task.NextStep = "Archive or hide accepted work with board filters."
+				if isArchiveOverride {
+					from := task.State
+					task.State = "archived"
+					task.AcceptanceStatus = "not_ready"
+					task.AcceptanceDecisionID = ""
+					task.ArchiveDecisionID = decision.ID
+					task.RecentSummary = "Task archived via explicit archive override decision after approvals inbox review."
+					task.NextStep = "Review archive override rationale if this work needs to be reopened later."
+					projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+						ID:           projectControlID("event", "task-state-changed"),
+						Timestamp:    now,
+						Actor:        "human",
+						Action:       "task_state_changed",
+						Detail:       "Task state changed from " + from + " to archived via approve.",
+						ProjectID:    task.ProjectID,
+						WorkstreamID: task.WorkstreamID,
+						TaskID:       task.ID,
+					})
+				} else {
+					task.AcceptanceStatus = "accepted"
+					task.AcceptanceDecisionID = decision.ID
+					task.RecentSummary = "Task accepted by human operator; execution remains visible for audit."
+					task.NextStep = "Archive or hide accepted work with board filters."
+				}
 			case "reject":
-				task.State = "running"
-				task.AcceptanceStatus = "rejected"
-				task.RecentSummary = "Task rejected during final acceptance and sent back for revision."
-				task.NextStep = "Revise the work, regenerate evidence, and resubmit for acceptance."
+				if isArchiveOverride {
+					task.ArchiveDecisionID = decision.ID
+					task.RecentSummary = "Archive override rejected; task remains execution_complete until accepted or reopened."
+					task.NextStep = "Either reopen for more work or send through final acceptance instead of archiving."
+				} else {
+					task.State = "running"
+					task.AcceptanceStatus = "rejected"
+					task.AcceptanceDecisionID = decision.ID
+					task.RecentSummary = "Task rejected during final acceptance and sent back for revision."
+					task.NextStep = "Revise the work, regenerate evidence, and resubmit for acceptance."
+				}
 			case "reroute":
 				task.State = "blocked"
 				task.AcceptanceStatus = "not_ready"
+				task.AcceptanceDecisionID = ""
 				task.RecentSummary = "Task rerouted back into planning."
 				task.NextStep = "Clarify direction, then reopen execution with updated scope."
 			}
 			task.RowVersion += 1
+			syncProjectControlAcceptanceCheckpoint(state, task, now)
+			syncProjectControlArchiveOverrideCheckpoint(state, task, now)
 			state.Tasks[index] = task
 			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 				ID:           projectControlID("event", "decision-made"),
@@ -1018,6 +1228,26 @@ func (s *projectControlStore) replayForTask(username, taskID string, terminals *
 		}
 	}
 	steps = append(steps, syntheticEvents...)
+	var acceptanceDecision *projectControlDecision
+	if strings.TrimSpace(task.AcceptanceDecisionID) != "" {
+		for i := range state.Decisions {
+			if state.Decisions[i].ID == task.AcceptanceDecisionID {
+				copyDecision := state.Decisions[i]
+				acceptanceDecision = &copyDecision
+				break
+			}
+		}
+	}
+	var archiveDecision *projectControlDecision
+	if strings.TrimSpace(task.ArchiveDecisionID) != "" {
+		for i := range state.Decisions {
+			if state.Decisions[i].ID == task.ArchiveDecisionID {
+				copyDecision := state.Decisions[i]
+				archiveDecision = &copyDecision
+				break
+			}
+		}
+	}
 	if len(steps) > 1 {
 		sort.Slice(steps, func(i, j int) bool {
 			if steps[i].Timestamp == steps[j].Timestamp {
@@ -1029,15 +1259,17 @@ func (s *projectControlStore) replayForTask(username, taskID string, terminals *
 	sections := buildReplaySections(steps)
 	transitions := buildReplayTransitions(task, steps)
 	return projectControlReplayResponse{
-		TaskID:          task.ID,
-		ProjectID:       task.ProjectID,
-		WorkstreamID:    task.WorkstreamID,
-		Title:           task.Title,
-		CurrentState:    task.State,
-		AcceptanceState: task.AcceptanceStatus,
-		Steps:           steps,
-		Sections:        sections,
-		Transitions:     transitions,
+		TaskID:             task.ID,
+		ProjectID:          task.ProjectID,
+		WorkstreamID:       task.WorkstreamID,
+		Title:              task.Title,
+		CurrentState:       task.State,
+		AcceptanceState:    task.AcceptanceStatus,
+		AcceptanceDecision: acceptanceDecision,
+		ArchiveDecision:    archiveDecision,
+		Steps:              steps,
+		Sections:           sections,
+		Transitions:        transitions,
 	}, nil
 }
 
@@ -1078,7 +1310,7 @@ func syntheticReplayEventsForTask(taskID, username string, terminals *terminal.M
 
 func replaySectionKindForAction(action string) string {
 	switch {
-	case strings.HasPrefix(action, "checkpoint_") || strings.HasPrefix(action, "final_acceptance_") || action == "decision_made":
+	case strings.HasPrefix(action, "checkpoint_") || strings.HasPrefix(action, "final_acceptance_") || strings.HasPrefix(action, "archive_override_") || action == "decision_made":
 		return "decision"
 	case strings.Contains(action, "acceptance"):
 		return "acceptance"
@@ -1154,10 +1386,14 @@ func buildReplayTransitions(task *projectControlTask, steps []projectControlReco
 					Reason: step.Detail,
 				})
 			}
-		case "checkpoint_approved", "checkpoint_rejected", "checkpoint_rerouted", "final_acceptance_approved", "final_acceptance_rejected":
+		case "checkpoint_approved", "checkpoint_rejected", "checkpoint_rerouted", "final_acceptance_approved", "final_acceptance_rejected", "archive_override_approved", "archive_override_rejected":
+			from := "checkpoint_pending"
+			if strings.HasPrefix(step.Action, "archive_override_") {
+				from = "task_decision_pending"
+			}
 			transitions = append(transitions, projectControlReplayTransition{
 				Type:   "decision",
-				From:   "checkpoint_pending",
+				From:   from,
 				To:     step.Action,
 				Reason: step.Detail,
 			})
@@ -1501,6 +1737,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	workstreams := cloneProjectControlWorkstreams(state.Workstreams)
 	tasks := cloneProjectControlTasks(state.Tasks)
 	checkpoints := cloneProjectControlCheckpoints(state.Checkpoints)
+	decisions := cloneProjectControlDecisions(state.Decisions)
 	events := cloneProjectControlRecordedEvents(state.Events)
 	applyRecordedEventsToTasks(tasks, events)
 	runtimes := []projectControlRuntime{{ID: projectControlRuntimeID, Name: runtimeName, Kind: runtimeKind, Status: "online", InteractiveAttach: terminals != nil, HealthSummary: healthSummary}}
@@ -1586,6 +1823,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		Sessions:        sessions,
 		Runtimes:        runtimes,
 		Checkpoints:     checkpoints,
+		Decisions:       decisions,
 		Dashboard:       dashboard,
 	}
 }
@@ -1768,6 +2006,9 @@ func projectControlNormalizeState(state *projectControlState) {
 	if state.Checkpoints == nil {
 		state.Checkpoints = []projectControlCheckpoint{}
 	}
+	if state.Decisions == nil {
+		state.Decisions = []projectControlDecision{}
+	}
 	if state.Events == nil {
 		state.Events = []projectControlRecordedEvent{}
 	}
@@ -1795,6 +2036,8 @@ func projectControlNormalizeState(state *projectControlState) {
 		state.Tasks[i].ProjectID = strings.TrimSpace(state.Tasks[i].ProjectID)
 		state.Tasks[i].WorkstreamID = strings.TrimSpace(state.Tasks[i].WorkstreamID)
 		state.Tasks[i].Title = strings.TrimSpace(state.Tasks[i].Title)
+		state.Tasks[i].AcceptanceDecisionID = strings.TrimSpace(state.Tasks[i].AcceptanceDecisionID)
+		state.Tasks[i].ArchiveDecisionID = strings.TrimSpace(state.Tasks[i].ArchiveDecisionID)
 		state.Tasks[i].State = normalizeProjectControlTaskState(state.Tasks[i].State)
 		state.Tasks[i].AcceptanceStatus = normalizeProjectControlAcceptanceStatus(state.Tasks[i].AcceptanceStatus)
 		state.Tasks[i].Priority = normalizeProjectControlPriority(state.Tasks[i].Priority)
@@ -1821,6 +2064,7 @@ func projectControlNormalizeState(state *projectControlState) {
 	for i := range state.Checkpoints {
 		state.Checkpoints[i].ID = strings.TrimSpace(state.Checkpoints[i].ID)
 		state.Checkpoints[i].TaskID = strings.TrimSpace(state.Checkpoints[i].TaskID)
+		state.Checkpoints[i].ResolvedByDecisionID = strings.TrimSpace(state.Checkpoints[i].ResolvedByDecisionID)
 		if state.Checkpoints[i].AllowedActions == nil {
 			state.Checkpoints[i].AllowedActions = []string{}
 		}
@@ -1836,6 +2080,15 @@ func projectControlNormalizeState(state *projectControlState) {
 		state.Events[i].WorkstreamID = strings.TrimSpace(state.Events[i].WorkstreamID)
 		state.Events[i].TaskID = strings.TrimSpace(state.Events[i].TaskID)
 		state.Events[i].CheckpointID = strings.TrimSpace(state.Events[i].CheckpointID)
+	}
+	for i := range state.Decisions {
+		state.Decisions[i].ID = strings.TrimSpace(state.Decisions[i].ID)
+		state.Decisions[i].DecisionType = strings.TrimSpace(state.Decisions[i].DecisionType)
+		state.Decisions[i].Actor = strings.TrimSpace(state.Decisions[i].Actor)
+		state.Decisions[i].ProjectID = strings.TrimSpace(state.Decisions[i].ProjectID)
+		state.Decisions[i].WorkstreamID = strings.TrimSpace(state.Decisions[i].WorkstreamID)
+		state.Decisions[i].TaskID = strings.TrimSpace(state.Decisions[i].TaskID)
+		state.Decisions[i].CheckpointID = strings.TrimSpace(state.Decisions[i].CheckpointID)
 	}
 	if len(state.Events) == 0 {
 		projectControlMigrateLegacyHistoryToEvents(state)
@@ -1955,6 +2208,12 @@ func cloneProjectControlCheckpoints(items []projectControlCheckpoint) []projectC
 		out[i] = item
 		out[i].AllowedActions = append([]string{}, item.AllowedActions...)
 	}
+	return out
+}
+
+func cloneProjectControlDecisions(items []projectControlDecision) []projectControlDecision {
+	out := make([]projectControlDecision, len(items))
+	copy(out, items)
 	return out
 }
 

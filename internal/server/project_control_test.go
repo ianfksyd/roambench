@@ -1172,6 +1172,928 @@ func TestProjectControlDecisionEventsIncludeDecisionMadeAndCheckpointResolved(t 
 	}
 }
 
+func TestProjectControlFinalAcceptanceDecisionPersistsAndBackfillsTaskReference(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+	cfg.Auth.SingleUser = "ian"
+	cfg.Terminal.PersistDir = t.TempDir()
+
+	sessions, err := auth.NewSessionManager(&cfg.Auth)
+	if err != nil {
+		t.Fatalf("NewSessionManager error: %v", err)
+	}
+	defer sessions.Stop()
+
+	token, err := sessions.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	srv := NewServer(cfg, nil, sessions, nil, nil)
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
+		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	if snapshotRec.Code != http.StatusOK {
+		t.Fatalf("GET snapshot status = %d, want %d", snapshotRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "final_acceptance" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending final_acceptance checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("POST checkpoint decision status = %d, want %d", decisionRec.Code, http.StatusOK)
+	}
+	approvedSnapshot := decodeProjectControlSnapshot(t, decisionRec)
+	decisionID := ""
+	for _, task := range approvedSnapshot.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			decisionID = task.AcceptanceDecisionID
+			if decisionID == "" {
+				t.Fatal("expected task acceptanceDecisionId to be populated")
+			}
+		}
+	}
+
+	restarted := NewServer(cfg, nil, sessions, nil, nil)
+	reloadReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	reloadReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	reloadRec := httptest.NewRecorder()
+	restarted.mux.ServeHTTP(reloadRec, reloadReq)
+	if reloadRec.Code != http.StatusOK {
+		t.Fatalf("GET snapshot after restart status = %d, want %d", reloadRec.Code, http.StatusOK)
+	}
+	reloaded := decodeProjectControlSnapshot(t, reloadRec)
+	foundDecision := false
+	for _, decision := range reloaded.Decisions {
+		if decision.ID == decisionID && decision.DecisionType == "final_acceptance_approved" && decision.TaskID == projectControlTaskPanelID && decision.CheckpointID == checkpointID {
+			foundDecision = true
+		}
+	}
+	if !foundDecision {
+		t.Fatalf("expected persisted final acceptance decision %q in snapshot, got %#v", decisionID, reloaded.Decisions)
+	}
+}
+
+func TestProjectControlReplayIncludesAcceptanceDecisionMetadata(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
+		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	if snapshotRec.Code != http.StatusOK {
+		t.Fatalf("GET snapshot status = %d, want %d", snapshotRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "final_acceptance" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending final_acceptance checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("POST checkpoint decision status = %d, want %d", decisionRec.Code, http.StatusOK)
+	}
+
+	replayReq := httptest.NewRequest(http.MethodGet, "/api/project-control/tasks/"+projectControlTaskPanelID+"/replay", nil)
+	replayReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	replayRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(replayRec, replayReq)
+	if replayRec.Code != http.StatusOK {
+		t.Fatalf("GET task replay status = %d, want %d", replayRec.Code, http.StatusOK)
+	}
+	var replay projectControlReplayResponse
+	if err := json.NewDecoder(replayRec.Body).Decode(&replay); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if replay.AcceptanceDecision == nil {
+		t.Fatal("expected replay acceptanceDecision metadata")
+	}
+	if replay.AcceptanceDecision.DecisionType != "final_acceptance_approved" {
+		t.Fatalf("replay acceptance decision type = %q, want final_acceptance_approved", replay.AcceptanceDecision.DecisionType)
+	}
+}
+
+func TestProjectControlUnarchivePreservesAcceptanceDecisionMetadata(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
+		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "final_acceptance" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending final_acceptance checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("POST checkpoint decision status = %d, want %d", decisionRec.Code, http.StatusOK)
+	}
+	approved := decodeProjectControlSnapshot(t, decisionRec)
+	rowVersion := 0
+	for _, task := range approved.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			rowVersion = task.RowVersion
+			if task.AcceptanceDecisionID == "" {
+				t.Fatal("expected acceptanceDecisionId after approval")
+			}
+			break
+		}
+	}
+	if rowVersion == 0 {
+		t.Fatal("expected approved task row version")
+	}
+
+	archiveReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(fmt.Sprintf(`{"expectedRowVersion":%d,"action":"archive"}`, rowVersion)))
+	archiveReq.Header.Set("Content-Type", "application/json")
+	archiveReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	archiveRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(archiveRec, archiveReq)
+	if archiveRec.Code != http.StatusOK {
+		t.Fatalf("PATCH archive accepted task status = %d, want %d", archiveRec.Code, http.StatusOK)
+	}
+	archived := decodeProjectControlSnapshot(t, archiveRec)
+	archiveRowVersion := 0
+	for _, task := range archived.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			archiveRowVersion = task.RowVersion
+			break
+		}
+	}
+	if archiveRowVersion == 0 {
+		t.Fatal("expected archived task row version")
+	}
+
+	unarchiveReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(fmt.Sprintf(`{"expectedRowVersion":%d,"action":"unarchive"}`, archiveRowVersion)))
+	unarchiveReq.Header.Set("Content-Type", "application/json")
+	unarchiveReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	unarchiveRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(unarchiveRec, unarchiveReq)
+	if unarchiveRec.Code != http.StatusOK {
+		t.Fatalf("PATCH unarchive task status = %d, want %d", unarchiveRec.Code, http.StatusOK)
+	}
+	unarchived := decodeProjectControlSnapshot(t, unarchiveRec)
+	for _, task := range unarchived.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			if task.AcceptanceDecisionID == "" {
+				t.Fatal("expected acceptanceDecisionId to remain after unarchive")
+			}
+			if task.AcceptanceStatus != "accepted" {
+				t.Fatalf("acceptanceStatus after unarchive = %q, want accepted", task.AcceptanceStatus)
+			}
+			break
+		}
+	}
+
+	replayReq := httptest.NewRequest(http.MethodGet, "/api/project-control/tasks/"+projectControlTaskPanelID+"/replay", nil)
+	replayReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	replayRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(replayRec, replayReq)
+	if replayRec.Code != http.StatusOK {
+		t.Fatalf("GET task replay status = %d, want %d", replayRec.Code, http.StatusOK)
+	}
+	var replay projectControlReplayResponse
+	if err := json.NewDecoder(replayRec.Body).Decode(&replay); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if replay.AcceptanceDecision == nil {
+		t.Fatal("expected replay acceptanceDecision to remain after unarchive")
+	}
+}
+
+func TestProjectControlAcceptedTaskRejectsGenericAcceptanceReset(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
+		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "final_acceptance" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending final_acceptance checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	approved := decodeProjectControlSnapshot(t, decisionRec)
+	rowVersion := 0
+	for _, task := range approved.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			rowVersion = task.RowVersion
+			break
+		}
+	}
+
+	resetReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(fmt.Sprintf(`{"expectedRowVersion":%d,"acceptanceStatus":"not_ready"}`, rowVersion)))
+	resetReq.Header.Set("Content-Type", "application/json")
+	resetReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	resetRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(resetRec, resetReq)
+	if resetRec.Code != http.StatusBadRequest {
+		t.Fatalf("generic acceptance reset status = %d, want %d", resetRec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestProjectControlArchiveOverrideDecisionArchivesUnacceptedTask(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"request_archive_override"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	if snapshotRec.Code != http.StatusOK {
+		t.Fatalf("GET snapshot status = %d, want %d", snapshotRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending archive_override checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("POST archive override checkpoint decision status = %d, want %d", decisionRec.Code, http.StatusOK)
+	}
+	archived := decodeProjectControlSnapshot(t, decisionRec)
+	decisionID := ""
+	for _, task := range archived.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			if task.State != "archived" {
+				t.Fatalf("task state after archive override = %q, want archived", task.State)
+			}
+			decisionID = task.ArchiveDecisionID
+			if decisionID == "" {
+				t.Fatal("expected archiveDecisionId after archive override approval")
+			}
+			break
+		}
+	}
+	if decisionID == "" {
+		t.Fatal("expected archive override decision id")
+	}
+	foundDecision := false
+	for _, decision := range archived.Decisions {
+		if decision.ID == decisionID && decision.DecisionType == "archive_override_approved" && decision.TaskID == projectControlTaskPanelID && decision.CheckpointID == checkpointID {
+			foundDecision = true
+		}
+	}
+	if !foundDecision {
+		t.Fatalf("expected archive override decision metadata in snapshot, got %#v", archived.Decisions)
+	}
+
+	replayReq := httptest.NewRequest(http.MethodGet, "/api/project-control/tasks/"+projectControlTaskPanelID+"/replay", nil)
+	replayReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	replayRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(replayRec, replayReq)
+	if replayRec.Code != http.StatusOK {
+		t.Fatalf("GET task replay status = %d, want %d", replayRec.Code, http.StatusOK)
+	}
+	var replay projectControlReplayResponse
+	if err := json.NewDecoder(replayRec.Body).Decode(&replay); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if replay.ArchiveDecision == nil || replay.ArchiveDecision.DecisionType != "archive_override_approved" {
+		t.Fatalf("replay archiveDecision = %#v, want archive_override_approved", replay.ArchiveDecision)
+	}
+}
+
+func TestProjectControlRequestArchiveOverrideCreatesPendingCheckpoint(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	requestReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":3,"action":"request_archive_override"}`))
+	requestReq.Header.Set("Content-Type", "application/json")
+	requestReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	requestRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(requestRec, requestReq)
+	if requestRec.Code != http.StatusOK {
+		t.Fatalf("PATCH request archive override status = %d, want %d", requestRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, requestRec)
+	if snapshot.ApprovalsCount != 2 {
+		t.Fatalf("ApprovalsCount = %d, want 2 with seeded IA checkpoint plus archive override request", snapshot.ApprovalsCount)
+	}
+	foundPending := false
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			foundPending = true
+			if len(checkpoint.AllowedActions) != 2 || checkpoint.AllowedActions[0] != "approve" || checkpoint.AllowedActions[1] != "reject" {
+				t.Fatalf("archive override allowedActions = %#v, want approve/reject", checkpoint.AllowedActions)
+			}
+		}
+	}
+	if !foundPending {
+		t.Fatalf("expected pending archive_override checkpoint, got %#v", snapshot.Checkpoints)
+	}
+}
+
+func TestProjectControlRequestArchiveOverrideRequiresExecutionCompleteTask(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"request_archive_override"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH request archive override from planned status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestProjectControlLeavingArchiveOverrideFlowExpiresCheckpoint(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"request_archive_override"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	reopenReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":4,"action":"reopen_task"}`))
+	reopenReq.Header.Set("Content-Type", "application/json")
+	reopenReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	reopenRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(reopenRec, reopenReq)
+	if reopenRec.Code != http.StatusOK {
+		t.Fatalf("PATCH reopen task status = %d, want %d", reopenRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, reopenRec)
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			t.Fatalf("expected archive_override checkpoint to stop pending, got %#v", checkpoint)
+		}
+	}
+	if snapshot.ApprovalsCount != 1 {
+		t.Fatalf("ApprovalsCount = %d, want 1 because only the seeded IA checkpoint should remain pending", snapshot.ApprovalsCount)
+	}
+}
+
+func TestProjectControlReadyForAcceptanceExpiresArchiveOverrideCheckpoint(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"request_archive_override"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	readyReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":4,"action":"mark_ready_for_acceptance"}`))
+	readyReq.Header.Set("Content-Type", "application/json")
+	readyReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	readyRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(readyRec, readyReq)
+	if readyRec.Code != http.StatusOK {
+		t.Fatalf("PATCH ready for acceptance status = %d, want %d", readyRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, readyRec)
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			t.Fatalf("expected archive_override checkpoint to expire when entering acceptance path, got %#v", checkpoint)
+		}
+	}
+}
+
+func TestProjectControlArchiveOverrideDirectTaskRouteMethodNotAllowed(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks/"+projectControlTaskPanelID+"/archive-override-decision", strings.NewReader(`{"action":"approve"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST direct archive override route status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestProjectControlArchiveOverrideCheckpointApprovalArchivesTask(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"request_archive_override"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	if snapshotRec.Code != http.StatusOK {
+		t.Fatalf("GET snapshot status = %d, want %d", snapshotRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending archive_override checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("POST archive override checkpoint decision status = %d, want %d", decisionRec.Code, http.StatusOK)
+	}
+	approved := decodeProjectControlSnapshot(t, decisionRec)
+	if approved.ApprovalsCount != 1 {
+		t.Fatalf("ApprovalsCount = %d, want 1 because only the seeded IA checkpoint remains pending", approved.ApprovalsCount)
+	}
+	foundApprovedCheckpoint := false
+	foundArchivedTask := false
+	for _, checkpoint := range approved.Checkpoints {
+		if checkpoint.ID == checkpointID {
+			foundApprovedCheckpoint = checkpoint.Status == "approved" && checkpoint.ResolvedByDecisionID != ""
+		}
+	}
+	for _, task := range approved.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			foundArchivedTask = task.State == "archived" && task.ArchiveDecisionID != ""
+		}
+	}
+	if !foundApprovedCheckpoint {
+		t.Fatalf("expected approved archive override checkpoint, got %#v", approved.Checkpoints)
+	}
+	if !foundArchivedTask {
+		t.Fatalf("expected archived task with archiveDecisionId, got %#v", approved.Tasks)
+	}
+}
+
+func TestProjectControlResolvedCheckpointCannotBeDecidedTwice(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"request_archive_override"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending archive_override checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("first checkpoint decision status = %d, want %d", decisionRec.Code, http.StatusOK)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"reject"}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	secondRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(secondRec, secondReq)
+	if secondRec.Code != http.StatusBadRequest {
+		t.Fatalf("second checkpoint decision status = %d, want %d", secondRec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestProjectControlArchiveOverrideRejectsPendingAcceptanceReview(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
+		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	requestReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":5,"action":"request_archive_override"}`))
+	requestReq.Header.Set("Content-Type", "application/json")
+	requestReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	requestRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(requestRec, requestReq)
+	if requestRec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH archive override during pending review status = %d, want %d", requestRec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestProjectControlUnarchiveClearsArchiveDecisionMetadata(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"request_archive_override"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	if snapshotRec.Code != http.StatusOK {
+		t.Fatalf("GET snapshot status = %d, want %d", snapshotRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending archive_override checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("POST archive override checkpoint decision status = %d, want %d", decisionRec.Code, http.StatusOK)
+	}
+	archived := decodeProjectControlSnapshot(t, decisionRec)
+	rowVersion := 0
+	for _, task := range archived.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			rowVersion = task.RowVersion
+			if task.ArchiveDecisionID == "" {
+				t.Fatal("expected archiveDecisionId after archive override approval")
+			}
+			break
+		}
+	}
+	if rowVersion == 0 {
+		t.Fatal("expected archived task row version")
+	}
+
+	unarchiveReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(fmt.Sprintf(`{"expectedRowVersion":%d,"action":"unarchive"}`, rowVersion)))
+	unarchiveReq.Header.Set("Content-Type", "application/json")
+	unarchiveReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	unarchiveRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(unarchiveRec, unarchiveReq)
+	if unarchiveRec.Code != http.StatusOK {
+		t.Fatalf("PATCH unarchive task status = %d, want %d", unarchiveRec.Code, http.StatusOK)
+	}
+	unarchived := decodeProjectControlSnapshot(t, unarchiveRec)
+	for _, task := range unarchived.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			if task.ArchiveDecisionID != "" {
+				t.Fatalf("archiveDecisionId after unarchive = %q, want empty", task.ArchiveDecisionID)
+			}
+			break
+		}
+	}
+
+	replayReq := httptest.NewRequest(http.MethodGet, "/api/project-control/tasks/"+projectControlTaskPanelID+"/replay", nil)
+	replayReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	replayRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(replayRec, replayReq)
+	if replayRec.Code != http.StatusOK {
+		t.Fatalf("GET task replay status = %d, want %d", replayRec.Code, http.StatusOK)
+	}
+	var replay projectControlReplayResponse
+	if err := json.NewDecoder(replayRec.Body).Decode(&replay); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if replay.ArchiveDecision != nil {
+		t.Fatalf("replay archiveDecision = %#v, want nil after unarchive", replay.ArchiveDecision)
+	}
+}
+
+func TestProjectControlArchiveRequiresAcceptedTask(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	archiveReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":3,"action":"archive"}`))
+	archiveReq.Header.Set("Content-Type", "application/json")
+	archiveReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	archiveRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(archiveRec, archiveReq)
+	if archiveRec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH archive without acceptance status = %d, want %d", archiveRec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestProjectControlAcceptedTaskCanArchive(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	for _, body := range []string{
+		`{"expectedRowVersion":1,"action":"start_execution"}`,
+		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
+		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
+		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+		}
+	}
+
+	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapshotRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapshotRec, snapshotReq)
+	if snapshotRec.Code != http.StatusOK {
+		t.Fatalf("GET snapshot status = %d, want %d", snapshotRec.Code, http.StatusOK)
+	}
+	snapshot := decodeProjectControlSnapshot(t, snapshotRec)
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "final_acceptance" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+			break
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("expected pending final_acceptance checkpoint")
+	}
+
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("POST checkpoint decision status = %d, want %d", decisionRec.Code, http.StatusOK)
+	}
+	approved := decodeProjectControlSnapshot(t, decisionRec)
+	rowVersion := 0
+	for _, task := range approved.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			rowVersion = task.RowVersion
+			break
+		}
+	}
+	if rowVersion == 0 {
+		t.Fatal("expected accepted task in snapshot")
+	}
+
+	archiveReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(fmt.Sprintf(`{"expectedRowVersion":%d,"action":"archive"}`, rowVersion)))
+	archiveReq.Header.Set("Content-Type", "application/json")
+	archiveReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	archiveRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(archiveRec, archiveReq)
+	if archiveRec.Code != http.StatusOK {
+		t.Fatalf("PATCH archive accepted task status = %d, want %d", archiveRec.Code, http.StatusOK)
+	}
+	archived := decodeProjectControlSnapshot(t, archiveRec)
+	for _, task := range archived.Tasks {
+		if task.ID == projectControlTaskPanelID && task.State == "archived" {
+			return
+		}
+	}
+	t.Fatal("expected accepted task to archive successfully")
+}
+
 func TestProjectControlTaskReplayIncludesLiveSessionAndRuntimeEvents(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Server.AllowAllIPs = true
