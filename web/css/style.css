@@ -570,6 +570,18 @@ body.view-login #terminal-view {
     background: rgba(242, 193, 78, 0.18);
 }
 
+.project-pill.approval-pending {
+    background: rgba(242, 193, 78, 0.18);
+}
+
+.project-pill.approval-approved {
+    background: rgba(86, 211, 100, 0.18);
+}
+
+.project-pill.approval-rejected {
+    background: rgba(244, 71, 71, 0.18);
+}
+
 .project-inline-btn {
     width: auto;
     display: inline-flex;
@@ -716,6 +728,20 @@ body.view-login #terminal-view {
     border-radius: 10px;
     border-left: 3px solid transparent;
     background: rgba(255, 255, 255, 0.02);
+}
+
+.project-decision-card {
+    margin-top: 8px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(86, 211, 100, 0.05);
+}
+
+.project-approval-summary {
+    margin: 8px 0;
+    font-size: 13px;
+    color: var(--text-dim);
 }
 
 .project-lane-event.lane-execution,

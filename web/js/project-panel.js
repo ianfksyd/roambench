@@ -590,10 +590,20 @@
         case 'blocked':
             return [{ action: 'resume_execution', label: 'Resume', tone: 'primary' }];
         case 'execution_complete':
-            return [
-                { action: 'mark_ready_for_acceptance', label: 'Ready for acceptance', tone: 'primary' },
-                { action: 'reopen_task', label: 'Reopen task' }
-            ];
+            if (task.acceptanceStatus === 'accepted') {
+                return [
+                    { action: 'archive', label: 'Archive', tone: 'primary' },
+                    { action: 'reopen_task', label: 'Reopen task' }
+                ];
+            }
+            if (task.acceptanceStatus === 'not_ready') {
+                return [
+                    { action: 'mark_ready_for_acceptance', label: 'Ready for acceptance', tone: 'primary' },
+                    { action: 'request_archive_override', label: 'Request archive override' },
+                    { action: 'reopen_task', label: 'Reopen task' }
+                ];
+            }
+            return [{ action: 'reopen_task', label: 'Reopen task' }];
         case 'archived':
             return [{ action: 'unarchive', label: 'Unarchive', tone: 'primary' }];
         default:
@@ -629,7 +639,7 @@
 
     function eventLaneForAction(action) {
         action = String(action || '').trim();
-        if (action.indexOf('final_acceptance_') === 0 || action === 'decision_made') {
+        if (action.indexOf('final_acceptance_') === 0 || action.indexOf('archive_override_') === 0 || action === 'decision_made') {
             return 'decision';
         }
         if (action === 'checkpoint_raised' || action === 'checkpoint_resolved' || action === 'checkpoint_expired' || action.indexOf('checkpoint_') === 0) {
@@ -781,6 +791,248 @@
             + '</div>';
     }
 
+    function decisionById(id) {
+        var decisions = state.snapshot && Array.isArray(state.snapshot.decisions) ? state.snapshot.decisions : [];
+        return findById(decisions, id);
+    }
+
+    function renderDecisionCard(decision, title) {
+        if (!decision) {
+            return '<div class="project-list-item muted">No decision recorded yet.</div>';
+        }
+        return '<div class="project-decision-card">'
+            + '<div class="project-card-title">' + escapeHTML(title || 'Decision') + '</div>'
+            + '<div class="project-task-badges">'
+            + '<span class="project-pill lane-decision">' + escapeHTML(decision.decisionType || 'decision') + '</span>'
+            + (decision.checkpointId ? '<span class="project-pill lane-checkpoint">' + escapeHTML(decision.checkpointId) + '</span>' : '')
+            + '</div>'
+            + '<div class="project-list-item"><strong>Actor:</strong> ' + escapeHTML(decision.actor || '—') + '</div>'
+            + '<div class="project-list-item"><strong>When:</strong> ' + escapeHTML(formatTime(decision.timestamp)) + '</div>'
+            + '<div class="project-list-item"><strong>Summary:</strong> ' + escapeHTML(decision.summary || '—') + '</div>'
+            + '<div class="project-list-item"><strong>Decision ID:</strong> ' + escapeHTML(decision.id || '—') + '</div>'
+            + '</div>';
+    }
+
+    function approvalKindLabel(kind) {
+        switch (String(kind || '').trim()) {
+        case 'final_acceptance':
+            return 'Final acceptance';
+        case 'archive_override':
+            return 'Archive override';
+        default:
+            return String(kind || 'checkpoint').trim() || 'checkpoint';
+        }
+    }
+
+    function approvalStatusLabel(status) {
+        switch (String(status || '').trim()) {
+        case 'pending':
+            return 'Pending review';
+        case 'approved':
+            return 'Approved';
+        case 'rejected':
+            return 'Rejected';
+        case 'rerouted':
+            return 'Rerouted';
+        case 'expired':
+            return 'Expired';
+        default:
+            return String(status || 'unknown').trim() || 'unknown';
+        }
+    }
+
+    function approvalActionLabel(action) {
+        switch (String(action || '').trim()) {
+        case 'approve':
+            return 'Approve';
+        case 'reject':
+            return 'Reject';
+        case 'reroute':
+            return 'Reroute';
+        default:
+            return String(action || '').trim() || 'Action';
+        }
+    }
+
+    function approvalKindSummary(item) {
+        var kind = String(item && item.kind || '').trim();
+        if (kind === 'final_acceptance') {
+            return item && item.status === 'pending'
+                ? 'Human sign-off is required before this task can be treated as accepted work.'
+                : 'Records the outcome of explicit final acceptance review for this task.';
+        }
+        if (kind === 'archive_override') {
+            return item && item.status === 'pending'
+                ? 'Human override is required before archiving execution-complete work that has not been accepted.'
+                : 'Records the outcome of an explicit archive override decision for this task.';
+        }
+        return 'Checkpoint-backed approval item.';
+    }
+
+    function latestTaskCheckpoint(taskId, kind) {
+        var items = checkpoints().filter(function(item) {
+            return item.taskId === taskId && item.kind === kind;
+        });
+        if (!items.length) {
+            return null;
+        }
+        items.sort(function(a, b) {
+            var at = String(a.requestedAt || '');
+            var bt = String(b.requestedAt || '');
+            if (at === bt) {
+                return String(b.id || '').localeCompare(String(a.id || ''));
+            }
+            return bt.localeCompare(at);
+        });
+        return items[0];
+    }
+
+    function currentTaskApprovalState(task, kind) {
+        var checkpoint = task ? latestTaskCheckpoint(task.id, kind) : null;
+        if (checkpoint && checkpoint.status === 'pending') {
+            return {
+                statusLabel: approvalStatusLabel(checkpoint.status),
+                summary: approvalKindSummary(checkpoint),
+                meta: formatTime(checkpoint.requestedAt) + ' • ' + (checkpoint.decisionSummary || checkpoint.reason || ''),
+                actions: checkpoint.allowedActions || [] ,
+                checkpointId: checkpoint.id
+            };
+        }
+        if (!task) {
+            return null;
+        }
+        if (kind === 'final_acceptance' && task.acceptanceDecisionId && (task.acceptanceStatus === 'accepted' || task.acceptanceStatus === 'rejected')) {
+            var acceptanceDecision = decisionById(task.acceptanceDecisionId);
+            if (acceptanceDecision) {
+                return {
+                    statusLabel: acceptanceDecision.decisionType === 'final_acceptance_approved' ? 'Approved' : 'Rejected',
+                    summary: acceptanceDecision.summary || 'Final acceptance decision recorded.',
+                    meta: formatTime(acceptanceDecision.timestamp) + ' • ' + (acceptanceDecision.id || '')
+                };
+            }
+        }
+        if (kind === 'archive_override' && task.archiveDecisionId) {
+            var archiveDecision = decisionById(task.archiveDecisionId);
+            if (archiveDecision) {
+                return {
+                    statusLabel: archiveDecision.decisionType === 'archive_override_approved' ? 'Approved' : 'Rejected',
+                    summary: archiveDecision.summary || 'Archive override decision recorded.',
+                    meta: formatTime(archiveDecision.timestamp) + ' • ' + (archiveDecision.id || '')
+                };
+            }
+        }
+        return null;
+    }
+
+    function renderTaskApprovalStatusCard(task) {
+        var finalAcceptance = currentTaskApprovalState(task, 'final_acceptance');
+        var archiveOverride = currentTaskApprovalState(task, 'archive_override');
+
+        function renderStatusRow(label, approval) {
+            if (!approval) {
+                return '<div class="project-list-item"><strong>' + escapeHTML(label) + ':</strong> None</div>';
+            }
+            return '<div class="project-list-item">'
+                + '<strong>' + escapeHTML(label) + ':</strong> '
+                + '<span class="project-pill lane-checkpoint">' + escapeHTML(approval.statusLabel) + '</span>'
+                + '<div class="project-approval-summary">' + escapeHTML(approval.summary || '') + '</div>'
+                + '<div class="project-list-meta">' + escapeHTML(approval.meta || '') + '</div>'
+                + ((approval.actions || []).length
+                    ? '<div class="project-approval-actions">'
+                        + approval.actions.map(function(action) {
+                            return '<button type="button" class="project-inline-btn ' + (action === 'approve' ? 'primary' : '') + '" data-checkpoint-id="' + escapeHTML(approval.checkpointId) + '" data-checkpoint-action="' + escapeHTML(action) + '" data-checkpoint-source="task">' + escapeHTML(approvalActionLabel(action)) + '</button>';
+                        }).join('')
+                        + '</div>'
+                    : '')
+                + '</div>';
+        }
+
+        return '<div class="project-card-list"><h3>' + escapeHTML(tr('project.currentApprovals', 'Current approvals')) + '</h3>'
+            + renderStatusRow('Final acceptance', finalAcceptance)
+            + renderStatusRow('Archive override', archiveOverride)
+            + '</div>';
+    }
+
+    function taskApprovalBadges(task) {
+        var badges = [];
+        var finalAcceptance = currentTaskApprovalState(task, 'final_acceptance');
+        var archiveOverride = currentTaskApprovalState(task, 'archive_override');
+
+        if (finalAcceptance) {
+            if (finalAcceptance.actions && finalAcceptance.actions.length) {
+                badges.push({ className: 'approval-pending', label: 'Final acceptance pending' });
+            } else if (task && task.acceptanceStatus === 'accepted') {
+                badges.push({ className: 'approval-approved', label: 'Accepted' });
+            } else if (task && task.acceptanceStatus === 'rejected') {
+                badges.push({ className: 'approval-rejected', label: 'Final acceptance rejected' });
+            }
+        }
+
+        if (archiveOverride) {
+            if (archiveOverride.actions && archiveOverride.actions.length) {
+                badges.push({ className: 'approval-pending', label: 'Archive override pending' });
+            } else if (task && task.archiveDecisionId) {
+                badges.push({ className: archiveOverride.statusLabel === 'Approved' ? 'approval-approved' : 'approval-rejected', label: 'Archive override ' + archiveOverride.statusLabel.toLowerCase() });
+            }
+        }
+
+        return badges;
+    }
+
+    function renderTaskApprovalBadges(task) {
+        var badges = taskApprovalBadges(task);
+        if (!badges.length) {
+            return '';
+        }
+        return badges.map(function(item) {
+            return '<span class="project-pill ' + escapeHTML(item.className) + '">' + escapeHTML(item.label) + '</span>';
+        }).join('');
+    }
+
+    function decisions() {
+        return state.snapshot && Array.isArray(state.snapshot.decisions) ? state.snapshot.decisions : [];
+    }
+
+    function pendingApprovalCountByKind(kind) {
+        return checkpoints().filter(function(item) {
+            return item.kind === kind && item.status === 'pending';
+        }).length;
+    }
+
+    function recentDecisionSummaries(limit) {
+        var items = decisions().slice();
+        items.sort(function(a, b) {
+            var at = String(a.timestamp || '');
+            var bt = String(b.timestamp || '');
+            if (at === bt) {
+                return String(b.id || '').localeCompare(String(a.id || ''));
+            }
+            return bt.localeCompare(at);
+        });
+        return items.slice(0, limit || 3);
+    }
+
+    function renderApprovalOverviewCard() {
+        var pendingFinalAcceptance = pendingApprovalCountByKind('final_acceptance');
+        var pendingArchiveOverride = pendingApprovalCountByKind('archive_override');
+        var recent = recentDecisionSummaries(4);
+        return '<div class="project-card-list"><h3>' + escapeHTML(tr('project.approvalOverview', 'Approval Overview')) + '</h3>'
+            + '<div class="project-list-item"><strong>Pending final acceptance:</strong> ' + escapeHTML(String(pendingFinalAcceptance)) + '</div>'
+            + '<div class="project-list-item"><strong>Pending archive override:</strong> ' + escapeHTML(String(pendingArchiveOverride)) + '</div>'
+            + '<div class="project-list-item"><strong>Total pending approvals:</strong> ' + escapeHTML(String(checkpoints().filter(function(item) { return item.status === 'pending'; }).length)) + '</div>'
+            + '<h3>' + escapeHTML(tr('project.recentDecisions', 'Recent Decisions')) + '</h3>'
+            + (recent.length
+                ? recent.map(function(item) {
+                    return '<div class="project-list-item">'
+                        + '<div class="project-list-title">' + escapeHTML(item.decisionType || 'decision') + '</div>'
+                        + '<div>' + escapeHTML(item.summary || '—') + '</div>'
+                        + '<div class="project-list-meta">' + escapeHTML(formatTime(item.timestamp) + ' • ' + (item.taskID || item.taskId || 'task-scope')) + '</div>'
+                        + '</div>';
+                }).join('')
+                : '<div class="project-list-item muted">' + escapeHTML(tr('project.noRecentDecisions', 'No decisions recorded yet.')) + '</div>')
+            + '</div>';
+    }
+
     function renderSidebar() {
         var projectList = (state.snapshot && state.snapshot.projects) || [];
         var runtimeList = runtimes();
@@ -886,6 +1138,7 @@
             + '<div class="project-two-column">'
             + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.runtimeHealth', 'Runtime Health')) + '</h3>'
             + (dashboard.runtimeHealth || []).map(function(line) { return '<div class="project-list-item">' + escapeHTML(line) + '</div>'; }).join('') + '</div>'
+            + renderApprovalOverviewCard()
             + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.timeline', 'Recent Timeline')) + '</h3>'
             + (dashboard.projectTimeline || []).map(function(line) { return '<div class="project-list-item">' + escapeHTML(line) + '</div>'; }).join('') + '</div>'
             + '</div>'
@@ -921,7 +1174,8 @@
                         return '<button type="button" class="project-task-card" data-task-id="' + escapeHTML(task.id) + '">'
                             + '<div class="project-task-title">' + escapeHTML(task.title) + '</div>'
                             + '<div class="project-task-badges"><span class="project-pill state-' + escapeHTML(task.state) + '">' + escapeHTML(task.state) + '</span>'
-                            + '<span class="project-pill acceptance-' + escapeHTML(task.acceptanceStatus) + '">' + escapeHTML(task.acceptanceStatus) + '</span></div>'
+                            + '<span class="project-pill acceptance-' + escapeHTML(task.acceptanceStatus) + '">' + escapeHTML(task.acceptanceStatus) + '</span>'
+                            + renderTaskApprovalBadges(task) + '</div>'
                             + '<div class="project-task-copy">' + escapeHTML(task.recentSummary) + '</div>'
                             + '<div class="project-task-meta">' + escapeHTML(task.agentLabel + ' • ' + task.riskLevel) + '</div>'
                             + '</button>';
@@ -934,6 +1188,8 @@
 
     function renderTaskDetail() {
         var task = getSelectedTask();
+        var acceptanceDecision = task && task.acceptanceDecisionId ? decisionById(task.acceptanceDecisionId) : null;
+        var archiveDecision = task && task.archiveDecisionId ? decisionById(task.archiveDecisionId) : null;
         if (!task) {
             return renderDashboard();
         }
@@ -948,6 +1204,7 @@
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.nextStep', 'Next step')) + ':</strong> ' + escapeHTML(task.nextStep) + '</div>'
             + renderTaskInlineControls(task)
             + '</div>'
+            + renderTaskApprovalStatusCard(task)
             + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.timeline', 'Timeline')) + '</h3>'
             + (task.timeline || []).map(function(item) {
                 return '<div class="project-list-item"><div class="project-list-title">' + escapeHTML(item.action) + '</div><div>' + escapeHTML(item.detail) + '</div><div class="project-list-meta">' + escapeHTML(item.actor + ' • ' + formatTime(item.timestamp)) + '</div></div>';
@@ -968,6 +1225,12 @@
             }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noAudit', 'No audit entries yet.')) + '</div>')
             + '<button type="button" class="project-inline-btn" data-task-history="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.viewHistory', 'View history')) + '</button>'
             + '<button type="button" class="project-inline-btn" data-task-replay="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.openReplay', 'Open replay')) + '</button>'
+            + '</div>'
+            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.acceptanceDecision', 'Acceptance Decision')) + '</h3>'
+            + renderDecisionCard(acceptanceDecision, 'Acceptance Decision')
+            + '</div>'
+            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.archiveDecision', 'Archive Decision')) + '</h3>'
+            + renderDecisionCard(archiveDecision, 'Archive Decision')
             + '</div>'
             + '</div>'
             + '</section>';
@@ -1000,14 +1263,21 @@
     }
 
     function renderApprovalCard(item) {
+        var kindLabel = approvalKindLabel(item.kind);
+        var statusLabel = approvalStatusLabel(item.status);
         return '<div class="project-approval-card">'
-            + '<div class="project-approval-header"><div><div class="project-card-title">' + escapeHTML(item.title) + '</div><div class="project-card-meta">' + escapeHTML(item.kind + ' • ' + item.status) + '</div></div>'
+            + '<div class="project-approval-header"><div><div class="project-card-title">' + escapeHTML(item.title) + '</div><div class="project-card-meta">' + escapeHTML(kindLabel + ' • ' + statusLabel) + '</div></div>'
             + '<button type="button" class="project-inline-btn" data-task-id="' + escapeHTML(item.taskId) + '">' + escapeHTML(tr('project.openTask', 'Open task')) + '</button></div>'
+            + '<div class="project-task-badges">'
+            + '<span class="project-pill lane-checkpoint">' + escapeHTML(kindLabel) + '</span>'
+            + '<span class="project-pill lane-decision">' + escapeHTML(statusLabel) + '</span>'
+            + '</div>'
+            + '<div class="project-approval-summary">' + escapeHTML(approvalKindSummary(item)) + '</div>'
             + '<div class="project-card-copy">' + escapeHTML(item.reason) + '</div>'
             + '<div class="project-card-meta">' + escapeHTML(formatTime(item.requestedAt)) + '</div>'
             + '<div class="project-approval-actions">'
             + (item.allowedActions || []).map(function(action) {
-                return '<button type="button" class="project-inline-btn ' + (action === 'approve' ? 'primary' : '') + '" data-checkpoint-id="' + escapeHTML(item.id) + '" data-checkpoint-action="' + escapeHTML(action) + '">' + escapeHTML(action) + '</button>';
+                return '<button type="button" class="project-inline-btn ' + (action === 'approve' ? 'primary' : '') + '" data-checkpoint-id="' + escapeHTML(item.id) + '" data-checkpoint-action="' + escapeHTML(action) + '">' + escapeHTML(approvalActionLabel(action)) + '</button>';
             }).join('')
             + (item.decisionSummary ? '<div class="project-approval-note">' + escapeHTML(item.decisionSummary) + '</div>' : '')
             + '</div></div>';
@@ -1092,6 +1362,10 @@
             + visibleReplayTransitions.map(function(item) {
                 return renderTransitionCard(item, state.replaySearchQuery);
             }).join('')
+            + '<h3>' + escapeHTML(tr('project.acceptanceDecision', 'Acceptance Decision')) + '</h3>'
+            + renderDecisionCard(state.currentReplay.acceptanceDecision, 'Replay Acceptance Decision')
+            + '<h3>' + escapeHTML(tr('project.archiveDecision', 'Archive Decision')) + '</h3>'
+            + renderDecisionCard(state.currentReplay.archiveDecision, 'Replay Archive Decision')
             + '<h3>' + escapeHTML(tr('project.replaySteps', 'All steps')) + '</h3>'
             + (visibleReplaySteps.length ? renderLaneGroups(visibleReplaySteps, state.replaySearchQuery) : '<div class="project-list-item muted">' + escapeHTML(tr('project.noReplay', 'No replay data available.')) + '</div>')
             + '</div>'
@@ -1332,13 +1606,19 @@
             node.addEventListener('click', function() {
                 var checkpointId = node.getAttribute('data-checkpoint-id');
                 var action = node.getAttribute('data-checkpoint-action');
+                var source = node.getAttribute('data-checkpoint-source') || 'approvals';
                 fetchJSON('/api/project-control/checkpoints/' + encodeURIComponent(checkpointId) + '/decision', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: action })
                 }).then(function(snapshot) {
                     state.snapshot = snapshot;
-                    state.currentView = 'approvals';
+                    if (source === 'task' && state.selectedTaskId) {
+                        state.currentView = 'task';
+                        openTask(state.selectedTaskId);
+                    } else {
+                        state.currentView = 'approvals';
+                    }
                     updateBadge();
                     render();
                 }).catch(function(err) {
