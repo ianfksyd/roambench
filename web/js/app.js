@@ -7,7 +7,7 @@
     const EMBEDDED_FILE_PANEL_DEFAULT_WIDTH_RATIO = 0.38;
     const EMBEDDED_FILE_PANEL_DEFAULT_MAX_WIDTH = 520;
     const EMBEDDED_FILE_PANEL_MAX_WIDTH = 920;
-    const EMBEDDED_FILE_PANEL_MIN_TERMINAL_WIDTH = 320;
+    const EMBEDDED_FILE_PANEL_MIN_TERMINAL_WIDTH = 560;
     const TERMINAL_SETTINGS_STORAGE_KEY = 'roambench.terminal-settings.v2';
     const TERMINAL_SETTINGS_FALLBACK_KEYS = ['roambench.terminal-settings'];
     const LANGUAGE_STORAGE_KEY = 'roambench.language.v1';
@@ -3339,7 +3339,7 @@
         var isProjectMode = state.appMode === 'project';
 
         if (terminalShell) {
-            terminalShell.style.display = isProjectMode ? 'none' : 'block';
+            terminalShell.style.display = isProjectMode ? 'none' : 'flex';
         }
         if (projectPanel) {
             projectPanel.style.display = isProjectMode ? 'flex' : 'none';
@@ -10620,4 +10620,3 @@
         }
     };
 })();
-

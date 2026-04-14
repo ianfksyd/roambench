@@ -316,7 +316,8 @@ body.view-login #terminal-view {
 }
 
 #terminal-shell {
-    display: block;
+    display: flex;
+    flex-direction: column;
     min-height: 0;
     flex: 1 1 auto;
 }
@@ -332,10 +333,13 @@ body.view-login #terminal-view {
 .project-panel-sidebar {
     width: 300px;
     max-width: 34vw;
+    min-width: 0;
+    flex-shrink: 0;
     border-right: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.02);
     padding: 16px;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 .project-panel-main {
@@ -382,6 +386,16 @@ body.view-login #terminal-view {
     flex-direction: column;
     gap: 4px;
     margin-bottom: 8px;
+    overflow: hidden;
+}
+
+.project-nav-title,
+.project-nav-meta,
+.project-list-title,
+.project-list-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .project-nav-btn.active,
@@ -422,6 +436,7 @@ body.view-login #terminal-view {
     border-radius: 12px;
     background: var(--surface);
     padding: 14px;
+    overflow: hidden;
 }
 
 .project-runtime-card,
@@ -2233,7 +2248,7 @@ button.tab-action:focus-visible {
     right: auto;
     width: var(--embedded-file-panel-width);
     min-width: var(--embedded-file-panel-min-width);
-    max-width: min(920px, calc(100% - 320px));
+    max-width: min(920px, calc(100% - 560px));
     height: auto;
     flex: 0 0 var(--embedded-file-panel-width);
     border: 1px solid rgba(255, 255, 255, 0.08);
