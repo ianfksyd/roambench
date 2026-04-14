@@ -6,11 +6,24 @@
         snapshot: null,
         loading: false,
         error: '',
+        eventsLoading: false,
+        eventsError: '',
+        currentEvents: [],
+        currentEventsCursor: '',
+        currentEventFilters: null,
+        replayLoading: false,
+        currentReplay: null,
+        selectedEventLane: 'all',
+        selectedReplayLane: 'all',
+        eventSearchQuery: '',
+        replaySearchQuery: '',
         selectedProjectId: '',
         selectedWorkstreamId: '',
         selectedTaskId: '',
         selectedSessionId: '',
-        currentView: 'dashboard'
+        currentView: 'dashboard',
+        updatingWorkstreamId: '',
+        updatingTaskId: ''
     };
 
     function app() {
@@ -31,6 +44,30 @@
         return document.getElementById('approvals-badge');
     }
 
+    function storageKey(suffix) {
+        var bridge = app();
+        var username = bridge && typeof bridge.getUsername === 'function' ? bridge.getUsername() : 'anon';
+        return 'roambench.projectPanel.' + username + '.' + suffix;
+    }
+
+    function loadFilterPreferences() {
+        try {
+            state.selectedEventLane = localStorage.getItem(storageKey('selectedEventLane')) || state.selectedEventLane;
+            state.selectedReplayLane = localStorage.getItem(storageKey('selectedReplayLane')) || state.selectedReplayLane;
+            state.eventSearchQuery = localStorage.getItem(storageKey('eventSearchQuery')) || state.eventSearchQuery;
+            state.replaySearchQuery = localStorage.getItem(storageKey('replaySearchQuery')) || state.replaySearchQuery;
+        } catch (_) {}
+    }
+
+    function persistFilterPreferences() {
+        try {
+            localStorage.setItem(storageKey('selectedEventLane'), state.selectedEventLane || 'all');
+            localStorage.setItem(storageKey('selectedReplayLane'), state.selectedReplayLane || 'all');
+            localStorage.setItem(storageKey('eventSearchQuery'), state.eventSearchQuery || '');
+            localStorage.setItem(storageKey('replaySearchQuery'), state.replaySearchQuery || '');
+        } catch (_) {}
+    }
+
     function escapeHTML(value) {
         return String(value == null ? '' : value)
             .replace(/&/g, '&amp;')
@@ -38,6 +75,21 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function escapeRegExp(value) {
+        return String(value == null ? '' : value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function highlightHTML(value, query) {
+        var escaped = escapeHTML(value);
+        var pattern;
+        query = String(query || '').trim();
+        if (!query) {
+            return escaped;
+        }
+        pattern = new RegExp('(' + escapeRegExp(query) + ')', 'ig');
+        return escaped.replace(pattern, '<mark class="project-highlight">$1</mark>');
     }
 
     function formatTime(value) {
@@ -61,8 +113,12 @@
         var bridge = app();
         return fetch(bridge && bridge.withBasePath ? bridge.withBasePath(url) : url, options).then(function(response) {
             return response.json().catch(function() { return null; }).then(function(data) {
+                var error;
                 if (!response.ok) {
-                    throw new Error(data && data.error ? data.error : 'Request failed');
+                    error = new Error(data && data.error ? data.error : 'Request failed');
+                    error.status = response.status;
+                    error.payload = data || null;
+                    throw error;
                 }
                 return data;
             });
@@ -236,10 +292,492 @@
         render();
     }
 
+    function loadEvents(filters, append) {
+        var params = new URLSearchParams();
+        var query;
+        state.eventsLoading = true;
+        state.eventsError = '';
+        state.currentEventFilters = Object.assign({}, filters || {});
+        if (!append) {
+            state.currentEvents = [];
+            state.currentEventsCursor = '';
+        }
+        render();
+        Object.keys(state.currentEventFilters || {}).forEach(function(key) {
+            var value = state.currentEventFilters[key];
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                params.set(key, String(value).trim());
+            }
+        });
+        if (!params.has('limit')) {
+            params.set('limit', '20');
+        }
+        if (append && state.currentEventsCursor) {
+            params.set('cursor', state.currentEventsCursor);
+        }
+        query = params.toString();
+        return fetchJSON('/api/project-control/events' + (query ? '?' + query : ''))
+            .then(function(payload) {
+                var nextEvents = payload && Array.isArray(payload.events) ? payload.events : [];
+                state.currentEvents = append ? state.currentEvents.concat(nextEvents) : nextEvents;
+                state.currentEventsCursor = payload && payload.nextCursor ? payload.nextCursor : '';
+                state.eventsLoading = false;
+                render();
+                return state.currentEvents;
+            })
+            .catch(function(err) {
+                state.eventsLoading = false;
+                state.eventsError = err.message || 'Failed to load events';
+                render();
+            });
+    }
+
+    function loadTaskReplay(taskId) {
+        state.replayLoading = true;
+        state.currentReplay = null;
+        state.selectedReplayLane = 'all';
+        state.replaySearchQuery = '';
+        state.eventsError = '';
+        render();
+        return fetchJSON('/api/project-control/tasks/' + encodeURIComponent(taskId) + '/replay')
+            .then(function(payload) {
+                state.replayLoading = false;
+                state.currentReplay = payload || null;
+                state.currentView = 'replay';
+                render();
+                return payload;
+            })
+            .catch(function(err) {
+                state.replayLoading = false;
+                state.eventsError = err.message || 'Failed to load replay';
+                render();
+            });
+    }
+
+    function openProjectHistory(projectId) {
+        state.selectedProjectId = projectId || state.selectedProjectId;
+        state.selectedEventLane = 'all';
+        state.eventSearchQuery = '';
+        state.currentView = 'events';
+        loadEvents({ projectId: state.selectedProjectId, limit: 20 });
+    }
+
+    function openTaskHistory(taskId) {
+        var task = findById(tasks(), taskId);
+        if (task) {
+            state.selectedProjectId = task.projectId;
+            state.selectedWorkstreamId = task.workstreamId;
+            state.selectedTaskId = task.id;
+        }
+        state.selectedEventLane = 'all';
+        state.eventSearchQuery = '';
+        state.currentView = 'events';
+        loadEvents({ taskId: taskId, limit: 20 });
+    }
+
     function renderMetric(label, value, tone) {
         return '<div class="project-metric ' + (tone ? 'tone-' + tone : '') + '">'
             + '<div class="project-metric-label">' + escapeHTML(label) + '</div>'
             + '<div class="project-metric-value">' + escapeHTML(value) + '</div>'
+            + '</div>';
+    }
+
+
+    function renderSelectOptions(options, currentValue) {
+        return options.map(function(option) {
+            var selected = option.value === currentValue ? ' selected' : '';
+            return '<option value="' + escapeHTML(option.value) + '"' + selected + '>' + escapeHTML(option.label) + '</option>';
+        }).join('');
+    }
+
+    function workstreamStatusOptions() {
+        return [
+            { value: 'planned', label: 'planned' },
+            { value: 'running', label: 'running' },
+            { value: 'waiting_human', label: 'waiting_human' },
+            { value: 'blocked', label: 'blocked' },
+            { value: 'failed', label: 'failed' },
+            { value: 'completed', label: 'completed' },
+            { value: 'archived', label: 'archived' }
+        ];
+    }
+
+    function taskStateOptions() {
+        return [
+            { value: 'planned', label: 'planned' },
+            { value: 'queued', label: 'queued' },
+            { value: 'running', label: 'running' },
+            { value: 'waiting_review', label: 'waiting_review' },
+            { value: 'waiting_human', label: 'waiting_human' },
+            { value: 'blocked', label: 'blocked' },
+            { value: 'failed', label: 'failed' },
+            { value: 'execution_complete', label: 'execution_complete' },
+            { value: 'archived', label: 'archived' }
+        ];
+    }
+
+    function acceptanceOptions() {
+        return [
+            { value: 'not_ready', label: 'not_ready' },
+            { value: 'ready_for_acceptance', label: 'ready_for_acceptance' },
+            { value: 'under_human_review', label: 'under_human_review' },
+            { value: 'accepted', label: 'accepted' },
+            { value: 'rejected', label: 'rejected' }
+        ];
+    }
+
+    function priorityOptions() {
+        return [
+            { value: 'low', label: 'low' },
+            { value: 'medium', label: 'medium' },
+            { value: 'high', label: 'high' },
+            { value: 'critical', label: 'critical' }
+        ];
+    }
+
+    function refreshSnapshotAfterConflict(message) {
+        return fetchJSON('/api/project-control').then(function(snapshot) {
+            state.snapshot = snapshot;
+            state.error = message;
+            ensureSelection();
+            updateBadge();
+            render();
+            return snapshot;
+        }).catch(function(err) {
+            state.error = err.message || message || 'Failed to refresh project panel';
+            render();
+            return null;
+        });
+    }
+
+    function updateWorkstreamInline(workstreamId, action) {
+        var workstream = findById(workstreams(), workstreamId);
+        if (!workstream) {
+            return;
+        }
+        state.updatingWorkstreamId = workstreamId;
+        state.error = '';
+        render();
+        fetchJSON('/api/project-control/workstreams/' + encodeURIComponent(workstreamId), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                expectedRowVersion: workstream.rowVersion,
+                action: action
+            })
+        }).then(function(snapshot) {
+            state.updatingWorkstreamId = '';
+            state.snapshot = snapshot;
+            openWorkstream(workstreamId);
+            updateBadge();
+            render();
+        }).catch(function(err) {
+            state.updatingWorkstreamId = '';
+            if (err && err.status === 409) {
+                refreshSnapshotAfterConflict((err.message || 'Update workstream failed') + '. Reloaded latest state.');
+                return;
+            }
+            state.error = err.message || 'Update workstream failed';
+            render();
+        });
+    }
+
+    function updateTaskInline(taskId, action) {
+        var task = findById(tasks(), taskId);
+        if (!task) {
+            return;
+        }
+        state.updatingTaskId = taskId;
+        state.error = '';
+        render();
+        fetchJSON('/api/project-control/tasks/' + encodeURIComponent(taskId), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                expectedRowVersion: task.rowVersion,
+                action: action
+            })
+        }).then(function(snapshot) {
+            state.updatingTaskId = '';
+            state.snapshot = snapshot;
+            openTask(taskId);
+            updateBadge();
+            render();
+        }).catch(function(err) {
+            state.updatingTaskId = '';
+            if (err && err.status === 409) {
+                refreshSnapshotAfterConflict((err.message || 'Update task failed') + '. Reloaded latest state.');
+                return;
+            }
+            state.error = err.message || 'Update task failed';
+            render();
+        });
+    }
+
+    function renderActionButtons(buttons, dataAttr, entityId, updating) {
+        var disabled = updating ? ' disabled' : '';
+        return (buttons || []).map(function(button) {
+            var tone = button.tone ? ' ' + button.tone : '';
+            return '<button type="button" class="project-inline-btn' + tone + '" ' + dataAttr + '="' + escapeHTML(entityId) + '" data-action="' + escapeHTML(button.action) + '"' + disabled + '>' + escapeHTML(button.label) + '</button>';
+        }).join('');
+    }
+
+    function recommendedWorkstreamActions(workstream) {
+        switch (workstream.status) {
+        case 'planned':
+            return [{ action: 'start_execution', label: 'Start', tone: 'primary' }];
+        case 'running':
+            return [
+                { action: 'request_human_input', label: 'Need human input' },
+                { action: 'mark_blocked', label: 'Mark blocked' },
+                { action: 'mark_completed', label: 'Complete', tone: 'primary' }
+            ];
+        case 'waiting_human':
+            return [
+                { action: 'resume_execution', label: 'Resume', tone: 'primary' },
+                { action: 'mark_blocked', label: 'Mark blocked' }
+            ];
+        case 'blocked':
+            return [{ action: 'resume_execution', label: 'Resume', tone: 'primary' }];
+        case 'completed':
+            return [{ action: 'archive', label: 'Archive' }];
+        default:
+            return [];
+        }
+    }
+
+    function recommendedTaskActions(task) {
+        if (task.acceptanceStatus === 'ready_for_acceptance') {
+            return [
+                { action: 'request_acceptance_review', label: 'Send to approvals', tone: 'primary' },
+                { action: 'reopen_task', label: 'Reopen task' }
+            ];
+        }
+        if (task.acceptanceStatus === 'under_human_review') {
+            return [{ action: 'reopen_task', label: 'Reopen task' }];
+        }
+        if (task.acceptanceStatus === 'rejected') {
+            return [{ action: 'reopen_task', label: 'Resume revisions', tone: 'primary' }];
+        }
+        switch (task.state) {
+        case 'planned':
+            return [
+                { action: 'queue_task', label: 'Queue' },
+                { action: 'start_execution', label: 'Start', tone: 'primary' }
+            ];
+        case 'queued':
+            return [
+                { action: 'start_execution', label: 'Start', tone: 'primary' },
+                { action: 'mark_blocked', label: 'Mark blocked' }
+            ];
+        case 'running':
+            return [
+                { action: 'request_human_input', label: 'Need human input' },
+                { action: 'mark_waiting_review', label: 'Waiting review' },
+                { action: 'mark_blocked', label: 'Mark blocked' },
+                { action: 'mark_execution_complete', label: 'Execution complete', tone: 'primary' }
+            ];
+        case 'waiting_review':
+            return [
+                { action: 'resume_execution', label: 'Resume' },
+                { action: 'mark_execution_complete', label: 'Execution complete', tone: 'primary' }
+            ];
+        case 'waiting_human':
+            return [
+                { action: 'resume_execution', label: 'Resume', tone: 'primary' },
+                { action: 'mark_blocked', label: 'Mark blocked' }
+            ];
+        case 'blocked':
+            return [{ action: 'resume_execution', label: 'Resume', tone: 'primary' }];
+        case 'execution_complete':
+            return [
+                { action: 'mark_ready_for_acceptance', label: 'Ready for acceptance', tone: 'primary' },
+                { action: 'reopen_task', label: 'Reopen task' }
+            ];
+        case 'archived':
+            return [{ action: 'unarchive', label: 'Unarchive', tone: 'primary' }];
+        default:
+            return [];
+        }
+    }
+
+    function renderWorkstreamInlineControls(workstream) {
+        var updating = state.updatingWorkstreamId === workstream.id;
+        var actions = recommendedWorkstreamActions(workstream);
+        return '<div class="project-inline-controls" data-workstream-controls="' + escapeHTML(workstream.id) + '">'
+            + '<div class="project-inline-meta"><strong>State:</strong> ' + escapeHTML(workstream.status) + ' • <strong>Priority:</strong> ' + escapeHTML(workstream.priority) + ' • row v' + escapeHTML(workstream.rowVersion) + '</div>'
+            + '<div class="project-action-group">'
+            + renderActionButtons(actions, 'data-update-workstream', workstream.id, updating)
+            + (updating ? '<span class="project-inline-meta">Saving…</span>' : '')
+            + (!actions.length ? '<span class="project-inline-meta">No recommended actions.</span>' : '')
+            + '</div>'
+            + '</div>';
+    }
+
+    function renderTaskInlineControls(task) {
+        var updating = state.updatingTaskId === task.id;
+        var actions = recommendedTaskActions(task);
+        return '<div class="project-inline-controls" data-task-controls="' + escapeHTML(task.id) + '">'
+            + '<div class="project-inline-meta"><strong>State:</strong> ' + escapeHTML(task.state) + ' • <strong>Acceptance:</strong> ' + escapeHTML(task.acceptanceStatus) + ' • row v' + escapeHTML(task.rowVersion) + '</div>'
+            + '<div class="project-action-group">'
+            + renderActionButtons(actions, 'data-update-task', task.id, updating)
+            + (updating ? '<span class="project-inline-meta">Saving…</span>' : '')
+            + (!actions.length ? '<span class="project-inline-meta">No recommended actions.</span>' : '')
+            + '</div>'
+            + '</div>';
+    }
+
+    function eventLaneForAction(action) {
+        action = String(action || '').trim();
+        if (action.indexOf('final_acceptance_') === 0 || action === 'decision_made') {
+            return 'decision';
+        }
+        if (action === 'checkpoint_raised' || action === 'checkpoint_resolved' || action === 'checkpoint_expired' || action.indexOf('checkpoint_') === 0) {
+            return 'checkpoint';
+        }
+        if (action.indexOf('acceptance_') === 0 || action.indexOf('ready_for_acceptance') !== -1) {
+            return 'acceptance';
+        }
+        return 'execution';
+    }
+
+    function laneLabel(lane) {
+        switch (lane) {
+        case 'decision':
+            return 'Decision lane';
+        case 'checkpoint':
+            return 'Checkpoint lane';
+        case 'acceptance':
+            return 'Acceptance lane';
+        default:
+            return 'Execution lane';
+        }
+    }
+
+    function renderLanePill(lane) {
+        return '<span class="project-pill lane-' + escapeHTML(lane) + '">' + escapeHTML(laneLabel(lane)) + '</span>';
+    }
+
+    function groupEventsByLane(events) {
+        var groups = [];
+        (events || []).forEach(function(event) {
+            var lane = eventLaneForAction(event.action);
+            var last = groups.length ? groups[groups.length - 1] : null;
+            if (!last || last.lane !== lane) {
+                last = { lane: lane, items: [] };
+                groups.push(last);
+            }
+            last.items.push(event);
+        });
+        return groups;
+    }
+
+    function laneOptions() {
+        return [
+            { value: 'all', label: 'All lanes' },
+            { value: 'execution', label: laneLabel('execution') },
+            { value: 'acceptance', label: laneLabel('acceptance') },
+            { value: 'checkpoint', label: laneLabel('checkpoint') },
+            { value: 'decision', label: laneLabel('decision') }
+        ];
+    }
+
+    function filterEventsByLane(events, selectedLane) {
+        if (!selectedLane || selectedLane === 'all') {
+            return events || [];
+        }
+        return (events || []).filter(function(event) {
+            return eventLaneForAction(event.action) === selectedLane;
+        });
+    }
+
+    function filterEventsByQuery(events, query) {
+        query = String(query || '').trim().toLowerCase();
+        if (!query) {
+            return events || [];
+        }
+        return (events || []).filter(function(event) {
+            var haystack = [event.action, event.detail, event.actor].join(' ').toLowerCase();
+            return haystack.indexOf(query) !== -1;
+        });
+    }
+
+    function filterTransitionsByLane(transitions, selectedLane) {
+        if (!selectedLane || selectedLane === 'all') {
+            return transitions || [];
+        }
+        return (transitions || []).filter(function(item) {
+            var lane = item.type === 'decision' || item.type === 'decision_recorded'
+                ? 'decision'
+                : (item.type === 'acceptance_state' ? 'acceptance' : (item.type === 'checkpoint_resolution' ? 'checkpoint' : 'execution'));
+            return lane === selectedLane;
+        });
+    }
+
+    function filterTransitionsByQuery(transitions, query) {
+        query = String(query || '').trim().toLowerCase();
+        if (!query) {
+            return transitions || [];
+        }
+        return (transitions || []).filter(function(item) {
+            var haystack = [item.type, item.from, item.to, item.reason].join(' ').toLowerCase();
+            return haystack.indexOf(query) !== -1;
+        });
+    }
+
+    function renderLaneFilterControls(kind, selectedLane) {
+        return '<div class="project-lane-filters">'
+            + laneOptions().map(function(option) {
+                var active = option.value === selectedLane ? ' active' : '';
+                return '<button type="button" class="project-inline-btn project-filter-btn' + active + '" data-lane-filter-kind="' + escapeHTML(kind) + '" data-lane-filter="' + escapeHTML(option.value) + '">' + escapeHTML(option.label) + '</button>';
+            }).join('')
+            + '</div>';
+    }
+
+    function renderTextFilterControl(kind, value) {
+        var placeholder = kind === 'events' ? 'Search history…' : 'Search replay…';
+        return '<div class="project-text-filter">'
+            + '<input type="search" class="project-filter-input" data-filter-input-kind="' + escapeHTML(kind) + '" value="' + escapeHTML(value || '') + '" placeholder="' + escapeHTML(placeholder) + '">'
+            + '</div>';
+    }
+
+    function renderLaneEventCard(event, index, query) {
+        var lane = eventLaneForAction(event.action);
+        return '<div class="project-lane-event lane-' + escapeHTML(lane) + '">'
+            + '<div class="project-lane-event-header">'
+            + renderLanePill(lane)
+            + '<span class="project-list-title">' + highlightHTML(String(index + 1) + '. ' + event.action, query) + '</span>'
+            + '</div>'
+            + '<div>' + highlightHTML(event.detail, query) + '</div>'
+            + '<div class="project-list-meta">' + highlightHTML(event.actor + ' • ' + formatTime(event.timestamp), query) + '</div>'
+            + '</div>';
+    }
+
+    function renderLaneGroups(events, query) {
+        return groupEventsByLane(events).map(function(group) {
+            return '<div class="project-lane-section lane-' + escapeHTML(group.lane) + '">'
+                + '<div class="project-lane-header">'
+                + renderLanePill(group.lane)
+                + '<span class="project-list-meta">' + escapeHTML(String(group.items.length) + ' events') + '</span>'
+                + '</div>'
+                + group.items.map(function(event, index) {
+                    return renderLaneEventCard(event, index, query);
+                }).join('')
+                + '</div>';
+        }).join('');
+    }
+
+    function renderTransitionCard(item, query) {
+        var lane = item.type === 'decision' || item.type === 'decision_recorded'
+            ? 'decision'
+            : (item.type === 'acceptance_state' ? 'acceptance' : (item.type === 'checkpoint_resolution' ? 'checkpoint' : 'execution'));
+        return '<div class="project-lane-event lane-' + escapeHTML(lane) + '">'
+            + '<div class="project-lane-event-header">'
+            + renderLanePill(lane)
+            + '<span class="project-list-title">' + highlightHTML(item.type, query) + '</span>'
+            + '</div>'
+            + '<div>' + highlightHTML(item.from + ' → ' + item.to, query) + '</div>'
+            + '<div class="project-list-meta">' + highlightHTML(item.reason, query) + '</div>'
             + '</div>';
     }
 
@@ -326,6 +864,7 @@
             + '<div class="project-header-actions">'
             + '<button type="button" class="project-inline-btn" data-create-project="1">' + escapeHTML(tr('project.newProject', 'New Project')) + '</button>'
             + '<button type="button" class="project-inline-btn" data-create-workstream="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.newWorkstream', 'New Workstream')) + '</button>'
+            + '<button type="button" class="project-inline-btn" data-project-history="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.viewHistory', 'View history')) + '</button>'
             + '<button type="button" class="project-inline-btn" data-open-approvals="1">' + escapeHTML(tr('project.openApprovals', 'Open approvals')) + '</button>'
             + '</div>'
             + '</div>'
@@ -373,6 +912,7 @@
             + '<div class="project-header-actions">'
             + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.newTask', 'New Task')) + '</button>'
             + '</div>'
+            + renderWorkstreamInlineControls(workstream)
             + '</div>'
             + '<div class="project-board">'
             + columns.map(function(column) {
@@ -405,7 +945,9 @@
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.state', 'State')) + ':</strong> ' + escapeHTML(task.state) + '</div>'
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.acceptance', 'Acceptance')) + ':</strong> ' + escapeHTML(task.acceptanceStatus) + '</div>'
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.risk', 'Risk')) + ':</strong> ' + escapeHTML(task.riskLevel) + '</div>'
-            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.nextStep', 'Next step')) + ':</strong> ' + escapeHTML(task.nextStep) + '</div></div>'
+            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.nextStep', 'Next step')) + ':</strong> ' + escapeHTML(task.nextStep) + '</div>'
+            + renderTaskInlineControls(task)
+            + '</div>'
             + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.timeline', 'Timeline')) + '</h3>'
             + (task.timeline || []).map(function(item) {
                 return '<div class="project-list-item"><div class="project-list-title">' + escapeHTML(item.action) + '</div><div>' + escapeHTML(item.detail) + '</div><div class="project-list-meta">' + escapeHTML(item.actor + ' • ' + formatTime(item.timestamp)) + '</div></div>';
@@ -424,6 +966,8 @@
             + ((task.audit || []).length ? task.audit.map(function(item) {
                 return '<div class="project-list-item"><div class="project-list-title">' + escapeHTML(item.action) + '</div><div>' + escapeHTML(item.detail) + '</div><div class="project-list-meta">' + escapeHTML(item.actor + ' • ' + formatTime(item.timestamp)) + '</div></div>';
             }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noAudit', 'No audit entries yet.')) + '</div>')
+            + '<button type="button" class="project-inline-btn" data-task-history="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.viewHistory', 'View history')) + '</button>'
+            + '<button type="button" class="project-inline-btn" data-task-replay="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.openReplay', 'Open replay')) + '</button>'
             + '</div>'
             + '</div>'
             + '</section>';
@@ -455,25 +999,103 @@
             + '</section>';
     }
 
+    function renderApprovalCard(item) {
+        return '<div class="project-approval-card">'
+            + '<div class="project-approval-header"><div><div class="project-card-title">' + escapeHTML(item.title) + '</div><div class="project-card-meta">' + escapeHTML(item.kind + ' • ' + item.status) + '</div></div>'
+            + '<button type="button" class="project-inline-btn" data-task-id="' + escapeHTML(item.taskId) + '">' + escapeHTML(tr('project.openTask', 'Open task')) + '</button></div>'
+            + '<div class="project-card-copy">' + escapeHTML(item.reason) + '</div>'
+            + '<div class="project-card-meta">' + escapeHTML(formatTime(item.requestedAt)) + '</div>'
+            + '<div class="project-approval-actions">'
+            + (item.allowedActions || []).map(function(action) {
+                return '<button type="button" class="project-inline-btn ' + (action === 'approve' ? 'primary' : '') + '" data-checkpoint-id="' + escapeHTML(item.id) + '" data-checkpoint-action="' + escapeHTML(action) + '">' + escapeHTML(action) + '</button>';
+            }).join('')
+            + (item.decisionSummary ? '<div class="project-approval-note">' + escapeHTML(item.decisionSummary) + '</div>' : '')
+            + '</div></div>';
+    }
+
     function renderApprovals() {
-        var items = checkpoints();
+        var all = checkpoints();
+        var pending = all.filter(function(item) { return item.status === 'pending'; });
+        var resolved = all.filter(function(item) { return item.status !== 'pending'; });
         return '<section class="project-main-section">'
             + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.approvals', 'Approvals Inbox')) + '</div>'
             + '<h2>' + escapeHTML(tr('project.pendingCheckpoints', 'Pending checkpoints')) + '</h2>'
             + '<p>' + escapeHTML(tr('project.checkpointSource', 'All approval items are filtered views over checkpoint records.')) + '</p></div></div>'
-            + items.map(function(item) {
-                return '<div class="project-approval-card">'
-                    + '<div class="project-approval-header"><div><div class="project-card-title">' + escapeHTML(item.title) + '</div><div class="project-card-meta">' + escapeHTML(item.kind + ' • ' + item.status) + '</div></div>'
-                    + '<button type="button" class="project-inline-btn" data-task-id="' + escapeHTML(item.taskId) + '">' + escapeHTML(tr('project.openTask', 'Open task')) + '</button></div>'
-                    + '<div class="project-card-copy">' + escapeHTML(item.reason) + '</div>'
-                    + '<div class="project-card-meta">' + escapeHTML(formatTime(item.requestedAt)) + '</div>'
-                    + '<div class="project-approval-actions">'
-                    + (item.allowedActions || []).map(function(action) {
-                        return '<button type="button" class="project-inline-btn ' + (action === 'approve' ? 'primary' : '') + '" data-checkpoint-id="' + escapeHTML(item.id) + '" data-checkpoint-action="' + escapeHTML(action) + '">' + escapeHTML(action) + '</button>';
+            + (pending.length
+                ? pending.map(renderApprovalCard).join('')
+                : '<div class="project-list-item muted">' + escapeHTML(tr('project.noPending', 'No pending approvals.')) + '</div>')
+            + (resolved.length
+                ? '<div class="project-sidebar-kicker" style="margin-top:1.5rem">' + escapeHTML(tr('project.resolvedCheckpoints', 'Resolved')) + '</div>'
+                  + resolved.map(renderApprovalCard).join('')
+                : '')
+            + '</section>';
+    }
+
+    function renderEventsView() {
+        var header = state.selectedTaskId ? tr('project.taskHistory', 'Task Event History') : tr('project.projectHistory', 'Project Event History');
+        var subcopy = state.selectedTaskId ? tr('project.taskHistoryHint', 'Replay-ready task events, newest first.') : tr('project.projectHistoryHint', 'Project-scoped event history, newest first.');
+        var visibleEvents = filterEventsByQuery(filterEventsByLane(state.currentEvents, state.selectedEventLane), state.eventSearchQuery);
+        if (state.eventsLoading) {
+            return '<section class="project-main-section"><div class="project-empty-state">' + escapeHTML(tr('project.loadingEvents', 'Loading events…')) + '</div></section>';
+        }
+        return '<section class="project-main-section">'
+            + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.history', 'History')) + '</div><h2>' + escapeHTML(header) + '</h2><p>' + escapeHTML(subcopy) + '</p></div></div>'
+            + (state.eventsError ? '<div class="project-banner error">' + escapeHTML(state.eventsError) + '</div>' : '')
+            + renderLaneFilterControls('events', state.selectedEventLane)
+            + renderTextFilterControl('events', state.eventSearchQuery)
+            + '<div class="project-card-list">'
+            + (visibleEvents.length ? renderLaneGroups(visibleEvents, state.eventSearchQuery) : '<div class="project-list-item muted">' + escapeHTML(tr('project.noEvents', 'No events matched this filter.')) + '</div>')
+            + (state.currentEventsCursor ? '<button type="button" class="project-inline-btn" data-events-load-more="1">' + escapeHTML(tr('project.loadMoreEvents', 'Load more')) + '</button>' : '')
+            + '</div>'
+            + '</section>';
+    }
+
+    function renderReplayView() {
+        var visibleReplaySteps = filterEventsByQuery(filterEventsByLane(state.currentReplay && state.currentReplay.steps, state.selectedReplayLane), state.replaySearchQuery);
+        var visibleReplayTransitions = filterTransitionsByQuery(filterTransitionsByLane(state.currentReplay && state.currentReplay.transitions, state.selectedReplayLane), state.replaySearchQuery);
+        var visibleReplaySections = (state.currentReplay && state.currentReplay.sections ? state.currentReplay.sections : []).filter(function(section) {
+            return state.selectedReplayLane === 'all' || section.kind === state.selectedReplayLane;
+        }).map(function(section) {
+            return {
+                kind: section.kind,
+                title: section.title,
+                steps: filterEventsByQuery(section.steps, state.replaySearchQuery)
+            };
+        }).filter(function(section) {
+            return section.steps.length > 0;
+        });
+        if (state.replayLoading) {
+            return '<section class="project-main-section"><div class="project-empty-state">' + escapeHTML(tr('project.loadingReplay', 'Loading replay…')) + '</div></section>';
+        }
+        if (!state.currentReplay) {
+            return '<section class="project-main-section"><div class="project-empty-state">' + escapeHTML(tr('project.noReplay', 'No replay data available.')) + '</div></section>';
+        }
+        return '<section class="project-main-section">'
+            + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.replay', 'Replay')) + '</div><h2>' + escapeHTML(state.currentReplay.title) + '</h2><p>' + escapeHTML(tr('project.replayHint', 'Ordered task events for step-by-step playback.')) + '</p></div></div>'
+            + renderLaneFilterControls('replay', state.selectedReplayLane)
+            + renderTextFilterControl('replay', state.replaySearchQuery)
+            + '<div class="project-two-column">'
+            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.replaySections', 'Replay sections')) + '</h3>'
+            + visibleReplaySections.map(function(section) {
+                return '<div class="project-lane-section lane-' + escapeHTML(section.kind) + '">'
+                    + '<div class="project-lane-header">'
+                    + renderLanePill(section.kind)
+                    + '<span class="project-list-meta">' + escapeHTML(section.title) + '</span>'
+                    + '</div>'
+                    + section.steps.map(function(step, index) {
+                        return renderLaneEventCard(step, index, state.replaySearchQuery);
                     }).join('')
-                    + (item.decisionSummary ? '<div class="project-approval-note">' + escapeHTML(item.decisionSummary) + '</div>' : '')
-                    + '</div></div>';
+                    + '</div>';
             }).join('')
+            + '</div>'
+            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.replayTransitions', 'Transitions')) + '</h3>'
+            + visibleReplayTransitions.map(function(item) {
+                return renderTransitionCard(item, state.replaySearchQuery);
+            }).join('')
+            + '<h3>' + escapeHTML(tr('project.replaySteps', 'All steps')) + '</h3>'
+            + (visibleReplaySteps.length ? renderLaneGroups(visibleReplaySteps, state.replaySearchQuery) : '<div class="project-list-item muted">' + escapeHTML(tr('project.noReplay', 'No replay data available.')) + '</div>')
+            + '</div>'
+            + '</div>'
             + '</section>';
     }
 
@@ -492,6 +1114,12 @@
         }
         if (state.currentView === 'approvals') {
             return renderApprovals();
+        }
+        if (state.currentView === 'events') {
+            return renderEventsView();
+        }
+        if (state.currentView === 'replay') {
+            return renderReplayView();
         }
         return renderDashboard();
     }
@@ -624,6 +1252,61 @@
         panel.querySelectorAll('[data-open-approvals]').forEach(function(node) {
             node.addEventListener('click', openApprovals);
         });
+        panel.querySelectorAll('[data-project-history]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                openProjectHistory(node.getAttribute('data-project-history'));
+            });
+        });
+        panel.querySelectorAll('[data-task-history]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                openTaskHistory(node.getAttribute('data-task-history'));
+            });
+        });
+        panel.querySelectorAll('[data-task-replay]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                loadTaskReplay(node.getAttribute('data-task-replay'));
+            });
+        });
+        panel.querySelectorAll('[data-update-workstream]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                updateWorkstreamInline(node.getAttribute('data-update-workstream'), node.getAttribute('data-action') || '');
+            });
+        });
+        panel.querySelectorAll('[data-update-task]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                updateTaskInline(node.getAttribute('data-update-task'), node.getAttribute('data-action') || '');
+            });
+        });
+        panel.querySelectorAll('[data-events-load-more]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                loadEvents(state.currentEventFilters || {}, true);
+            });
+        });
+        panel.querySelectorAll('[data-lane-filter]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                var kind = node.getAttribute('data-lane-filter-kind');
+                var lane = node.getAttribute('data-lane-filter') || 'all';
+                if (kind === 'events') {
+                    state.selectedEventLane = lane;
+                } else if (kind === 'replay') {
+                    state.selectedReplayLane = lane;
+                }
+                persistFilterPreferences();
+                render();
+            });
+        });
+        panel.querySelectorAll('[data-filter-input-kind]').forEach(function(node) {
+            node.addEventListener('input', function() {
+                var kind = node.getAttribute('data-filter-input-kind');
+                if (kind === 'events') {
+                    state.eventSearchQuery = node.value || '';
+                } else if (kind === 'replay') {
+                    state.replaySearchQuery = node.value || '';
+                }
+                persistFilterPreferences();
+                render();
+            });
+        });
         panel.querySelectorAll('[data-create-project]').forEach(function(node) {
             node.addEventListener('click', createProject);
         });
@@ -714,6 +1397,7 @@
 
     function init() {
         var badge = getBadge();
+        loadFilterPreferences();
         if (badge) {
             badge.addEventListener('click', function() {
                 if (app() && app().setMode) {

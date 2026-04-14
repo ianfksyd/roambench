@@ -583,6 +583,28 @@ body.view-login #terminal-view {
     border-color: rgba(86, 156, 214, 0.45);
 }
 
+.project-inline-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.project-action-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.project-inline-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
 .project-breadcrumbs {
     display: flex;
     flex-wrap: wrap;
@@ -631,6 +653,105 @@ body.view-login #terminal-view {
 
 .project-approval-actions {
     margin-top: 12px;
+}
+
+.project-replay-step {
+    margin-top: 10px;
+    padding-left: 10px;
+    border-left: 2px solid rgba(86, 156, 214, 0.35);
+}
+
+.project-lane-section {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.project-lane-header,
+.project-lane-event-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.project-lane-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 12px;
+}
+
+.project-filter-btn.active {
+    border-color: var(--primary);
+    background: rgba(86, 156, 214, 0.14);
+}
+
+.project-text-filter {
+    margin: 0 0 12px;
+}
+
+.project-filter-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    padding: 10px 12px;
+}
+
+.project-highlight {
+    background: rgba(242, 193, 78, 0.28);
+    color: var(--text);
+    padding: 0 2px;
+    border-radius: 3px;
+}
+
+.project-lane-event {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border-left: 3px solid transparent;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.project-lane-event.lane-execution,
+.project-lane-section.lane-execution {
+    border-color: rgba(86, 156, 214, 0.35);
+}
+
+.project-lane-event.lane-acceptance,
+.project-lane-section.lane-acceptance {
+    border-color: rgba(242, 193, 78, 0.45);
+}
+
+.project-lane-event.lane-checkpoint,
+.project-lane-section.lane-checkpoint {
+    border-color: rgba(158, 118, 255, 0.45);
+}
+
+.project-lane-event.lane-decision,
+.project-lane-section.lane-decision {
+    border-color: rgba(86, 211, 100, 0.45);
+}
+
+.project-pill.lane-execution {
+    background: rgba(86, 156, 214, 0.18);
+}
+
+.project-pill.lane-acceptance {
+    background: rgba(242, 193, 78, 0.18);
+}
+
+.project-pill.lane-checkpoint {
+    background: rgba(158, 118, 255, 0.18);
+}
+
+.project-pill.lane-decision {
+    background: rgba(86, 211, 100, 0.18);
 }
 
 @media (max-width: 1180px) {

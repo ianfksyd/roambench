@@ -1,13 +1,16 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -141,6 +144,18 @@ type projectControlEvent struct {
 	Detail    string `json:"detail"`
 }
 
+type projectControlRecordedEvent struct {
+	ID           string `json:"id"`
+	Timestamp    string `json:"timestamp"`
+	Actor        string `json:"actor"`
+	Action       string `json:"action"`
+	Detail       string `json:"detail"`
+	ProjectID    string `json:"projectId,omitempty"`
+	WorkstreamID string `json:"workstreamId,omitempty"`
+	TaskID       string `json:"taskId,omitempty"`
+	CheckpointID string `json:"checkpointId,omitempty"`
+}
+
 type projectControlEvidence struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
@@ -154,12 +169,13 @@ type projectControlAuditItem struct {
 }
 
 type projectControlState struct {
-	ActiveProjectID string                     `json:"activeProjectId"`
-	Projects        []projectControlProject    `json:"projects"`
-	Workstreams     []projectControlWorkstream `json:"workstreams"`
-	Tasks           []projectControlTask       `json:"tasks"`
-	Checkpoints     []projectControlCheckpoint `json:"checkpoints"`
-	UpdatedAt       string                     `json:"updatedAt,omitempty"`
+	ActiveProjectID string                        `json:"activeProjectId"`
+	Projects        []projectControlProject       `json:"projects"`
+	Workstreams     []projectControlWorkstream    `json:"workstreams"`
+	Tasks           []projectControlTask          `json:"tasks"`
+	Checkpoints     []projectControlCheckpoint    `json:"checkpoints"`
+	Events          []projectControlRecordedEvent `json:"events,omitempty"`
+	UpdatedAt       string                        `json:"updatedAt,omitempty"`
 }
 
 type projectControlDecisionRequest struct {
@@ -190,9 +206,315 @@ type projectControlTaskCreateRequest struct {
 	RiskLevel    string `json:"riskLevel"`
 }
 
+type projectControlWorkstreamUpdateRequest struct {
+	ExpectedRowVersion int    `json:"expectedRowVersion"`
+	Action             string `json:"action"`
+	Title              string `json:"title"`
+	Description        string `json:"description"`
+	Priority           string `json:"priority"`
+	Status             string `json:"status"`
+	ScopeSummary       string `json:"scopeSummary"`
+}
+
+type projectControlTaskUpdateRequest struct {
+	ExpectedRowVersion int    `json:"expectedRowVersion"`
+	Action             string `json:"action"`
+	Title              string `json:"title"`
+	Goal               string `json:"goal"`
+	Priority           string `json:"priority"`
+	RiskLevel          string `json:"riskLevel"`
+	State              string `json:"state"`
+	AcceptanceStatus   string `json:"acceptanceStatus"`
+}
+
+type projectControlEventsResponse struct {
+	Events     []projectControlRecordedEvent `json:"events"`
+	NextCursor string                        `json:"nextCursor,omitempty"`
+}
+
+type projectControlReplaySection struct {
+	Kind  string                        `json:"kind"`
+	Title string                        `json:"title"`
+	Steps []projectControlRecordedEvent `json:"steps"`
+}
+
+type projectControlReplayTransition struct {
+	Type   string `json:"type"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Reason string `json:"reason"`
+}
+
+type projectControlReplayResponse struct {
+	TaskID          string                           `json:"taskId"`
+	ProjectID       string                           `json:"projectId"`
+	WorkstreamID    string                           `json:"workstreamId"`
+	Title           string                           `json:"title"`
+	CurrentState    string                           `json:"currentState"`
+	AcceptanceState string                           `json:"acceptanceState"`
+	Steps           []projectControlRecordedEvent    `json:"steps"`
+	Sections        []projectControlReplaySection    `json:"sections"`
+	Transitions     []projectControlReplayTransition `json:"transitions"`
+}
+
 type projectControlStore struct {
 	rootDir string
 	mu      sync.Mutex
+}
+
+type projectControlConflictError struct {
+	message string
+}
+
+func (e projectControlConflictError) Error() string {
+	return e.message
+}
+
+func projectControlRowVersionConflict(entity string, expected, actual int) error {
+	return projectControlConflictError{message: fmt.Sprintf("row version conflict for %s: expected %d, current %d", entity, expected, actual)}
+}
+
+func applyProjectControlWorkstreamAction(workstream *projectControlWorkstream, req *projectControlWorkstreamUpdateRequest) error {
+	action := strings.TrimSpace(strings.ToLower(req.Action))
+	if action == "" {
+		return nil
+	}
+	switch action {
+	case "start_execution", "resume_execution", "resume":
+		req.Status = "running"
+	case "mark_blocked":
+		req.Status = "blocked"
+	case "request_human_input":
+		req.Status = "waiting_human"
+	case "mark_completed":
+		req.Status = "completed"
+	case "archive":
+		req.Status = "archived"
+	default:
+		return fmt.Errorf("invalid workstream action: %s", action)
+	}
+	if workstream != nil && strings.TrimSpace(req.Priority) == "" {
+		req.Priority = workstream.Priority
+	}
+	return nil
+}
+
+func applyProjectControlTaskAction(task *projectControlTask, req *projectControlTaskUpdateRequest) error {
+	action := strings.TrimSpace(strings.ToLower(req.Action))
+	if action == "" {
+		return nil
+	}
+	switch action {
+	case "queue_task":
+		req.State = "queued"
+		req.AcceptanceStatus = "not_ready"
+	case "start_execution", "resume_execution":
+		req.State = "running"
+		req.AcceptanceStatus = "not_ready"
+	case "request_human_input":
+		req.State = "waiting_human"
+	case "mark_waiting_review":
+		req.State = "waiting_review"
+	case "mark_blocked":
+		req.State = "blocked"
+	case "mark_execution_complete":
+		req.State = "execution_complete"
+	case "mark_ready_for_acceptance":
+		req.State = "execution_complete"
+		req.AcceptanceStatus = "ready_for_acceptance"
+	case "request_acceptance_review":
+		req.State = "execution_complete"
+		req.AcceptanceStatus = "under_human_review"
+	case "reopen_task":
+		req.State = "running"
+		req.AcceptanceStatus = "not_ready"
+	case "archive":
+		req.State = "archived"
+	case "unarchive":
+		req.State = "planned"
+		req.AcceptanceStatus = "not_ready"
+	default:
+		return fmt.Errorf("invalid task action: %s", action)
+	}
+	if task != nil {
+		if strings.TrimSpace(req.Priority) == "" {
+			req.Priority = task.Priority
+		}
+		if strings.TrimSpace(req.RiskLevel) == "" {
+			req.RiskLevel = task.RiskLevel
+		}
+	}
+	return nil
+}
+
+func isAllowedProjectControlWorkstreamTransition(from, to string) bool {
+	from = normalizeProjectControlWorkstreamStatus(from)
+	to = normalizeProjectControlWorkstreamStatus(to)
+	if from == to {
+		return true
+	}
+	switch from {
+	case "planned":
+		return to == "running"
+	case "running":
+		return to == "blocked" || to == "waiting_human" || to == "failed" || to == "completed"
+	case "blocked", "waiting_human", "failed":
+		return to == "running"
+	case "completed":
+		return to == "archived"
+	default:
+		return false
+	}
+}
+
+func isAllowedProjectControlTaskTransition(from, to string) bool {
+	from = normalizeProjectControlTaskState(from)
+	to = normalizeProjectControlTaskState(to)
+	if from == to {
+		return true
+	}
+	switch from {
+	case "planned":
+		return to == "queued" || to == "running"
+	case "queued":
+		return to == "planned" || to == "running"
+	case "running":
+		return to == "waiting_review" || to == "waiting_human" || to == "blocked" || to == "failed" || to == "execution_complete"
+	case "waiting_review", "waiting_human", "blocked", "failed":
+		return to == "running"
+	case "execution_complete":
+		return to == "running" || to == "blocked" || to == "archived"
+	case "archived":
+		return to == "planned"
+	default:
+		return false
+	}
+}
+
+func validateProjectControlAcceptanceTransition(from, to, resultingTaskState string, allowDecisionTerminalStates bool) error {
+	from = normalizeProjectControlAcceptanceStatus(from)
+	to = normalizeProjectControlAcceptanceStatus(to)
+	if from == to {
+		return nil
+	}
+	if to == "accepted" || to == "rejected" {
+		if allowDecisionTerminalStates {
+			return nil
+		}
+		return errors.New("accepted and rejected require explicit final acceptance decision")
+	}
+	if to == "ready_for_acceptance" && normalizeProjectControlTaskState(resultingTaskState) != "execution_complete" {
+		return errors.New("ready_for_acceptance requires execution_complete state")
+	}
+	switch from {
+	case "not_ready":
+		if to == "ready_for_acceptance" {
+			return nil
+		}
+	case "ready_for_acceptance":
+		if to == "not_ready" {
+			return nil
+		}
+		if to == "under_human_review" {
+			return nil
+		}
+		return errors.New("under_human_review requires explicit checkpoint workflow")
+	case "under_human_review":
+		if to == "not_ready" {
+			return nil
+		}
+	case "rejected":
+		if to == "not_ready" {
+			return nil
+		}
+	}
+	return fmt.Errorf("illegal acceptance transition: %s -> %s", from, to)
+}
+
+func syncProjectControlAcceptanceCheckpoint(state *projectControlState, task projectControlTask, now string) {
+	if state == nil {
+		return
+	}
+	pendingIndex := -1
+	for i, checkpoint := range state.Checkpoints {
+		if checkpoint.TaskID == task.ID && checkpoint.Kind == "final_acceptance" && checkpoint.Status == "pending" {
+			pendingIndex = i
+			break
+		}
+	}
+	if task.AcceptanceStatus == "under_human_review" {
+		if pendingIndex != -1 {
+			return
+		}
+		checkpointID := projectControlID("checkpoint", task.ID+"-final-acceptance")
+		checkpoint := projectControlCheckpoint{
+			ID:             checkpointID,
+			TaskID:         task.ID,
+			Kind:           "final_acceptance",
+			Title:          "Final acceptance required",
+			Reason:         "Task entered human acceptance review after reaching ready_for_acceptance.",
+			Status:         "pending",
+			RequestedAt:    now,
+			AllowedActions: []string{"approve", "reject", "reroute"},
+			RowVersion:     1,
+		}
+		state.Checkpoints = append(state.Checkpoints, checkpoint)
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "checkpoint-raised"),
+			Timestamp:    now,
+			Actor:        "policy_engine",
+			Action:       "checkpoint_raised",
+			Detail:       "Generated final_acceptance checkpoint after entering under_human_review.",
+			ProjectID:    task.ProjectID,
+			WorkstreamID: task.WorkstreamID,
+			TaskID:       task.ID,
+			CheckpointID: checkpoint.ID,
+		})
+		return
+	}
+	if pendingIndex != -1 && (task.AcceptanceStatus == "not_ready" || task.AcceptanceStatus == "accepted" || task.AcceptanceStatus == "rejected") {
+		checkpoint := state.Checkpoints[pendingIndex]
+		checkpoint.Status = "expired"
+		checkpoint.AllowedActions = []string{}
+		checkpoint.DecisionSummary = "Expired after task left acceptance review prerequisites."
+		checkpoint.RowVersion += 1
+		state.Checkpoints[pendingIndex] = checkpoint
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "checkpoint-expired"),
+			Timestamp:    now,
+			Actor:        "policy_engine",
+			Action:       "checkpoint_expired",
+			Detail:       checkpoint.DecisionSummary,
+			ProjectID:    task.ProjectID,
+			WorkstreamID: task.WorkstreamID,
+			TaskID:       task.ID,
+			CheckpointID: checkpoint.ID,
+		})
+	}
+}
+
+func checkpointProjectID(state *projectControlState, taskID string) string {
+	if state == nil {
+		return ""
+	}
+	for _, task := range state.Tasks {
+		if task.ID == taskID {
+			return task.ProjectID
+		}
+	}
+	return ""
+}
+
+func checkpointWorkstreamID(state *projectControlState, taskID string) string {
+	if state == nil {
+		return ""
+	}
+	for _, task := range state.Tasks {
+		if task.ID == taskID {
+			return task.WorkstreamID
+		}
+	}
+	return ""
 }
 
 func newProjectControlStore(basePersistDir string) *projectControlStore {
@@ -219,7 +541,7 @@ func (s *projectControlStore) createProject(username string, req projectControlP
 		if key == "" {
 			key = slugifyProjectControl(name)
 		}
-		state.Projects = append(state.Projects, projectControlProject{
+		project := projectControlProject{
 			ID:          projectControlID("project", name),
 			Key:         key,
 			Name:        name,
@@ -227,8 +549,17 @@ func (s *projectControlStore) createProject(username string, req projectControlP
 			Status:      "active",
 			CurrentGoal: strings.TrimSpace(req.CurrentGoal),
 			RowVersion:  1,
+		}
+		state.Projects = append(state.Projects, project)
+		state.ActiveProjectID = project.ID
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:        projectControlID("event", "project-created"),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Actor:     "human",
+			Action:    "project_created",
+			Detail:    "Created project " + project.Name + ".",
+			ProjectID: project.ID,
 		})
-		state.ActiveProjectID = state.Projects[len(state.Projects)-1].ID
 		return nil
 	})
 	if err != nil {
@@ -247,7 +578,7 @@ func (s *projectControlStore) createWorkstream(username string, req projectContr
 		if title == "" {
 			return errors.New("workstream title is required")
 		}
-		state.Workstreams = append(state.Workstreams, projectControlWorkstream{
+		workstream := projectControlWorkstream{
 			ID:           projectControlID("workstream", title),
 			ProjectID:    projectID,
 			Title:        title,
@@ -256,8 +587,18 @@ func (s *projectControlStore) createWorkstream(username string, req projectContr
 			Status:       "planned",
 			ScopeSummary: strings.TrimSpace(req.ScopeSummary),
 			RowVersion:   1,
-		})
+		}
+		state.Workstreams = append(state.Workstreams, workstream)
 		state.ActiveProjectID = projectID
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "workstream-created"),
+			Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			Actor:        "human",
+			Action:       "workstream_created",
+			Detail:       "Created workstream " + workstream.Title + ".",
+			ProjectID:    workstream.ProjectID,
+			WorkstreamID: workstream.ID,
+		})
 		return nil
 	})
 	if err != nil {
@@ -281,7 +622,7 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			return errors.New("task title is required")
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		state.Tasks = append(state.Tasks, projectControlTask{
+		task := projectControlTask{
 			ID:               projectControlID("task", title),
 			ProjectID:        projectID,
 			WorkstreamID:     workstreamID,
@@ -298,18 +639,180 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			FilesChanged:     []string{},
 			DiffSummary:      "",
 			SessionIDs:       []string{},
-			Timeline: []projectControlEvent{{
-				Timestamp: now,
-				Actor:     "human",
-				Action:    "task_created",
-				Detail:    "Created from the Project Panel.",
-			}},
-			Evidence:   []projectControlEvidence{},
-			Audit:      []projectControlAuditItem{},
-			RowVersion: 1,
-		})
+			Timeline:         []projectControlEvent{},
+			Evidence:         []projectControlEvidence{},
+			Audit:            []projectControlAuditItem{},
+			RowVersion:       1,
+		}
+		state.Tasks = append(state.Tasks, task)
 		state.ActiveProjectID = projectID
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "task-created"),
+			Timestamp:    now,
+			Actor:        "human",
+			Action:       "task_created",
+			Detail:       "Created task " + task.Title + ".",
+			ProjectID:    task.ProjectID,
+			WorkstreamID: task.WorkstreamID,
+			TaskID:       task.ID,
+		})
 		return nil
+	})
+	if err != nil {
+		return projectControlSnapshot{}, err
+	}
+	return buildProjectControlSnapshot(state, username, terminals), nil
+}
+
+func (s *projectControlStore) updateWorkstream(username, workstreamID string, req projectControlWorkstreamUpdateRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
+	if req.ExpectedRowVersion < 1 {
+		return projectControlSnapshot{}, errors.New("expectedRowVersion must be provided")
+	}
+	state, err := s.withStateLocked(username, func(state *projectControlState) error {
+		for i, workstream := range state.Workstreams {
+			if workstream.ID != workstreamID {
+				continue
+			}
+			if req.ExpectedRowVersion != workstream.RowVersion {
+				return projectControlRowVersionConflict("workstream", req.ExpectedRowVersion, workstream.RowVersion)
+			}
+			originalStatus := workstream.Status
+			if err := applyProjectControlWorkstreamAction(&workstream, &req); err != nil {
+				return err
+			}
+			now := time.Now().UTC().Format(time.RFC3339)
+			if value := strings.TrimSpace(req.Title); value != "" {
+				workstream.Title = value
+			}
+			if value := strings.TrimSpace(req.Description); value != "" {
+				workstream.Description = value
+			}
+			if value := strings.TrimSpace(req.ScopeSummary); value != "" {
+				workstream.ScopeSummary = value
+			}
+			if value := strings.TrimSpace(req.Priority); value != "" {
+				workstream.Priority = normalizeProjectControlPriority(value)
+			}
+			if value := strings.TrimSpace(req.Status); value != "" && value != workstream.Status {
+				candidate := normalizeProjectControlWorkstreamStatus(value)
+				if !isAllowedProjectControlWorkstreamTransition(originalStatus, candidate) {
+					return fmt.Errorf("illegal workstream transition: %s -> %s", originalStatus, candidate)
+				}
+				from := workstream.Status
+				workstream.Status = candidate
+				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+					ID:           projectControlID("event", "workstream-state-changed"),
+					Timestamp:    now,
+					Actor:        "human",
+					Action:       "workstream_state_changed",
+					Detail:       "Workstream state changed from " + from + " to " + workstream.Status + " via " + strings.TrimSpace(strings.ToLower(req.Action)) + ".",
+					ProjectID:    workstream.ProjectID,
+					WorkstreamID: workstream.ID,
+				})
+			}
+			workstream.RowVersion += 1
+			state.Workstreams[i] = workstream
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:           projectControlID("event", "workstream-updated"),
+				Timestamp:    now,
+				Actor:        "human",
+				Action:       "workstream_updated",
+				Detail:       "Updated workstream " + workstream.Title + ".",
+				ProjectID:    workstream.ProjectID,
+				WorkstreamID: workstream.ID,
+			})
+			return nil
+		}
+		return errors.New("workstream not found")
+	})
+	if err != nil {
+		return projectControlSnapshot{}, err
+	}
+	return buildProjectControlSnapshot(state, username, terminals), nil
+}
+
+func (s *projectControlStore) updateTask(username, taskID string, req projectControlTaskUpdateRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
+	if req.ExpectedRowVersion < 1 {
+		return projectControlSnapshot{}, errors.New("expectedRowVersion must be provided")
+	}
+	state, err := s.withStateLocked(username, func(state *projectControlState) error {
+		for i, task := range state.Tasks {
+			if task.ID != taskID {
+				continue
+			}
+			if req.ExpectedRowVersion != task.RowVersion {
+				return projectControlRowVersionConflict("task", req.ExpectedRowVersion, task.RowVersion)
+			}
+			originalState := task.State
+			originalAcceptance := task.AcceptanceStatus
+			if err := applyProjectControlTaskAction(&task, &req); err != nil {
+				return err
+			}
+			now := time.Now().UTC().Format(time.RFC3339)
+			if value := strings.TrimSpace(req.Title); value != "" {
+				task.Title = value
+			}
+			if value := strings.TrimSpace(req.Goal); value != "" {
+				task.Goal = value
+			}
+			if value := strings.TrimSpace(req.Priority); value != "" {
+				task.Priority = normalizeProjectControlPriority(value)
+			}
+			if value := strings.TrimSpace(req.RiskLevel); value != "" {
+				task.RiskLevel = normalizeProjectControlRisk(value)
+			}
+			if value := strings.TrimSpace(req.State); value != "" && value != task.State {
+				candidate := normalizeProjectControlTaskState(value)
+				if !isAllowedProjectControlTaskTransition(originalState, candidate) {
+					return fmt.Errorf("illegal task transition: %s -> %s", originalState, candidate)
+				}
+				from := task.State
+				task.State = candidate
+				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+					ID:           projectControlID("event", "task-state-changed"),
+					Timestamp:    now,
+					Actor:        "human",
+					Action:       "task_state_changed",
+					Detail:       "Task state changed from " + from + " to " + task.State + " via " + strings.TrimSpace(strings.ToLower(req.Action)) + ".",
+					ProjectID:    task.ProjectID,
+					WorkstreamID: task.WorkstreamID,
+					TaskID:       task.ID,
+				})
+			}
+			if value := strings.TrimSpace(req.AcceptanceStatus); value != "" && value != task.AcceptanceStatus {
+				candidate := normalizeProjectControlAcceptanceStatus(value)
+				if err := validateProjectControlAcceptanceTransition(originalAcceptance, candidate, task.State, false); err != nil {
+					return err
+				}
+				from := task.AcceptanceStatus
+				task.AcceptanceStatus = candidate
+				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+					ID:           projectControlID("event", "acceptance-state-changed"),
+					Timestamp:    now,
+					Actor:        "human",
+					Action:       "acceptance_state_changed",
+					Detail:       "Acceptance status changed from " + from + " to " + task.AcceptanceStatus + " via " + strings.TrimSpace(strings.ToLower(req.Action)) + ".",
+					ProjectID:    task.ProjectID,
+					WorkstreamID: task.WorkstreamID,
+					TaskID:       task.ID,
+				})
+			}
+			task.RowVersion += 1
+			syncProjectControlAcceptanceCheckpoint(state, task, now)
+			state.Tasks[i] = task
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:           projectControlID("event", "task-updated"),
+				Timestamp:    now,
+				Actor:        "human",
+				Action:       "task_updated",
+				Detail:       "Updated task " + task.Title + ".",
+				ProjectID:    task.ProjectID,
+				WorkstreamID: task.WorkstreamID,
+				TaskID:       task.ID,
+			})
+			return nil
+		}
+		return errors.New("task not found")
 	})
 	if err != nil {
 		return projectControlSnapshot{}, err
@@ -335,22 +838,44 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 		}
 		checkpoint := state.Checkpoints[idx]
 		now := time.Now().UTC().Format(time.RFC3339)
+		decisionAction := "checkpoint_decided"
+		isFinalAcceptance := checkpoint.Kind == "final_acceptance"
 		switch action {
 		case "approve":
+			decisionAction = "checkpoint_approved"
+			if isFinalAcceptance {
+				decisionAction = "final_acceptance_approved"
+			}
 			checkpoint.Status = "approved"
 			checkpoint.AllowedActions = []string{}
 			checkpoint.DecisionSummary = "Accepted by human operator"
 		case "reject":
+			decisionAction = "checkpoint_rejected"
+			if isFinalAcceptance {
+				decisionAction = "final_acceptance_rejected"
+			}
 			checkpoint.Status = "rejected"
 			checkpoint.AllowedActions = []string{}
 			checkpoint.DecisionSummary = "Rejected by human operator"
 		case "reroute":
+			decisionAction = "checkpoint_rerouted"
 			checkpoint.Status = "rerouted"
 			checkpoint.AllowedActions = []string{}
 			checkpoint.DecisionSummary = "Rerouted by human operator"
 		}
 		checkpoint.RowVersion += 1
 		state.Checkpoints[idx] = checkpoint
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "checkpoint-resolved"),
+			Timestamp:    now,
+			Actor:        "human",
+			Action:       "checkpoint_resolved",
+			Detail:       "Resolved checkpoint " + checkpoint.ID + " as " + checkpoint.Status + ".",
+			ProjectID:    checkpointProjectID(state, checkpoint.TaskID),
+			WorkstreamID: checkpointWorkstreamID(state, checkpoint.TaskID),
+			TaskID:       checkpoint.TaskID,
+			CheckpointID: checkpoint.ID,
+		})
 		for index, task := range state.Tasks {
 			if task.ID != checkpoint.TaskID {
 				continue
@@ -372,13 +897,29 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 				task.NextStep = "Clarify direction, then reopen execution with updated scope."
 			}
 			task.RowVersion += 1
-			task.Audit = append(task.Audit, projectControlAuditItem{
-				Timestamp: now,
-				Actor:     "human",
-				Action:    action,
-				Detail:    checkpoint.DecisionSummary,
-			})
 			state.Tasks[index] = task
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:           projectControlID("event", "decision-made"),
+				Timestamp:    now,
+				Actor:        "human",
+				Action:       "decision_made",
+				Detail:       "Recorded decision " + decisionAction + " for checkpoint " + checkpoint.ID + ".",
+				ProjectID:    task.ProjectID,
+				WorkstreamID: task.WorkstreamID,
+				TaskID:       task.ID,
+				CheckpointID: checkpoint.ID,
+			})
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:           projectControlID("event", decisionAction),
+				Timestamp:    now,
+				Actor:        "human",
+				Action:       decisionAction,
+				Detail:       checkpoint.DecisionSummary,
+				ProjectID:    task.ProjectID,
+				WorkstreamID: task.WorkstreamID,
+				TaskID:       task.ID,
+				CheckpointID: checkpoint.ID,
+			})
 			break
 		}
 		return nil
@@ -387,6 +928,289 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 		return projectControlSnapshot{}, err
 	}
 	return buildProjectControlSnapshot(state, username, terminals), nil
+}
+
+func (s *projectControlStore) eventsForUser(username string, values url.Values) (projectControlEventsResponse, error) {
+	// loadOrSeed returns a value copy; the lock is released after load but the
+	// returned data is safe to read without further synchronisation.
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return projectControlEventsResponse{}, err
+	}
+	events := cloneProjectControlRecordedEvents(state.Events)
+	projectID := strings.TrimSpace(values.Get("projectId"))
+	taskID := strings.TrimSpace(values.Get("taskId"))
+	checkpointID := strings.TrimSpace(values.Get("checkpointId"))
+	cursor := strings.TrimSpace(values.Get("cursor"))
+	limit := 0
+	if rawLimit := strings.TrimSpace(values.Get("limit")); rawLimit != "" {
+		parsed, parseErr := strconv.Atoi(rawLimit)
+		if parseErr != nil || parsed < 0 {
+			return projectControlEventsResponse{}, errors.New("invalid limit")
+		}
+		limit = parsed
+	}
+	filtered := make([]projectControlRecordedEvent, 0, len(events))
+	for _, event := range events {
+		if projectID != "" && event.ProjectID != projectID {
+			continue
+		}
+		if taskID != "" && event.TaskID != taskID {
+			continue
+		}
+		if checkpointID != "" && event.CheckpointID != checkpointID {
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+	if len(filtered) > 1 {
+		sort.Slice(filtered, func(i, j int) bool {
+			if filtered[i].Timestamp == filtered[j].Timestamp {
+				return filtered[i].ID > filtered[j].ID
+			}
+			return filtered[i].Timestamp > filtered[j].Timestamp
+		})
+	}
+	if cursor != "" {
+		cursorTs, cursorID, decodeErr := decodeProjectControlCursor(cursor)
+		if decodeErr != nil {
+			return projectControlEventsResponse{}, errors.New("invalid cursor")
+		}
+		tmp := filtered[:0]
+		for _, event := range filtered {
+			if event.Timestamp < cursorTs || (event.Timestamp == cursorTs && event.ID < cursorID) {
+				tmp = append(tmp, event)
+			}
+		}
+		filtered = tmp
+	}
+	resp := projectControlEventsResponse{Events: filtered}
+	if limit > 0 && len(filtered) > limit {
+		resp.Events = filtered[:limit]
+		last := resp.Events[len(resp.Events)-1]
+		resp.NextCursor = encodeProjectControlCursor(last.Timestamp, last.ID)
+	}
+	return resp, nil
+}
+
+func (s *projectControlStore) replayForTask(username, taskID string, terminals *terminal.Manager) (projectControlReplayResponse, error) {
+	// Capture synthetic terminal-based events first, then load persisted state
+	// immediately after, so both snapshots are taken as close together as possible.
+	syntheticEvents := syntheticReplayEventsForTask(taskID, username, terminals)
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return projectControlReplayResponse{}, err
+	}
+	var task *projectControlTask
+	for i := range state.Tasks {
+		if state.Tasks[i].ID == taskID {
+			task = &state.Tasks[i]
+			break
+		}
+	}
+	if task == nil {
+		return projectControlReplayResponse{}, errors.New("task not found")
+	}
+	steps := make([]projectControlRecordedEvent, 0)
+	for _, event := range state.Events {
+		if event.TaskID == taskID {
+			steps = append(steps, event)
+		}
+	}
+	steps = append(steps, syntheticEvents...)
+	if len(steps) > 1 {
+		sort.Slice(steps, func(i, j int) bool {
+			if steps[i].Timestamp == steps[j].Timestamp {
+				return steps[i].ID < steps[j].ID
+			}
+			return steps[i].Timestamp < steps[j].Timestamp
+		})
+	}
+	sections := buildReplaySections(steps)
+	transitions := buildReplayTransitions(task, steps)
+	return projectControlReplayResponse{
+		TaskID:          task.ID,
+		ProjectID:       task.ProjectID,
+		WorkstreamID:    task.WorkstreamID,
+		Title:           task.Title,
+		CurrentState:    task.State,
+		AcceptanceState: task.AcceptanceStatus,
+		Steps:           steps,
+		Sections:        sections,
+		Transitions:     transitions,
+	}, nil
+}
+
+func encodeProjectControlCursor(timestamp, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(timestamp + "\n" + id))
+}
+
+func syntheticReplayEventsForTask(taskID, username string, terminals *terminal.Manager) []projectControlRecordedEvent {
+	if terminals == nil {
+		return nil
+	}
+	sessions := terminals.ListSessions(username)
+	if len(sessions) > 1 {
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+		})
+	}
+	indexByTask := map[string]int{
+		projectControlTaskPanelID:     0,
+		projectControlTaskAttachID:    1,
+		projectControlTaskApprovalsID: 2,
+	}
+	mappedIndex, ok := indexByTask[taskID]
+	if !ok || mappedIndex >= len(sessions) {
+		return nil
+	}
+	session := sessions[mappedIndex]
+	timestamp := session.CreatedAt.UTC().Format(time.RFC3339)
+	return []projectControlRecordedEvent{{
+		ID:        "synthetic-session-" + session.ID,
+		Timestamp: timestamp,
+		Actor:     "worker",
+		Action:    "session_started",
+		Detail:    "Live terminal session surfaced for replay.",
+		TaskID:    taskID,
+	}}
+}
+
+func replaySectionKindForAction(action string) string {
+	switch {
+	case strings.HasPrefix(action, "checkpoint_") || strings.HasPrefix(action, "final_acceptance_") || action == "decision_made":
+		return "decision"
+	case strings.Contains(action, "acceptance"):
+		return "acceptance"
+	case strings.Contains(action, "review"):
+		return "review"
+	case strings.Contains(action, "runtime") || strings.Contains(action, "session") || action == "queued":
+		return "execution"
+	default:
+		return "execution"
+	}
+}
+
+func replaySectionTitle(kind string) string {
+	switch kind {
+	case "decision":
+		return "Decision"
+	case "acceptance":
+		return "Acceptance"
+	case "review":
+		return "Review"
+	default:
+		return "Execution"
+	}
+}
+
+func buildReplaySections(steps []projectControlRecordedEvent) []projectControlReplaySection {
+	sections := make([]projectControlReplaySection, 0)
+	for _, step := range steps {
+		kind := replaySectionKindForAction(step.Action)
+		if len(sections) == 0 || sections[len(sections)-1].Kind != kind {
+			sections = append(sections, projectControlReplaySection{Kind: kind, Title: replaySectionTitle(kind), Steps: []projectControlRecordedEvent{}})
+		}
+		sections[len(sections)-1].Steps = append(sections[len(sections)-1].Steps, step)
+	}
+	return sections
+}
+
+func buildReplayTransitions(task *projectControlTask, steps []projectControlRecordedEvent) []projectControlReplayTransition {
+	if task == nil {
+		return nil
+	}
+	transitions := []projectControlReplayTransition{{
+		Type:   "task_state",
+		From:   "unknown",
+		To:     task.State,
+		Reason: "Current persisted task state.",
+	}}
+	transitions = append(transitions, projectControlReplayTransition{
+		Type:   "acceptance_state",
+		From:   "unknown",
+		To:     task.AcceptanceStatus,
+		Reason: "Current persisted acceptance state.",
+	})
+	for _, step := range steps {
+		switch step.Action {
+		case "task_state_changed":
+			from, to, ok := projectControlParseTransitionDetail(step.Detail)
+			if ok {
+				transitions = append(transitions, projectControlReplayTransition{
+					Type:   "task_state",
+					From:   from,
+					To:     to,
+					Reason: step.Detail,
+				})
+			}
+		case "acceptance_state_changed":
+			from, to, ok := projectControlParseTransitionDetail(step.Detail)
+			if ok {
+				transitions = append(transitions, projectControlReplayTransition{
+					Type:   "acceptance_state",
+					From:   from,
+					To:     to,
+					Reason: step.Detail,
+				})
+			}
+		case "checkpoint_approved", "checkpoint_rejected", "checkpoint_rerouted", "final_acceptance_approved", "final_acceptance_rejected":
+			transitions = append(transitions, projectControlReplayTransition{
+				Type:   "decision",
+				From:   "checkpoint_pending",
+				To:     step.Action,
+				Reason: step.Detail,
+			})
+		case "decision_made":
+			transitions = append(transitions, projectControlReplayTransition{
+				Type:   "decision_recorded",
+				From:   "pending_record",
+				To:     "decision_made",
+				Reason: step.Detail,
+			})
+		case "checkpoint_resolved":
+			transitions = append(transitions, projectControlReplayTransition{
+				Type:   "checkpoint_resolution",
+				From:   "pending",
+				To:     "resolved",
+				Reason: step.Detail,
+			})
+		}
+	}
+	return transitions
+}
+
+func projectControlParseTransitionDetail(detail string) (string, string, bool) {
+	detail = strings.TrimSpace(detail)
+	start := strings.Index(detail, "from ")
+	middle := strings.Index(detail, " to ")
+	if start == -1 || middle == -1 || middle <= start+5 {
+		return "", "", false
+	}
+	from := strings.TrimSpace(detail[start+5 : middle])
+	rest := strings.TrimSpace(detail[middle+4:])
+	to := rest
+	if via := strings.Index(rest, " via "); via != -1 {
+		to = strings.TrimSpace(rest[:via])
+	}
+	to = strings.TrimSuffix(to, ".")
+	from = strings.TrimSuffix(from, ".")
+	if from == "" || to == "" {
+		return "", "", false
+	}
+	return from, to, true
+}
+
+func decodeProjectControlCursor(cursor string) (string, string, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", err
+	}
+	parts := strings.SplitN(string(payload), "\n", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", errors.New("invalid cursor")
+	}
+	return parts[0], parts[1], nil
 }
 
 func (s *projectControlStore) loadOrSeed(username string) (projectControlState, error) {
@@ -642,6 +1466,14 @@ func defaultProjectControlState() projectControlState {
 			DecisionSummary: "",
 			RowVersion:      1,
 		}},
+		Events: []projectControlRecordedEvent{
+			{ID: "event-seed-ia-submitted", Timestamp: stampA, Actor: "human", Action: "submitted_doc", Detail: "Updated the information architecture proposal.", ProjectID: projectControlProjectID, WorkstreamID: projectControlWorkstreamUXID, TaskID: projectControlTaskIAID},
+			{ID: "event-seed-ia-complete", Timestamp: stampB, Actor: "system", Action: "completion_check_passed", Detail: "Execution marked complete; final acceptance kept separate.", ProjectID: projectControlProjectID, WorkstreamID: projectControlWorkstreamUXID, TaskID: projectControlTaskIAID},
+			{ID: "event-seed-acceptance-checkpoint", Timestamp: stampC, Actor: "policy_engine", Action: "checkpoint_raised", Detail: "Generated final_acceptance checkpoint for explicit human sign-off.", ProjectID: projectControlProjectID, WorkstreamID: projectControlWorkstreamUXID, TaskID: projectControlTaskIAID, CheckpointID: projectControlCheckpointAcceptanceID},
+			{ID: "event-seed-panel-queued", Timestamp: stampD, Actor: "orchestrator", Action: "queued", Detail: "Reserved for the live implementation session.", ProjectID: projectControlProjectID, WorkstreamID: projectControlWorkstreamUXID, TaskID: projectControlTaskPanelID},
+			{ID: "event-seed-runtime-scanned", Timestamp: stampE, Actor: "system", Action: "runtime_scanned", Detail: "Interactive attach available via the existing terminal workspace", ProjectID: projectControlProjectID, WorkstreamID: projectControlWorkstreamRuntimeID, TaskID: projectControlTaskAttachID},
+			{ID: "event-seed-approvals-blocked", Timestamp: stampF, Actor: "system", Action: "blocked", Detail: "Waiting for decision handling API.", ProjectID: projectControlProjectID, WorkstreamID: projectControlWorkstreamRuntimeID, TaskID: projectControlTaskApprovalsID},
+		},
 		UpdatedAt: now.Format(time.RFC3339Nano),
 	}
 }
@@ -669,6 +1501,8 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	workstreams := cloneProjectControlWorkstreams(state.Workstreams)
 	tasks := cloneProjectControlTasks(state.Tasks)
 	checkpoints := cloneProjectControlCheckpoints(state.Checkpoints)
+	events := cloneProjectControlRecordedEvents(state.Events)
+	applyRecordedEventsToTasks(tasks, events)
 	runtimes := []projectControlRuntime{{ID: projectControlRuntimeID, Name: runtimeName, Kind: runtimeKind, Status: "online", InteractiveAttach: terminals != nil, HealthSummary: healthSummary}}
 	sessions := []projectControlSession{{
 		ID:             "session-review-ia",
@@ -741,7 +1575,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		sessions = append(sessions, pcSession)
 	}
 
-	dashboard := buildProjectControlDashboard(tasks, checkpoints, runtimes)
+	dashboard := buildProjectControlDashboard(tasks, checkpoints, runtimes, events)
 	return projectControlSnapshot{
 		GeneratedAt:     now.Format(time.RFC3339),
 		ActiveProjectID: state.ActiveProjectID,
@@ -774,7 +1608,7 @@ func projectControlWorkstreamExists(state projectControlState, workstreamID, pro
 	return false
 }
 
-func buildProjectControlDashboard(tasks []projectControlTask, checkpoints []projectControlCheckpoint, runtimes []projectControlRuntime) projectControlDashboard {
+func buildProjectControlDashboard(tasks []projectControlTask, checkpoints []projectControlCheckpoint, runtimes []projectControlRuntime, events []projectControlRecordedEvent) projectControlDashboard {
 	runningWorkstreams := map[string]bool{}
 	runningTasks := 0
 	blockedTasks := 0
@@ -793,9 +1627,6 @@ func buildProjectControlDashboard(tasks []projectControlTask, checkpoints []proj
 				recentFailures = append(recentFailures, task.Title)
 			}
 		}
-		if task.RecentSummary != "" {
-			projectTimeline = append(projectTimeline, task.Title+": "+task.RecentSummary)
-		}
 		if len(task.Audit) > 0 {
 			last := task.Audit[len(task.Audit)-1]
 			recentDecisions = append(recentDecisions, task.Title+": "+last.Action)
@@ -809,14 +1640,22 @@ func buildProjectControlDashboard(tasks []projectControlTask, checkpoints []proj
 			recentDecisions = append(recentDecisions, checkpoint.Title+": "+checkpoint.DecisionSummary)
 		}
 	}
+	if len(events) > 1 {
+		sort.Slice(events, func(i, j int) bool {
+			return events[i].Timestamp > events[j].Timestamp
+		})
+	}
+	for _, event := range events {
+		projectTimeline = append(projectTimeline, event.Action+": "+event.Detail)
+		if len(projectTimeline) >= 6 {
+			break
+		}
+	}
 	if len(recentFailures) == 0 {
 		recentFailures = []string{"No recent failures recorded"}
 	}
 	if len(recentDecisions) == 0 {
 		recentDecisions = []string{"No decisions recorded yet"}
-	}
-	if len(projectTimeline) > 6 {
-		projectTimeline = projectTimeline[:6]
 	}
 	return projectControlDashboard{
 		RunningWorkstreams: len(runningWorkstreams),
@@ -886,6 +1725,33 @@ func normalizeProjectControlRisk(value string) string {
 	}
 }
 
+func normalizeProjectControlTaskState(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "planned", "queued", "running", "waiting_review", "waiting_human", "blocked", "failed", "execution_complete", "archived":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return "planned"
+	}
+}
+
+func normalizeProjectControlAcceptanceStatus(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "not_ready", "ready_for_acceptance", "under_human_review", "accepted", "rejected":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return "not_ready"
+	}
+}
+
+func normalizeProjectControlWorkstreamStatus(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "planned", "running", "blocked", "waiting_human", "failed", "completed", "archived":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return "planned"
+	}
+}
+
 func projectControlNormalizeState(state *projectControlState) {
 	if state == nil {
 		return
@@ -902,6 +1768,9 @@ func projectControlNormalizeState(state *projectControlState) {
 	if state.Checkpoints == nil {
 		state.Checkpoints = []projectControlCheckpoint{}
 	}
+	if state.Events == nil {
+		state.Events = []projectControlRecordedEvent{}
+	}
 	for i := range state.Projects {
 		state.Projects[i].ID = strings.TrimSpace(state.Projects[i].ID)
 		state.Projects[i].Key = strings.TrimSpace(state.Projects[i].Key)
@@ -916,9 +1785,7 @@ func projectControlNormalizeState(state *projectControlState) {
 		state.Workstreams[i].ProjectID = strings.TrimSpace(state.Workstreams[i].ProjectID)
 		state.Workstreams[i].Title = strings.TrimSpace(state.Workstreams[i].Title)
 		state.Workstreams[i].Priority = normalizeProjectControlPriority(state.Workstreams[i].Priority)
-		if state.Workstreams[i].Status == "" {
-			state.Workstreams[i].Status = "planned"
-		}
+		state.Workstreams[i].Status = normalizeProjectControlWorkstreamStatus(state.Workstreams[i].Status)
 		if state.Workstreams[i].RowVersion < 1 {
 			state.Workstreams[i].RowVersion = 1
 		}
@@ -928,12 +1795,8 @@ func projectControlNormalizeState(state *projectControlState) {
 		state.Tasks[i].ProjectID = strings.TrimSpace(state.Tasks[i].ProjectID)
 		state.Tasks[i].WorkstreamID = strings.TrimSpace(state.Tasks[i].WorkstreamID)
 		state.Tasks[i].Title = strings.TrimSpace(state.Tasks[i].Title)
-		if state.Tasks[i].State == "" {
-			state.Tasks[i].State = "planned"
-		}
-		if state.Tasks[i].AcceptanceStatus == "" {
-			state.Tasks[i].AcceptanceStatus = "not_ready"
-		}
+		state.Tasks[i].State = normalizeProjectControlTaskState(state.Tasks[i].State)
+		state.Tasks[i].AcceptanceStatus = normalizeProjectControlAcceptanceStatus(state.Tasks[i].AcceptanceStatus)
 		state.Tasks[i].Priority = normalizeProjectControlPriority(state.Tasks[i].Priority)
 		state.Tasks[i].RiskLevel = normalizeProjectControlRisk(state.Tasks[i].RiskLevel)
 		if state.Tasks[i].FilesChanged == nil {
@@ -964,6 +1827,18 @@ func projectControlNormalizeState(state *projectControlState) {
 		if state.Checkpoints[i].RowVersion < 1 {
 			state.Checkpoints[i].RowVersion = 1
 		}
+	}
+	for i := range state.Events {
+		state.Events[i].ID = strings.TrimSpace(state.Events[i].ID)
+		state.Events[i].Actor = strings.TrimSpace(state.Events[i].Actor)
+		state.Events[i].Action = strings.TrimSpace(state.Events[i].Action)
+		state.Events[i].ProjectID = strings.TrimSpace(state.Events[i].ProjectID)
+		state.Events[i].WorkstreamID = strings.TrimSpace(state.Events[i].WorkstreamID)
+		state.Events[i].TaskID = strings.TrimSpace(state.Events[i].TaskID)
+		state.Events[i].CheckpointID = strings.TrimSpace(state.Events[i].CheckpointID)
+	}
+	if len(state.Events) == 0 {
+		projectControlMigrateLegacyHistoryToEvents(state)
 	}
 	if state.ActiveProjectID == "" && len(state.Projects) > 0 {
 		state.ActiveProjectID = state.Projects[0].ID
@@ -1009,6 +1884,46 @@ func appendUniqueString(items []string, value string) []string {
 	return append(items, value)
 }
 
+func projectControlAppendRecordedEvent(state *projectControlState, event projectControlRecordedEvent) {
+	if state == nil {
+		return
+	}
+	if strings.TrimSpace(event.ID) == "" {
+		event.ID = projectControlID("event", event.Action)
+	}
+	state.Events = append(state.Events, event)
+}
+
+func projectControlMigrateLegacyHistoryToEvents(state *projectControlState) {
+	if state == nil {
+		return
+	}
+	for _, task := range state.Tasks {
+		for _, item := range task.Timeline {
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				Timestamp:    item.Timestamp,
+				Actor:        item.Actor,
+				Action:       item.Action,
+				Detail:       item.Detail,
+				ProjectID:    task.ProjectID,
+				WorkstreamID: task.WorkstreamID,
+				TaskID:       task.ID,
+			})
+		}
+		for _, item := range task.Audit {
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				Timestamp:    item.Timestamp,
+				Actor:        item.Actor,
+				Action:       item.Action,
+				Detail:       item.Detail,
+				ProjectID:    task.ProjectID,
+				WorkstreamID: task.WorkstreamID,
+				TaskID:       task.ID,
+			})
+		}
+	}
+}
+
 func cloneProjectControlProjects(items []projectControlProject) []projectControlProject {
 	out := make([]projectControlProject, len(items))
 	copy(out, items)
@@ -1043,6 +1958,49 @@ func cloneProjectControlCheckpoints(items []projectControlCheckpoint) []projectC
 	return out
 }
 
+func cloneProjectControlRecordedEvents(items []projectControlRecordedEvent) []projectControlRecordedEvent {
+	out := make([]projectControlRecordedEvent, len(items))
+	copy(out, items)
+	return out
+}
+
+func applyRecordedEventsToTasks(tasks []projectControlTask, events []projectControlRecordedEvent) {
+	if len(tasks) == 0 {
+		return
+	}
+	indexByTaskID := make(map[string]int, len(tasks))
+	for i := range tasks {
+		indexByTaskID[tasks[i].ID] = i
+		tasks[i].Timeline = []projectControlEvent{}
+		tasks[i].Audit = []projectControlAuditItem{}
+	}
+	if len(events) > 1 {
+		sort.Slice(events, func(i, j int) bool {
+			return events[i].Timestamp < events[j].Timestamp
+		})
+	}
+	for _, event := range events {
+		idx, ok := indexByTaskID[event.TaskID]
+		if !ok {
+			continue
+		}
+		tasks[idx].Timeline = append(tasks[idx].Timeline, projectControlEvent{
+			Timestamp: event.Timestamp,
+			Actor:     event.Actor,
+			Action:    event.Action,
+			Detail:    event.Detail,
+		})
+		if strings.HasPrefix(event.Action, "checkpoint_") {
+			tasks[idx].Audit = append(tasks[idx].Audit, projectControlAuditItem{
+				Timestamp: event.Timestamp,
+				Actor:     event.Actor,
+				Action:    event.Action,
+				Detail:    event.Detail,
+			})
+		}
+	}
+}
+
 func (s *Server) handleProjectControlSnapshot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1054,6 +2012,80 @@ func (s *Server) handleProjectControlSnapshot(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) handleProjectControlEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	payload, err := s.projectControl.eventsForUser(GetUsername(r), r.URL.Query())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) handleProjectControlTaskReplay(w http.ResponseWriter, r *http.Request) {
+	prefix := "/api/project-control/tasks/"
+	path := strings.TrimPrefix(r.URL.Path, prefix)
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		if !strings.HasSuffix(path, "/replay") {
+			http.NotFound(w, r)
+			return
+		}
+		taskID := strings.TrimSpace(strings.Trim(strings.TrimSuffix(path, "/replay"), "/"))
+		if taskID == "" || len(taskID) > 128 || !isValidProjectControlID(taskID) {
+			http.NotFound(w, r)
+			return
+		}
+		payload, err := s.projectControl.replayForTask(GetUsername(r), taskID, s.terminals)
+		if err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "task not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+
+	if r.Method == http.MethodPatch {
+		taskID := strings.TrimSpace(strings.Trim(path, "/"))
+		if taskID == "" || strings.Contains(taskID, "/") || len(taskID) > 128 || !isValidProjectControlID(taskID) {
+			http.NotFound(w, r)
+			return
+		}
+		var req projectControlTaskUpdateRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		snapshot, err := s.projectControl.updateTask(GetUsername(r), taskID, req, s.terminals)
+		if err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "task not found" {
+				status = http.StatusNotFound
+			} else if _, ok := err.(projectControlConflictError); ok {
+				status = http.StatusConflict
+			}
+			writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, snapshot)
+		return
+	}
+
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
 func (s *Server) handleProjectControlProjects(w http.ResponseWriter, r *http.Request) {
@@ -1094,23 +2126,54 @@ func (s *Server) handleProjectControlWorkstreams(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusCreated, snapshot)
 }
 
-func (s *Server) handleProjectControlTasks(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+func (s *Server) handleProjectControlWorkstreamUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req projectControlTaskCreateRequest
+	prefix := "/api/project-control/workstreams/"
+	workstreamID := strings.TrimSpace(strings.Trim(strings.TrimPrefix(r.URL.Path, prefix), "/"))
+	if workstreamID == "" || len(workstreamID) > 128 || !isValidProjectControlID(workstreamID) {
+		http.NotFound(w, r)
+		return
+	}
+	var req projectControlWorkstreamUpdateRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	snapshot, err := s.projectControl.createTask(GetUsername(r), req, s.terminals)
+	snapshot, err := s.projectControl.updateWorkstream(GetUsername(r), workstreamID, req, s.terminals)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		status := http.StatusBadRequest
+		if err.Error() == "workstream not found" {
+			status = http.StatusNotFound
+		} else if _, ok := err.(projectControlConflictError); ok {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusCreated, snapshot)
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) handleProjectControlTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var req projectControlTaskCreateRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		snapshot, err := s.projectControl.createTask(GetUsername(r), req, s.terminals)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, snapshot)
+		return
+	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
 func (s *Server) handleProjectControlCheckpointDecision(w http.ResponseWriter, r *http.Request) {
