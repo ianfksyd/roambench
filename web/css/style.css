@@ -5910,6 +5910,52 @@ button.tab-action:focus-visible {
     gap: 8px;
 }
 
+.project-phase-workbench {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-left: 4px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.045);
+}
+
+.project-phase-workbench.tone-info { border-left-color: var(--tone-info); }
+.project-phase-workbench.tone-warning { border-left-color: var(--tone-warning); }
+.project-phase-workbench.tone-danger { border-left-color: var(--tone-danger); }
+.project-phase-workbench.tone-success { border-left-color: var(--tone-success); }
+
+.project-phase-workbench-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+}
+
+.project-phase-workbench-title {
+    overflow-wrap: anywhere;
+    color: rgba(255, 255, 255, 0.95);
+    font-size: 18px;
+    font-weight: 900;
+}
+
+.project-phase-workbench-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 12px;
+}
+
+.project-phase-workbench-meta strong {
+    color: rgba(255, 255, 255, 0.86);
+}
+
+.project-phase-requirements {
+    display: grid;
+    gap: 7px;
+}
+
 .project-phase-row,
 .project-artifact-row {
     display: grid;
@@ -6004,13 +6050,22 @@ button.tab-action:focus-visible {
     gap: 10px;
 }
 
+.project-phase-fields-expanded {
+    grid-template-columns: minmax(0, 1fr) minmax(138px, 170px);
+    align-items: start;
+}
+
+.project-phase-field-wide {
+    min-width: 0;
+}
+
 .project-phase-field {
     display: grid;
     gap: 6px;
     min-width: 0;
 }
 
-.project-phase-field span {
+.project-phase-field > span {
     color: rgba(255, 255, 255, 0.5);
     font-size: 10px;
     font-weight: 850;
@@ -6019,7 +6074,8 @@ button.tab-action:focus-visible {
 }
 
 .project-phase-field input,
-.project-phase-field select {
+.project-phase-field select,
+.project-phase-field textarea {
     width: 100%;
     min-height: 40px;
     border: 1px solid rgba(255, 255, 255, 0.12);
@@ -6029,15 +6085,29 @@ button.tab-action:focus-visible {
     padding: 9px 10px;
 }
 
+.project-phase-field textarea {
+    min-height: 112px;
+    resize: vertical;
+    line-height: 1.45;
+}
+
 .project-phase-field input:focus,
-.project-phase-field select:focus {
+.project-phase-field select:focus,
+.project-phase-field textarea:focus {
     outline: none;
     border-color: rgba(98, 176, 255, 0.55);
     box-shadow: 0 0 0 2px rgba(98, 176, 255, 0.16);
 }
 
-.project-phase-field input::placeholder {
+.project-phase-field input::placeholder,
+.project-phase-field textarea::placeholder {
     color: rgba(255, 255, 255, 0.34);
+}
+
+.project-phase-static-field {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
 }
 
 .project-command-hero {

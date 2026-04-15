@@ -145,6 +145,9 @@ func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	if docsSkill.PermissionsByPhase["write"] != "scoped_write" {
 		t.Fatalf("write permission = %q, want scoped_write", docsSkill.PermissionsByPhase["write"])
 	}
+	if docsSkill.PermissionsByPhase["fix_or_replan"] != "scoped_write" {
+		t.Fatalf("docs fix_or_replan permission = %q, want scoped_write", docsSkill.PermissionsByPhase["fix_or_replan"])
+	}
 
 	runbook := defaultProjectControlRunbook()
 	if runbook.ID != projectControlDefaultRunbookID {
@@ -179,7 +182,7 @@ func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	if !ok {
 		t.Fatalf("docs runbook %q not found", projectControlDocsUpdateRunbookID)
 	}
-	wantDocsPhases := []string{"plan", "write", "review", "final_validation"}
+	wantDocsPhases := []string{"plan", "write", "review", "fix_or_replan", "final_validation"}
 	if len(docsRunbook.Phases) != len(wantDocsPhases) {
 		t.Fatalf("len(docsRunbook.Phases) = %d, want %d", len(docsRunbook.Phases), len(wantDocsPhases))
 	}
@@ -190,6 +193,12 @@ func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	}
 	if next := nextProjectControlRunbookPhaseID(docsRunbook, "plan"); next != "write" {
 		t.Fatalf("docs next phase after plan = %q, want write", next)
+	}
+	if next := nextProjectControlRunbookPhaseID(docsRunbook, "review"); next != "final_validation" {
+		t.Fatalf("docs next phase after review = %q, want final_validation", next)
+	}
+	if next := nextProjectControlRunbookPhaseID(docsRunbook, "fix_or_replan"); next != "review" {
+		t.Fatalf("docs next phase after fix_or_replan = %q, want review", next)
 	}
 }
 
@@ -213,8 +222,8 @@ func TestProjectControlRunbookPhaseProgressionUsesRunbookOrder(t *testing.T) {
 	if next := nextProjectControlRunbookPhaseID(runbook, "final_validation"); next != "ready_for_acceptance" {
 		t.Fatalf("next phase after final_validation = %q, want ready_for_acceptance", next)
 	}
-	if next := nextProjectControlRunbookPhaseID(runbook, "fix_or_replan"); next != "test" {
-		t.Fatalf("next phase after fix_or_replan = %q, want test override", next)
+	if next := nextProjectControlRunbookPhaseID(runbook, "fix_or_replan"); next != "review" {
+		t.Fatalf("next phase after fix_or_replan = %q, want review fallback", next)
 	}
 }
 
@@ -438,6 +447,68 @@ func TestProjectControlDocsUpdateRunbookPhaseLifecycleRecordsArtifacts(t *testin
 	}
 	if len(task.MissingEvidence) != 0 {
 		t.Fatalf("MissingEvidence = %#v, want empty", task.MissingEvidence)
+	}
+}
+
+func TestProjectControlDocsUpdateFailureRecoveryReturnsToReview(t *testing.T) {
+	state := projectControlState{
+		PhaseAttempts: []projectControlPhaseAttempt{},
+		Artifacts:     []projectControlArtifact{},
+	}
+	task := projectControlTask{
+		ID:               "task-docs-runbook-recovery",
+		ProjectID:        "project-runbook",
+		WorkstreamID:     "workstream-runbook",
+		State:            "planned",
+		AcceptanceStatus: "not_ready",
+		RuntimeID:        projectControlRuntimeID,
+		SelectedSkill:    projectControlDocsUpdateSkillID,
+		RunbookID:        projectControlDocsUpdateRunbookID,
+	}
+	projectControlNormalizeState(&state)
+	now := "2026-04-15T00:00:00Z"
+
+	if err := startProjectControlTaskPhase(&state, &task, "plan", now); err != nil {
+		t.Fatalf("start plan error: %v", err)
+	}
+	if err := completeProjectControlTaskPhase(&state, &task, projectControlTaskUpdateRequest{
+		PhaseID:         "plan",
+		ArtifactKind:    "plan",
+		ArtifactOutcome: "recorded",
+		ArtifactLabel:   "plan",
+		ArtifactValue:   "Docs recovery plan",
+	}, now); err != nil {
+		t.Fatalf("complete plan error: %v", err)
+	}
+	if err := startProjectControlTaskPhase(&state, &task, "write", now); err != nil {
+		t.Fatalf("start write error: %v", err)
+	}
+	if err := failProjectControlTaskPhase(&state, &task, "write", "Docs change needs rework", now); err != nil {
+		t.Fatalf("fail write error: %v", err)
+	}
+	if task.CurrentPhase != "fix_or_replan" {
+		t.Fatalf("CurrentPhase after fail = %q, want fix_or_replan", task.CurrentPhase)
+	}
+	if task.NextStep != "Start fix_or_replan, then rerun review evidence." {
+		t.Fatalf("NextStep after fail = %q, want docs recovery review guidance", task.NextStep)
+	}
+	if err := startProjectControlTaskPhase(&state, &task, "fix_or_replan", now); err != nil {
+		t.Fatalf("start fix_or_replan error: %v", err)
+	}
+	if err := completeProjectControlTaskPhase(&state, &task, projectControlTaskUpdateRequest{
+		PhaseID:         "fix_or_replan",
+		ArtifactKind:    "doc_summary",
+		ArtifactOutcome: "recorded",
+		ArtifactLabel:   "doc_summary",
+		ArtifactValue:   "Docs recovery summary",
+	}, now); err != nil {
+		t.Fatalf("complete fix_or_replan error: %v", err)
+	}
+	if task.CurrentPhase != "review" {
+		t.Fatalf("CurrentPhase after recovery = %q, want review", task.CurrentPhase)
+	}
+	if got := strings.Join(task.MissingEvidence, ","); got != "review_result:pass,completion_check:pass" {
+		t.Fatalf("MissingEvidence after recovery = %q, want review and completion", got)
 	}
 }
 

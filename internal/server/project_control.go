@@ -591,6 +591,7 @@ func defaultProjectControlSkills() []projectControlSkill {
 			PermissionsByPhase: map[string]string{
 				"plan":             "read_only",
 				"write":            "scoped_write",
+				"fix_or_replan":    "scoped_write",
 				"review":           "read_only",
 				"final_validation": "read_only",
 			},
@@ -632,6 +633,7 @@ func defaultProjectControlRunbooks() []projectControlRunbook {
 				{ID: "plan", ExecutionRole: "plan", WriteAccess: "read_only", RequiredArtifacts: []string{"plan"}},
 				{ID: "write", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"doc_summary"}},
 				{ID: "review", ExecutionRole: "review", WriteAccess: "read_only", RequiredArtifacts: []string{"review_result"}},
+				{ID: "fix_or_replan", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"doc_summary"}},
 				{ID: "final_validation", ExecutionRole: "verify", WriteAccess: "read_only", RequiredArtifacts: []string{"completion_check"}},
 			},
 			CompletionRules: []string{"plan", "doc_summary", "review_result", "completion_check"},
@@ -764,13 +766,40 @@ func isProjectControlRecoveryPhase(phaseID string) bool {
 	return normalizeProjectControlPhaseID(phaseID) == "fix_or_replan"
 }
 
+func projectControlRunbookHasPhase(runbook projectControlRunbook, phaseID string) bool {
+	_, ok := findProjectControlRunbookPhase(runbook, phaseID)
+	return ok
+}
+
+func projectControlRecoveryTargetPhaseID(runbook projectControlRunbook) string {
+	for _, preferred := range []string{"test", "review", "final_validation"} {
+		if projectControlRunbookHasPhase(runbook, preferred) {
+			return preferred
+		}
+	}
+	for i, phase := range runbook.Phases {
+		if !isProjectControlRecoveryPhase(phase.ID) {
+			continue
+		}
+		for nextIndex := i + 1; nextIndex < len(runbook.Phases); nextIndex++ {
+			nextPhaseID := normalizeProjectControlPhaseID(runbook.Phases[nextIndex].ID)
+			if nextPhaseID == "" || isProjectControlRecoveryPhase(nextPhaseID) {
+				continue
+			}
+			return nextPhaseID
+		}
+		return "ready_for_acceptance"
+	}
+	return ""
+}
+
 func nextProjectControlRunbookPhaseID(runbook projectControlRunbook, phaseID string) string {
 	phaseID = normalizeProjectControlPhaseID(phaseID)
 	if phaseID == "" || phaseID == "ready_for_acceptance" {
 		return ""
 	}
 	if phaseID == "fix_or_replan" {
-		return "test"
+		return projectControlRecoveryTargetPhaseID(runbook)
 	}
 	for i, phase := range runbook.Phases {
 		if normalizeProjectControlPhaseID(phase.ID) != phaseID {
@@ -1163,7 +1192,12 @@ func failProjectControlTaskPhase(state *projectControlState, task *projectContro
 	task.RunbookState = "needs_fix"
 	task.AcceptanceStatus = "not_ready"
 	task.RecentSummary = "Runbook phase " + phaseID + " failed."
-	task.NextStep = "Start fix_or_replan, then rerun test and review evidence."
+	recoveryTarget := nextProjectControlRunbookPhaseID(projectControlRunbookForTask(*task), "fix_or_replan")
+	if recoveryTarget == "" || recoveryTarget == "ready_for_acceptance" {
+		task.NextStep = "Start fix_or_replan and record recovery evidence."
+	} else {
+		task.NextStep = "Start fix_or_replan, then rerun " + recoveryTarget + " evidence."
+	}
 	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, projectControlRunbookForTask(*task), "", "")
 	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 		ID:           projectControlID("event", "phase-failed"),

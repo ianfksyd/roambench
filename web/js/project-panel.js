@@ -338,14 +338,31 @@
 
     function humanizeExecutionRole(role) {
         switch (String(role || '').trim().toLowerCase()) {
+        case 'plan':
+            return tr('project.sessionPlanning', 'Planning');
         case 'implement':
             return tr('project.sessionImplementation', 'Implementation');
+        case 'test':
+            return tr('project.sessionTesting', 'Testing');
         case 'review':
             return tr('project.sessionReview', 'Review');
         case 'verify':
             return tr('project.sessionVerification', 'Verification');
         default:
             return humanizeToken(role);
+        }
+    }
+
+    function humanizeWriteAccess(access) {
+        switch (String(access || '').trim().toLowerCase()) {
+        case 'read_only':
+            return tr('project.writeAccessReadOnly', 'Read only');
+        case 'scoped_write':
+            return tr('project.writeAccessScoped', 'Scoped write');
+        case 'full_write':
+            return tr('project.writeAccessFull', 'Full write');
+        default:
+            return humanizeToken(access);
         }
     }
 
@@ -571,6 +588,65 @@
         return phaseRequiresPassingOutcome(kind) ? 'pass' : 'recorded';
     }
 
+    function humanizeEvidenceRequirement(requirement) {
+        var parts = String(requirement || '').trim().split(':');
+        var kind = parts[0] || '';
+        var outcome = parts[1] || '';
+        var label = humanizeArtifactKind(kind);
+        return outcome ? label + ' / ' + humanizeArtifactOutcome(outcome) : label;
+    }
+
+    function renderMissingEvidencePills(missing, emptyLabel) {
+        var items = Array.isArray(missing) ? missing : [];
+        if (!items.length) {
+            return '<span class="project-pill tone-success">' + escapeHTML(emptyLabel || tr('project.evidenceComplete', 'Evidence complete')) + '</span>';
+        }
+        return items.map(function(item) {
+            return '<span class="project-pill tone-warning">' + escapeHTML(humanizeEvidenceRequirement(item)) + '</span>';
+        }).join('');
+    }
+
+    function phaseArtifactPlaceholder(kind) {
+        switch (String(kind || '').trim().toLowerCase()) {
+        case 'plan':
+            return tr('project.placeholderPlanArtifact', 'Scope, approach, risks, acceptance check');
+        case 'diff_summary':
+            return tr('project.placeholderDiffSummary', 'Files changed and behavior delta');
+        case 'doc_summary':
+            return tr('project.placeholderDocSummary', 'Docs changed and rationale');
+        case 'test_result':
+            return tr('project.placeholderTestResult', 'Command and passing result');
+        case 'review_result':
+            return tr('project.placeholderReviewResult', 'Review finding summary');
+        case 'completion_check':
+            return tr('project.placeholderCompletionCheck', 'Evidence checked and ready for acceptance');
+        default:
+            return humanizeArtifactKind(kind);
+        }
+    }
+
+    function renderPhaseArtifactPills(task, phase, attempt) {
+        var required = phase && Array.isArray(phase.requiredArtifacts) ? phase.requiredArtifacts : [];
+        if (!required.length) {
+            return '<span class="project-pill tone-neutral">' + escapeHTML(tr('project.noRequiredArtifact', 'No required artifact')) + '</span>';
+        }
+        return required.map(function(kind) {
+            var artifact = phaseAttemptArtifactForKind(attempt, kind);
+            var tone = artifact ? artifactOutcomeTone(artifact.outcome) : 'warning';
+            var label = humanizeArtifactKind(kind);
+            if (artifact) {
+                label += ' / ' + humanizeArtifactOutcome(artifact.outcome);
+            }
+            return '<span class="project-pill tone-' + escapeHTML(tone) + '">' + escapeHTML(label) + '</span>';
+        }).join('');
+    }
+
+    function renderPhaseOutcomeField(artifactKind, defaultOutcome) {
+        return '<label class="project-phase-field"><span>' + escapeHTML(tr('project.outcome', 'Outcome')) + '</span>'
+            + '<div class="project-phase-static-field"><span class="project-pill tone-' + escapeHTML(artifactOutcomeTone(defaultOutcome)) + '">' + escapeHTML(humanizeArtifactOutcome(defaultOutcome)) + '</span></div>'
+            + '<input type="hidden" name="artifactOutcome" value="' + escapeHTML(defaultOutcome) + '"></label>';
+    }
+
     function artifactOutcomeTone(outcome) {
         switch (String(outcome || '').trim().toLowerCase()) {
         case 'pass':
@@ -599,6 +675,36 @@
             return bt.localeCompare(at);
         });
         return items[0];
+    }
+
+    function phaseAttemptArtifactForKind(attempt, kind) {
+        var normalizedKind = String(kind || '').trim().toLowerCase();
+        var artifactIds = attempt && Array.isArray(attempt.artifactIds) ? attempt.artifactIds : [];
+        var items;
+        if (!attempt || !normalizedKind) {
+            return null;
+        }
+        items = artifacts().filter(function(item) {
+            return item.taskId === attempt.taskId
+                && String(item.kind || '').trim().toLowerCase() === normalizedKind
+                && (item.phaseAttemptId === attempt.id || artifactIds.indexOf(item.id) !== -1);
+        });
+        if (!items.length) {
+            return null;
+        }
+        items.sort(function(a, b) {
+            var at = String(a.createdAt || '');
+            var bt = String(b.createdAt || '');
+            if (at === bt) {
+                return String(b.id || '').localeCompare(String(a.id || ''));
+            }
+            return bt.localeCompare(at);
+        });
+        return items[0];
+    }
+
+    function currentPhaseAttemptForTask(task) {
+        return latestPhaseAttempt(task && task.id, currentPhaseForTask(task));
     }
 
     function phaseStatusForTask(task, phase) {
@@ -3118,12 +3224,14 @@
         var missing = taskMissingEvidence(task);
         var updating = state.phaseUpdatingTaskId === task.id || state.updatingTaskId === task.id;
         var disabled = updating ? ' disabled' : '';
-        var runningAttempt = latestPhaseAttempt(task.id, currentPhase);
-        var isRunning = runningAttempt && runningAttempt.status === 'running';
+        var currentAttempt = currentPhaseAttemptForTask(task);
+        var isRunning = currentAttempt && currentAttempt.status === 'running';
         var artifactKind = artifactKindForPhase(currentPhaseDef);
         var defaultOutcome = defaultOutcomeForArtifact(artifactKind);
         var canStart = currentPhaseDef && currentPhase !== 'ready_for_acceptance' && !isRunning && task.acceptanceStatus !== 'accepted' && task.state !== 'archived';
         var canComplete = currentPhaseDef && currentPhase !== 'ready_for_acceptance' && isRunning;
+        var currentStatus = phaseStatusForTask(task, currentPhaseDef);
+        var currentTone = phaseStatusTone(currentStatus);
         var phaseRows = phases.map(function(phase, index) {
             var status = phaseStatusForTask(task, phase);
             var tone = phaseStatusTone(status);
@@ -3131,15 +3239,21 @@
             return '<div class="project-phase-row tone-' + escapeHTML(tone) + '">'
                 + '<div class="project-phase-index">' + escapeHTML(String(index + 1)) + '</div>'
                 + '<div class="project-phase-main"><div class="project-phase-title">' + escapeHTML(humanizePhase(phase.id)) + '</div>'
-                + '<div class="project-phase-meta">' + escapeHTML(artifact ? humanizeArtifactKind(artifact.kind) + ' • ' + humanizeArtifactOutcome(artifact.outcome) : humanizeArtifactKind(artifactKindForPhase(phase))) + '</div></div>'
+                + '<div class="project-phase-meta">' + escapeHTML(artifact ? humanizeArtifactKind(artifact.kind) + ' / ' + humanizeArtifactOutcome(artifact.outcome) : humanizeArtifactKind(artifactKindForPhase(phase))) + '</div></div>'
                 + '<span class="project-pill tone-' + escapeHTML(tone) + '">' + escapeHTML(phaseStatusLabel(status)) + '</span>'
                 + '</div>';
         }).join('');
-        var missingHTML = missing.length
-            ? '<div class="project-missing-evidence">' + missing.map(function(item) {
-                return '<span class="project-pill tone-warning">' + escapeHTML(item) + '</span>';
-            }).join('') + '</div>'
-            : '<div class="project-missing-evidence"><span class="project-pill tone-success">' + escapeHTML(tr('project.evidenceComplete', 'Evidence complete')) + '</span></div>';
+        var missingHTML = '<div class="project-missing-evidence">' + renderMissingEvidencePills(missing) + '</div>';
+        var currentMetaHTML = currentPhaseDef
+            ? '<div class="project-phase-workbench-meta">'
+                + '<span>' + escapeHTML(tr('project.executionRole', 'Execution role')) + ': <strong>' + escapeHTML(humanizeExecutionRole(currentPhaseDef.executionRole)) + '</strong></span>'
+                + '<span>' + escapeHTML(tr('project.writeAccess', 'Write access')) + ': <strong>' + escapeHTML(humanizeWriteAccess(currentPhaseDef.writeAccess)) + '</strong></span>'
+              + '</div>'
+            : '';
+        var requiredHTML = currentPhaseDef
+            ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.requiredEvidence', 'Required evidence')) + '</div>'
+                + '<div class="project-missing-evidence compact">' + renderPhaseArtifactPills(task, currentPhaseDef, currentAttempt) + '</div></div>'
+            : '';
         var controlsHTML = '';
 
         if (canStart) {
@@ -3149,12 +3263,9 @@
         } else if (canComplete) {
             controlsHTML = '<div class="project-phase-control-grid">'
                 + '<form class="project-phase-form" data-phase-complete-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-artifact-kind="' + escapeHTML(artifactKind) + '">'
-                + '<div class="project-phase-fields">'
-                + '<label class="project-phase-field"><span>' + escapeHTML(tr('project.artifact', 'Artifact')) + '</span><input type="text" name="artifactValue" maxlength="280" placeholder="' + escapeHTML(humanizeArtifactKind(artifactKind)) + '"></label>'
-                + '<label class="project-phase-field"><span>' + escapeHTML(tr('project.outcome', 'Outcome')) + '</span><select name="artifactOutcome">'
-                + '<option value="recorded"' + (defaultOutcome === 'recorded' ? ' selected' : '') + '>' + escapeHTML(humanizeArtifactOutcome('recorded')) + '</option>'
-                + '<option value="pass"' + (defaultOutcome === 'pass' ? ' selected' : '') + '>' + escapeHTML(humanizeArtifactOutcome('pass')) + '</option>'
-                + '</select></label>'
+                + '<div class="project-phase-fields project-phase-fields-expanded">'
+                + '<label class="project-phase-field project-phase-field-wide"><span>' + escapeHTML(humanizeArtifactKind(artifactKind)) + '</span><textarea name="artifactValue" maxlength="640" rows="4" placeholder="' + escapeHTML(phaseArtifactPlaceholder(artifactKind)) + '"></textarea></label>'
+                + renderPhaseOutcomeField(artifactKind, defaultOutcome)
                 + '</div><div class="project-action-group"><button type="submit" class="project-inline-btn primary"' + disabled + '>' + escapeHTML(tr('project.completePhase', 'Complete phase')) + '</button></div>'
                 + '</form>'
                 + '<form class="project-phase-form project-phase-fail-form" data-phase-fail-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '">'
@@ -3164,14 +3275,23 @@
                 + '</div>';
         } else if (currentPhase === 'ready_for_acceptance' && canRequestAcceptanceReview(task)) {
             controlsHTML = '<div class="project-action-group"><button type="button" class="project-inline-btn primary" data-update-task="' + escapeHTML(task.id) + '" data-action="request_acceptance_review"' + disabled + '>' + escapeHTML(tr('project.actionSendApproval', 'Send for approval')) + '</button></div>';
+        } else if (!currentPhaseDef && currentPhase !== 'ready_for_acceptance') {
+            controlsHTML = '<div class="project-list-item muted">' + escapeHTML(tr('project.phaseUnavailable', 'Current phase is not available in this runbook.')) + '</div>';
         }
 
         return '<div class="project-card-list project-card-visual project-runbook-panel"><div class="project-card-title-row"><h3>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</h3>'
             + '<span class="project-pill tone-info">' + escapeHTML(humanizePhase(currentPhase)) + '</span></div>'
-            + '<div class="project-phase-list">' + phaseRows + '</div>'
-            + missingHTML
+            + '<div class="project-phase-workbench tone-' + escapeHTML(currentTone) + '">'
+            + '<div class="project-phase-workbench-head"><div><div class="project-section-kicker">' + escapeHTML(tr('project.currentPhase', 'Current phase')) + '</div>'
+            + '<div class="project-phase-workbench-title">' + escapeHTML(humanizePhase(currentPhase)) + '</div></div>'
+            + '<span class="project-pill tone-' + escapeHTML(currentTone) + '">' + escapeHTML(phaseStatusLabel(currentStatus)) + '</span></div>'
+            + currentMetaHTML
+            + requiredHTML
+            + '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.completionGate', 'Completion gate')) + '</div>' + missingHTML + '</div>'
             + controlsHTML
             + (updating ? '<div class="project-list-meta">' + escapeHTML(tr('project.saving', 'Saving…')) + '</div>' : '')
+            + '</div>'
+            + '<div class="project-phase-list">' + phaseRows + '</div>'
             + '</div>';
     }
 
@@ -3180,9 +3300,7 @@
         var missing = taskMissingEvidence(task);
         return '<div class="project-card-list project-card-visual project-artifact-panel"><div class="project-card-title-row"><h3>' + escapeHTML(tr('project.artifacts', 'Artifacts')) + '</h3>'
             + '<span class="project-pill tone-' + escapeHTML(missing.length ? 'warning' : 'success') + '">' + escapeHTML(missing.length ? String(missing.length) : tr('project.statusClear', 'Clear')) + '</span></div>'
-            + (missing.length ? '<div class="project-missing-evidence compact">' + missing.map(function(item) {
-                return '<span class="project-pill tone-warning">' + escapeHTML(item) + '</span>';
-            }).join('') + '</div>' : '')
+            + (missing.length ? '<div class="project-missing-evidence compact">' + renderMissingEvidencePills(missing) + '</div>' : '')
             + '<div class="project-artifact-list">'
             + (items.length ? items.map(function(item) {
                 var tone = artifactOutcomeTone(item.outcome);
@@ -3310,7 +3428,7 @@
             + '</div>'
             + (item.taskId ? '<button type="button" class="project-inline-btn" data-task-id="' + escapeHTML(item.taskId) + '">' + escapeHTML(tr('project.openTask', 'Open task')) + '</button>' : '') + '</div>'
             + '<div class="project-approval-summary">' + escapeHTML(approvalKindSummary(item)) + '</div>'
-            + (missing.length ? '<div class="project-missing-evidence compact">' + missing.map(function(missingItem) { return '<span class="project-pill tone-warning">' + escapeHTML(missingItem) + '</span>'; }).join('') + '</div>' : '')
+            + (missing.length ? '<div class="project-missing-evidence compact">' + renderMissingEvidencePills(missing) + '</div>' : '')
             + '<div class="project-card-copy">' + escapeHTML(item.reason || (context && context.task ? taskActionSummary(context.task) : '')) + '</div>'
             + '<div class="project-approval-footer"><div class="project-card-meta">' + escapeHTML(formatTime(item.requestedAt)) + '</div>'
             + '<div class="project-approval-actions">'
