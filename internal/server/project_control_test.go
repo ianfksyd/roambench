@@ -155,6 +155,55 @@ func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	if next := nextProjectControlRunbookPhaseID(runbook, "fix_or_replan"); next != "test" {
 		t.Fatalf("next phase after fix_or_replan = %q, want test", next)
 	}
+	if next := nextProjectControlRunbookPhaseID(runbook, "final_validation"); next != "ready_for_acceptance" {
+		t.Fatalf("next phase after final_validation = %q, want ready_for_acceptance", next)
+	}
+	if next := nextProjectControlRunbookPhaseID(runbook, "missing"); next != "" {
+		t.Fatalf("next phase after missing = %q, want empty", next)
+	}
+}
+
+func TestProjectControlRunbookPhaseProgressionUsesRunbookOrder(t *testing.T) {
+	runbook := projectControlRunbook{
+		ID:    "docs_update_default",
+		Skill: "docs_update",
+		Phases: []projectControlRunbookPhase{
+			{ID: "plan"},
+			{ID: "review"},
+			{ID: "final_validation"},
+		},
+	}
+
+	if next := nextProjectControlRunbookPhaseID(runbook, "plan"); next != "review" {
+		t.Fatalf("next phase after plan = %q, want review", next)
+	}
+	if next := nextProjectControlRunbookPhaseID(runbook, "review"); next != "final_validation" {
+		t.Fatalf("next phase after review = %q, want final_validation", next)
+	}
+	if next := nextProjectControlRunbookPhaseID(runbook, "final_validation"); next != "ready_for_acceptance" {
+		t.Fatalf("next phase after final_validation = %q, want ready_for_acceptance", next)
+	}
+	if next := nextProjectControlRunbookPhaseID(runbook, "fix_or_replan"); next != "test" {
+		t.Fatalf("next phase after fix_or_replan = %q, want test override", next)
+	}
+}
+
+func TestProjectControlRunbookPhaseProgressionSkipsRecoveryPhaseOnSuccess(t *testing.T) {
+	runbook := projectControlRunbook{
+		ID:    "code_change_custom",
+		Skill: "code_change",
+		Phases: []projectControlRunbookPhase{
+			{ID: "plan"},
+			{ID: "implement"},
+			{ID: "review"},
+			{ID: "fix_or_replan"},
+			{ID: "final_validation"},
+		},
+	}
+
+	if next := nextProjectControlRunbookPhaseID(runbook, "review"); next != "final_validation" {
+		t.Fatalf("next phase after successful review = %q, want final_validation", next)
+	}
 }
 
 func TestProjectControlRunbookRegistryFallsBackToDefaultSkill(t *testing.T) {

@@ -694,23 +694,32 @@ func findProjectControlRunbookPhase(runbook projectControlRunbook, phaseID strin
 	return projectControlRunbookPhase{}, false
 }
 
+func isProjectControlRecoveryPhase(phaseID string) bool {
+	return normalizeProjectControlPhaseID(phaseID) == "fix_or_replan"
+}
+
 func nextProjectControlRunbookPhaseID(runbook projectControlRunbook, phaseID string) string {
-	switch normalizeProjectControlPhaseID(phaseID) {
-	case "plan":
-		return "implement"
-	case "implement":
-		return "test"
-	case "test":
-		return "review"
-	case "review":
-		return "final_validation"
-	case "fix_or_replan":
-		return "test"
-	case "final_validation":
-		return "ready_for_acceptance"
-	default:
+	phaseID = normalizeProjectControlPhaseID(phaseID)
+	if phaseID == "" || phaseID == "ready_for_acceptance" {
 		return ""
 	}
+	if phaseID == "fix_or_replan" {
+		return "test"
+	}
+	for i, phase := range runbook.Phases {
+		if normalizeProjectControlPhaseID(phase.ID) != phaseID {
+			continue
+		}
+		for nextIndex := i + 1; nextIndex < len(runbook.Phases); nextIndex++ {
+			nextPhaseID := normalizeProjectControlPhaseID(runbook.Phases[nextIndex].ID)
+			if nextPhaseID == "" || isProjectControlRecoveryPhase(nextPhaseID) {
+				continue
+			}
+			return nextPhaseID
+		}
+		return "ready_for_acceptance"
+	}
+	return ""
 }
 
 func inferProjectControlCurrentPhase(task projectControlTask) string {
