@@ -671,13 +671,15 @@ body.view-login #terminal-view {
 }
 
 .project-empty-workstream-card,
-.project-workstream-wizard {
+.project-workstream-wizard,
+.project-task-wizard {
     display: grid;
     gap: 12px;
 }
 
 .project-empty-workstream-card h3,
-.project-workstream-wizard h3 {
+.project-workstream-wizard h3,
+.project-task-wizard h3 {
     margin: 0;
     font-size: 20px;
     line-height: 1.2;
@@ -700,7 +702,8 @@ body.view-login #terminal-view {
     font-weight: 700;
 }
 
-.project-wizard-field input {
+.project-wizard-field input,
+.project-wizard-field select {
     width: 100%;
     min-height: 40px;
     border: 1px solid var(--border);
@@ -710,7 +713,8 @@ body.view-login #terminal-view {
     padding: 9px 10px;
 }
 
-.project-wizard-field input:focus {
+.project-wizard-field input:focus,
+.project-wizard-field select:focus {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.18);
@@ -718,6 +722,27 @@ body.view-login #terminal-view {
 
 .project-wizard-field input::placeholder {
     color: var(--text-dim);
+}
+
+.project-wizard-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 36px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    background: rgba(255, 255, 255, 0.035);
+    font-size: 12px;
+}
+
+.project-wizard-meta strong {
+    overflow: hidden;
+    color: var(--text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .project-inline-btn:disabled {
@@ -5145,7 +5170,8 @@ button.tab-action:focus-visible {
 }
 
 .project-empty-workstream-card h3,
-.project-workstream-wizard h3 {
+.project-workstream-wizard h3,
+.project-task-wizard h3 {
     margin-bottom: 0;
     font-size: 20px;
 }

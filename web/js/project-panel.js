@@ -28,6 +28,12 @@
         creatingWorkstreamTitle: '',
         creatingWorkstreamScope: '',
         creatingWorkstreamSaving: false,
+        creatingTaskWorkstreamId: '',
+        creatingTaskTitle: '',
+        creatingTaskGoal: '',
+        creatingTaskSelectedSkill: '',
+        creatingTaskRunbookId: '',
+        creatingTaskSaving: false,
         phaseUpdatingTaskId: ''
     };
 
@@ -298,6 +304,19 @@
         }
     }
 
+    function humanizeSkill(skillOrId) {
+        var skill = typeof skillOrId === 'object' && skillOrId ? skillOrId : findById(skills(), skillOrId);
+        if (skill && skill.name) {
+            return skill.name;
+        }
+        switch (String(skillOrId || '').trim().toLowerCase()) {
+        case 'code_change':
+            return tr('project.skillCodeChange', 'Code change');
+        default:
+            return humanizeToken(skillOrId);
+        }
+    }
+
     function humanizeAgentLabel(agentLabel) {
         switch (String(agentLabel || '').trim().toLowerCase()) {
         case 'worker':
@@ -441,6 +460,10 @@
         return state.snapshot && Array.isArray(state.snapshot.checkpoints) ? state.snapshot.checkpoints : [];
     }
 
+    function skills() {
+        return state.snapshot && Array.isArray(state.snapshot.skills) ? state.snapshot.skills : [];
+    }
+
     function runbooks() {
         return state.snapshot && Array.isArray(state.snapshot.runbooks) ? state.snapshot.runbooks : [];
     }
@@ -459,6 +482,22 @@
 
     function findById(items, id) {
         return (items || []).find(function(item) { return item.id === id; }) || null;
+    }
+
+    function defaultSkill() {
+        return skills()[0] || { id: 'code_change', name: tr('project.skillCodeChange', 'Code change'), defaultRunbookId: 'code_change_default', allowedRunbookIds: ['code_change_default'] };
+    }
+
+    function skillForId(skillId) {
+        return findById(skills(), skillId) || defaultSkill();
+    }
+
+    function runbookForSkill(skillId, preferredRunbookId) {
+        var skill = skillForId(skillId);
+        var allowed = Array.isArray(skill.allowedRunbookIds) ? skill.allowedRunbookIds : [];
+        var preferred = preferredRunbookId && allowed.indexOf(preferredRunbookId) !== -1 ? preferredRunbookId : '';
+        var runbookId = preferred || skill.defaultRunbookId || allowed[0] || '';
+        return findById(runbooks(), runbookId) || runbooks()[0] || { id: runbookId || 'code_change_default' };
     }
 
     function runbookForTask(task) {
@@ -784,9 +823,27 @@
         state.creatingWorkstreamSaving = false;
     }
 
+    function resetTaskWizard() {
+        state.creatingTaskWorkstreamId = '';
+        state.creatingTaskTitle = '';
+        state.creatingTaskGoal = '';
+        state.creatingTaskSelectedSkill = '';
+        state.creatingTaskRunbookId = '';
+        state.creatingTaskSaving = false;
+    }
+
     function focusWorkstreamWizard() {
         window.setTimeout(function() {
             var input = document.querySelector('[data-workstream-title-input]');
+            if (input) {
+                input.focus();
+            }
+        }, 0);
+    }
+
+    function focusTaskWizard() {
+        window.setTimeout(function() {
+            var input = document.querySelector('[data-task-title-input]');
             if (input) {
                 input.focus();
             }
@@ -797,6 +854,7 @@
         if (!projectId) {
             return;
         }
+        resetTaskWizard();
         if (state.creatingWorkstreamProjectId !== projectId) {
             state.creatingWorkstreamTitle = '';
             state.creatingWorkstreamScope = '';
@@ -815,6 +873,7 @@
 
     function openDashboard(projectId) {
         resetWorkstreamWizard();
+        resetTaskWizard();
         state.selectedProjectId = projectId || state.selectedProjectId;
         state.selectedWorkstreamId = '';
         state.selectedTaskId = '';
@@ -826,6 +885,7 @@
     function openWorkstream(workstreamId) {
         var workstream = findById(workstreams(), workstreamId);
         resetWorkstreamWizard();
+        resetTaskWizard();
         state.selectedWorkstreamId = workstreamId;
         state.selectedTaskId = '';
         state.selectedSessionId = '';
@@ -839,6 +899,7 @@
     function openTask(taskId) {
         var task = findById(tasks(), taskId);
         resetWorkstreamWizard();
+        resetTaskWizard();
         state.selectedTaskId = taskId;
         state.selectedSessionId = '';
         if (task) {
@@ -852,6 +913,7 @@
     function openSession(sessionId) {
         var session = findById(sessions(), sessionId);
         resetWorkstreamWizard();
+        resetTaskWizard();
         state.selectedSessionId = sessionId;
         if (session) {
             state.selectedTaskId = session.taskId;
@@ -863,6 +925,8 @@
     }
 
     function openApprovals() {
+        resetWorkstreamWizard();
+        resetTaskWizard();
         state.currentView = 'approvals';
         state.selectedTaskId = '';
         state.selectedSessionId = '';
@@ -1790,6 +1854,36 @@
             + '<div class="project-action-group">'
             + '<button type="button" class="project-inline-btn" data-cancel-workstream-wizard="1"' + disabled + '>' + escapeHTML(tr('project.cancel', 'Cancel')) + '</button>'
             + '<button type="submit" class="project-inline-btn primary"' + disabled + '>' + escapeHTML(state.creatingWorkstreamSaving ? tr('project.saving', 'Saving...') : tr('project.create', 'Create')) + '</button>'
+            + '</div>'
+            + '</form>';
+    }
+
+    function renderTaskWizard(workstream) {
+        var workstreamId = workstream && workstream.id ? workstream.id : '';
+        var selectedSkillId = state.creatingTaskSelectedSkill || (defaultSkill().id || 'code_change');
+        var selectedSkill = skillForId(selectedSkillId);
+        var selectedRunbook = runbookForSkill(selectedSkill.id, state.creatingTaskRunbookId);
+        var disabled = state.creatingTaskSaving ? ' disabled' : '';
+        var skillOptions = skills().length ? skills() : [defaultSkill()];
+        return '<form class="project-card-list project-workstream-wizard project-task-wizard" data-task-wizard="' + escapeHTML(workstreamId) + '">'
+            + '<h3>' + escapeHTML(tr('project.newTask', 'New task')) + '</h3>'
+            + '<div class="project-wizard-fields">'
+            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.taskTitle', 'Title')) + '</span>'
+            + '<input type="text" name="title" maxlength="140" data-task-title-input value="' + escapeHTML(state.creatingTaskTitle || '') + '" placeholder="' + escapeHTML(tr('project.taskTitlePlaceholder', 'Task title')) + '"' + disabled + '></label>'
+            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.taskGoal', 'Goal')) + '</span>'
+            + '<input type="text" name="goal" maxlength="260" data-task-goal-input value="' + escapeHTML(state.creatingTaskGoal || '') + '" placeholder="' + escapeHTML(tr('project.taskGoalPlaceholder', 'Goal (optional)')) + '"' + disabled + '></label>'
+            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.skill', 'Skill')) + '</span>'
+            + '<select name="selectedSkill" data-task-skill-select' + disabled + '>'
+            + skillOptions.map(function(skill) {
+                var selected = skill.id === selectedSkill.id ? ' selected' : '';
+                return '<option value="' + escapeHTML(skill.id) + '"' + selected + '>' + escapeHTML(humanizeSkill(skill)) + '</option>';
+            }).join('')
+            + '</select></label>'
+            + '<div class="project-wizard-meta"><span>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</span><strong>' + escapeHTML(selectedRunbook.id || '') + '</strong></div>'
+            + '</div>'
+            + '<div class="project-action-group">'
+            + '<button type="button" class="project-inline-btn" data-cancel-task-wizard="1"' + disabled + '>' + escapeHTML(tr('project.cancel', 'Cancel')) + '</button>'
+            + '<button type="submit" class="project-inline-btn primary"' + disabled + '>' + escapeHTML(state.creatingTaskSaving ? tr('project.saving', 'Saving...') : tr('project.create', 'Create')) + '</button>'
             + '</div>'
             + '</form>';
     }
@@ -2994,6 +3088,7 @@
                 { label: tr('project.statusWaiting', 'Waiting'), value: waitCount, tone: waitCount ? 'warning' : 'success' },
                 { label: tr('project.statusBlocked', 'Blocked'), value: blockCount, tone: blockCount ? 'danger' : 'success' }
             ])
+            + (state.creatingTaskWorkstreamId === workstream.id ? renderTaskWizard(workstream) : '')
             + renderWorkstreamGuide(workstream, tasks)
             + (visibleColumns.length
                 ? '<div class="project-board project-board-progressive">'
@@ -3149,6 +3244,7 @@
             + '<h2>' + escapeHTML(task.title) + '</h2><p>' + escapeHTML(taskAgentName(task) + ' / ' + taskWorkstreamName(task)) + '</p></div><div class="project-header-actions project-task-actions">' + renderTaskInlineControls(task) + '</div></div>'
             + renderCommandStats([
                 { label: tr('project.state', 'State'), value: shortStatusLabel(task.state), tone: statusTone(task.state) },
+                { label: tr('project.skill', 'Skill'), value: humanizeSkill(task.selectedSkill), tone: 'info' },
                 { label: tr('project.phase', 'Phase'), value: humanizePhase(currentPhaseForTask(task)), tone: phaseStatusTone(phaseStatusForTask(task, currentRunbookPhase(task))) },
                 { label: tr('project.evidence', 'Evidence'), value: taskMissingEvidence(task).length ? String(taskMissingEvidence(task).length) : tr('project.statusClear', 'Clear'), tone: taskMissingEvidence(task).length ? 'warning' : 'success' },
                 { label: tr('project.risk', 'Risk'), value: shortRiskLabel(task.riskLevel), tone: riskTone(task.riskLevel) },
@@ -3442,36 +3538,80 @@
         });
     }
 
-    function createTask(workstreamId) {
+    function startTaskWizard(workstreamId) {
         var workstream = findById(workstreams(), workstreamId);
-        var title = window.prompt(tr('project.promptTaskTitle', 'Task title:'), tr('project.defaultNewTask', 'New Task'));
-        var goal;
-        if (!workstream || title === null || !String(title).trim()) {
+        var skill = defaultSkill();
+        var runbook;
+        if (!workstream) {
             return;
         }
-        goal = window.prompt(tr('project.promptTaskGoal', 'Task goal:'), '');
-        if (goal === null) {
-            goal = '';
+        if (state.creatingTaskWorkstreamId !== workstreamId) {
+            state.creatingTaskTitle = '';
+            state.creatingTaskGoal = '';
         }
+        runbook = runbookForSkill(skill.id, '');
+        state.creatingTaskWorkstreamId = workstreamId;
+        state.creatingTaskSelectedSkill = skill.id || 'code_change';
+        state.creatingTaskRunbookId = runbook.id || 'code_change_default';
+        state.creatingTaskSaving = false;
+        state.selectedProjectId = workstream.projectId;
+        state.selectedWorkstreamId = workstream.id;
+        state.selectedTaskId = '';
+        state.selectedSessionId = '';
+        state.currentView = 'workstream';
+        state.error = '';
+        render();
+        focusTaskWizard();
+    }
+
+    function submitTaskWizard(form) {
+        var workstreamId = form.getAttribute('data-task-wizard') || state.creatingTaskWorkstreamId;
+        var workstream = findById(workstreams(), workstreamId);
+        var titleInput = form.querySelector('[name="title"]');
+        var goalInput = form.querySelector('[name="goal"]');
+        var skillInput = form.querySelector('[name="selectedSkill"]');
+        var title = titleInput && titleInput.value ? titleInput.value.trim() : '';
+        var goal = goalInput && goalInput.value ? goalInput.value.trim() : '';
+        var selectedSkill = skillInput && skillInput.value ? skillInput.value.trim() : (state.creatingTaskSelectedSkill || defaultSkill().id || 'code_change');
+        var runbook = runbookForSkill(selectedSkill, state.creatingTaskRunbookId);
+
+        state.creatingTaskTitle = title;
+        state.creatingTaskGoal = goal;
+        state.creatingTaskSelectedSkill = selectedSkill;
+        state.creatingTaskRunbookId = runbook.id || '';
+        if (!workstream || !title) {
+            state.error = tr('project.taskTitleRequired', 'Task title required.');
+            render();
+            focusTaskWizard();
+            return;
+        }
+        state.error = '';
+        state.creatingTaskSaving = true;
+        render();
         fetchJSON('/api/project-control/tasks', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 projectId: workstream.projectId,
                 workstreamId: workstream.id,
-                title: String(title).trim(),
-                goal: String(goal || '').trim(),
+                title: title,
+                goal: goal,
                 priority: 'medium',
-                riskLevel: 'medium'
+                riskLevel: 'medium',
+                selectedSkill: selectedSkill,
+                runbookId: runbook.id || ''
             })
         }).then(function(snapshot) {
             state.snapshot = snapshot;
+            resetTaskWizard();
             openWorkstream(workstreamId);
             updateBadge();
             render();
         }).catch(function(err) {
+            state.creatingTaskSaving = false;
             state.error = err.message || tr('project.createTaskFailed', 'Create task failed');
             render();
+            focusTaskWizard();
         });
     }
 
@@ -3628,6 +3768,38 @@
                 render();
             });
         });
+        panel.querySelectorAll('[data-task-wizard]').forEach(function(form) {
+            form.addEventListener('submit', function(event) {
+                event.preventDefault();
+                submitTaskWizard(form);
+            });
+        });
+        panel.querySelectorAll('[data-task-title-input]').forEach(function(node) {
+            node.addEventListener('input', function() {
+                state.creatingTaskTitle = node.value || '';
+            });
+        });
+        panel.querySelectorAll('[data-task-goal-input]').forEach(function(node) {
+            node.addEventListener('input', function() {
+                state.creatingTaskGoal = node.value || '';
+            });
+        });
+        panel.querySelectorAll('[data-task-skill-select]').forEach(function(node) {
+            node.addEventListener('change', function() {
+                var skill = skillForId(node.value || '');
+                var runbook = runbookForSkill(skill.id, '');
+                state.creatingTaskSelectedSkill = skill.id || '';
+                state.creatingTaskRunbookId = runbook.id || '';
+                render();
+            });
+        });
+        panel.querySelectorAll('[data-cancel-task-wizard]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                resetTaskWizard();
+                state.error = '';
+                render();
+            });
+        });
         panel.querySelectorAll('[data-create-workstream]').forEach(function(node) {
             node.addEventListener('click', function() {
                 createWorkstream(node.getAttribute('data-create-workstream'));
@@ -3635,7 +3807,7 @@
         });
         panel.querySelectorAll('[data-create-task]').forEach(function(node) {
             node.addEventListener('click', function() {
-                createTask(node.getAttribute('data-create-task'));
+                startTaskWizard(node.getAttribute('data-create-task'));
             });
         });
         panel.querySelectorAll('[data-attach-terminal]').forEach(function(node) {
