@@ -209,6 +209,26 @@ func TestProjectControlRunbookPhaseProgressionSkipsRecoveryPhaseOnSuccess(t *tes
 	}
 }
 
+func TestProjectControlSkillRunbookSelectionValidatesRegistry(t *testing.T) {
+	skill, runbook, err := validateProjectControlSkillRunbookSelection("code_change", "code_change_default")
+	if err != nil {
+		t.Fatalf("validate explicit default error: %v", err)
+	}
+	if skill.ID != projectControlDefaultSkillID || runbook.ID != projectControlDefaultRunbookID {
+		t.Fatalf("selection = %q/%q, want %q/%q", skill.ID, runbook.ID, projectControlDefaultSkillID, projectControlDefaultRunbookID)
+	}
+
+	_, _, err = validateProjectControlSkillRunbookSelection("unknown", "")
+	if err == nil || !strings.Contains(err.Error(), "unknown skill") {
+		t.Fatalf("unknown skill error = %v, want unknown skill", err)
+	}
+
+	_, _, err = validateProjectControlSkillRunbookSelection("code_change", "missing_runbook")
+	if err == nil || !strings.Contains(err.Error(), "unknown runbook") {
+		t.Fatalf("unknown runbook error = %v, want unknown runbook", err)
+	}
+}
+
 func TestProjectControlRunbookRegistryFallsBackToDefaultSkill(t *testing.T) {
 	task := projectControlTask{
 		ID:               "task-registry-fallback",
@@ -734,6 +754,72 @@ func TestProjectControlDashboardTimelineRecordsCreateEvents(t *testing.T) {
 	}
 	if !strings.Contains(joinedTimeline, "task_created") {
 		t.Fatalf("dashboard timeline = %q, want task_created event", joinedTimeline)
+	}
+}
+
+func TestProjectControlCreateTaskAcceptsExplicitSkillRunbook(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	taskBody := fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"Explicit Skill Task","goal":"verify explicit selection","priority":"high","riskLevel":"medium","selectedSkill":"code_change","runbookId":"code_change_default"}`,
+		projectControlProjectID, projectControlWorkstreamUXID)
+	taskReq := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(taskBody))
+	taskReq.Header.Set("Content-Type", "application/json")
+	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	taskRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(taskRec, taskReq)
+	if taskRec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/project-control/tasks status = %d, want %d: %s", taskRec.Code, http.StatusCreated, taskRec.Body.String())
+	}
+	snapshot := decodeProjectControlSnapshot(t, taskRec)
+	for _, task := range snapshot.Tasks {
+		if task.Title != "Explicit Skill Task" {
+			continue
+		}
+		if task.SelectedSkill != projectControlDefaultSkillID || task.RunbookID != projectControlDefaultRunbookID {
+			t.Fatalf("created task skill/runbook = %q/%q, want %q/%q", task.SelectedSkill, task.RunbookID, projectControlDefaultSkillID, projectControlDefaultRunbookID)
+		}
+		return
+	}
+	t.Fatal("created task not found")
+}
+
+func TestProjectControlCreateTaskRejectsUnknownSkillRunbook(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	cases := []struct {
+		name     string
+		body     string
+		wantBody string
+	}{
+		{
+			name: "unknown skill",
+			body: fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"Unknown Skill Task","selectedSkill":"unknown_skill"}`,
+				projectControlProjectID, projectControlWorkstreamUXID),
+			wantBody: "unknown skill",
+		},
+		{
+			name: "unknown runbook",
+			body: fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"Unknown Runbook Task","selectedSkill":"code_change","runbookId":"missing_runbook"}`,
+				projectControlProjectID, projectControlWorkstreamUXID),
+			wantBody: "unknown runbook",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+			rec := httptest.NewRecorder()
+			srv.mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("POST /api/project-control/tasks status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBody)
+			}
+		})
 	}
 }
 

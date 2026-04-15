@@ -281,12 +281,14 @@ type projectControlWorkstreamCreateRequest struct {
 }
 
 type projectControlTaskCreateRequest struct {
-	ProjectID    string `json:"projectId"`
-	WorkstreamID string `json:"workstreamId"`
-	Title        string `json:"title"`
-	Goal         string `json:"goal"`
-	Priority     string `json:"priority"`
-	RiskLevel    string `json:"riskLevel"`
+	ProjectID     string `json:"projectId"`
+	WorkstreamID  string `json:"workstreamId"`
+	Title         string `json:"title"`
+	Goal          string `json:"goal"`
+	Priority      string `json:"priority"`
+	RiskLevel     string `json:"riskLevel"`
+	SelectedSkill string `json:"selectedSkill"`
+	RunbookID     string `json:"runbookId"`
 }
 
 type projectControlWorkstreamUpdateRequest struct {
@@ -677,6 +679,31 @@ func projectControlResolveSkillAndRunbook(task *projectControlTask) (projectCont
 		task.RunbookID = runbook.ID
 	}
 	return skill, runbook
+}
+
+func validateProjectControlSkillRunbookSelection(selectedSkill, runbookID string) (projectControlSkill, projectControlRunbook, error) {
+	skills := defaultProjectControlSkills()
+	runbooks := defaultProjectControlRunbooks()
+	skillID := normalizeProjectControlSkillID(selectedSkill)
+	if skillID == "" {
+		skillID = projectControlDefaultSkillID
+	}
+	skill, ok := findProjectControlSkill(skills, skillID)
+	if !ok {
+		return projectControlSkill{}, projectControlRunbook{}, fmt.Errorf("unknown skill: %s", skillID)
+	}
+	selectedRunbookID := normalizeProjectControlRunbookID(runbookID)
+	if selectedRunbookID == "" {
+		selectedRunbookID = skill.DefaultRunbookID
+	}
+	runbook, ok := findProjectControlRunbook(runbooks, selectedRunbookID)
+	if !ok {
+		return projectControlSkill{}, projectControlRunbook{}, fmt.Errorf("unknown runbook: %s", selectedRunbookID)
+	}
+	if normalizeProjectControlSkillID(runbook.Skill) != normalizeProjectControlSkillID(skill.ID) || !projectControlSkillAllowsRunbook(skill, runbook.ID) {
+		return projectControlSkill{}, projectControlRunbook{}, fmt.Errorf("runbook %s is not allowed for skill %s", runbook.ID, skill.ID)
+	}
+	return skill, runbook, nil
 }
 
 func projectControlRunbookForTask(task projectControlTask) projectControlRunbook {
@@ -1400,6 +1427,10 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 		if title == "" {
 			return errors.New("task title is required")
 		}
+		skill, runbook, err := validateProjectControlSkillRunbookSelection(req.SelectedSkill, req.RunbookID)
+		if err != nil {
+			return err
+		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		task := projectControlTask{
 			ID:               projectControlID("task", title),
@@ -1413,8 +1444,8 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			Priority:         normalizeProjectControlPriority(req.Priority),
 			AgentLabel:       "worker",
 			RuntimeID:        projectControlRuntimeID,
-			SelectedSkill:    projectControlDefaultSkillID,
-			RunbookID:        projectControlDefaultRunbookID,
+			SelectedSkill:    skill.ID,
+			RunbookID:        runbook.ID,
 			CurrentPhase:     "plan",
 			RunbookState:     "not_started",
 			MissingEvidence:  []string{},
