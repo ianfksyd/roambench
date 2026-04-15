@@ -41,6 +41,7 @@ type projectControlSnapshot struct {
 	Tasks           []projectControlTask         `json:"tasks"`
 	Sessions        []projectControlSession      `json:"sessions"`
 	Runtimes        []projectControlRuntime      `json:"runtimes"`
+	Skills          []projectControlSkill        `json:"skills"`
 	Runbooks        []projectControlRunbook      `json:"runbooks"`
 	PhaseAttempts   []projectControlPhaseAttempt `json:"phaseAttempts"`
 	Artifacts       []projectControlArtifact     `json:"artifacts"`
@@ -116,6 +117,16 @@ type projectControlSession struct {
 	Claims         []string `json:"claims"`
 	Artifacts      []string `json:"artifacts"`
 	SupportsAttach bool     `json:"supportsAttach"`
+}
+
+type projectControlSkill struct {
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	Version            string            `json:"version"`
+	DefaultRunbookID   string            `json:"defaultRunbookId"`
+	AllowedRunbookIDs  []string          `json:"allowedRunbookIds"`
+	RequiredArtifacts  []string          `json:"requiredArtifacts"`
+	PermissionsByPhase map[string]string `json:"permissionsByPhase"`
 }
 
 type projectControlRunbook struct {
@@ -533,6 +544,43 @@ func validateProjectControlAcceptanceTransition(from, to, resultingTaskState str
 	return fmt.Errorf("illegal acceptance transition: %s -> %s", from, to)
 }
 
+func defaultProjectControlSkills() []projectControlSkill {
+	return []projectControlSkill{{
+		ID:               projectControlDefaultSkillID,
+		Name:             "Code Change",
+		Version:          "0.1",
+		DefaultRunbookID: projectControlDefaultRunbookID,
+		AllowedRunbookIDs: []string{
+			projectControlDefaultRunbookID,
+		},
+		RequiredArtifacts: []string{
+			"plan",
+			"diff_summary",
+			"test_result",
+			"review_result",
+			"completion_check",
+		},
+		PermissionsByPhase: map[string]string{
+			"plan":             "read_only",
+			"implement":        "scoped_write",
+			"test":             "read_only",
+			"review":           "read_only",
+			"fix_or_replan":    "scoped_write",
+			"final_validation": "read_only",
+		},
+	}}
+}
+
+func defaultProjectControlSkill() projectControlSkill {
+	skills := defaultProjectControlSkills()
+	for _, skill := range skills {
+		if skill.ID == projectControlDefaultSkillID {
+			return skill
+		}
+	}
+	return skills[0]
+}
+
 func defaultProjectControlRunbooks() []projectControlRunbook {
 	return []projectControlRunbook{{
 		ID:      projectControlDefaultRunbookID,
@@ -551,7 +599,89 @@ func defaultProjectControlRunbooks() []projectControlRunbook {
 }
 
 func defaultProjectControlRunbook() projectControlRunbook {
-	return defaultProjectControlRunbooks()[0]
+	runbooks := defaultProjectControlRunbooks()
+	for _, runbook := range runbooks {
+		if runbook.ID == projectControlDefaultRunbookID {
+			return runbook
+		}
+	}
+	return runbooks[0]
+}
+
+func normalizeProjectControlSkillID(value string) string {
+	return strings.TrimSpace(strings.ToLower(value))
+}
+
+func normalizeProjectControlRunbookID(value string) string {
+	return strings.TrimSpace(strings.ToLower(value))
+}
+
+func findProjectControlSkill(skills []projectControlSkill, skillID string) (projectControlSkill, bool) {
+	skillID = normalizeProjectControlSkillID(skillID)
+	for _, skill := range skills {
+		if normalizeProjectControlSkillID(skill.ID) == skillID {
+			return skill, true
+		}
+	}
+	return projectControlSkill{}, false
+}
+
+func findProjectControlRunbook(runbooks []projectControlRunbook, runbookID string) (projectControlRunbook, bool) {
+	runbookID = normalizeProjectControlRunbookID(runbookID)
+	for _, runbook := range runbooks {
+		if normalizeProjectControlRunbookID(runbook.ID) == runbookID {
+			return runbook, true
+		}
+	}
+	return projectControlRunbook{}, false
+}
+
+func projectControlSkillAllowsRunbook(skill projectControlSkill, runbookID string) bool {
+	runbookID = normalizeProjectControlRunbookID(runbookID)
+	if runbookID == "" {
+		return false
+	}
+	if normalizeProjectControlRunbookID(skill.DefaultRunbookID) == runbookID {
+		return true
+	}
+	for _, allowed := range skill.AllowedRunbookIDs {
+		if normalizeProjectControlRunbookID(allowed) == runbookID {
+			return true
+		}
+	}
+	return false
+}
+
+func projectControlResolveSkillAndRunbook(task *projectControlTask) (projectControlSkill, projectControlRunbook) {
+	skills := defaultProjectControlSkills()
+	runbooks := defaultProjectControlRunbooks()
+	skill := defaultProjectControlSkill()
+	if task != nil {
+		if candidate, ok := findProjectControlSkill(skills, task.SelectedSkill); ok {
+			skill = candidate
+		}
+		task.SelectedSkill = skill.ID
+	}
+	runbookID := skill.DefaultRunbookID
+	if task != nil && strings.TrimSpace(task.RunbookID) != "" {
+		runbookID = task.RunbookID
+	}
+	runbook, ok := findProjectControlRunbook(runbooks, runbookID)
+	if !ok || normalizeProjectControlSkillID(runbook.Skill) != normalizeProjectControlSkillID(skill.ID) || !projectControlSkillAllowsRunbook(skill, runbook.ID) {
+		runbook, ok = findProjectControlRunbook(runbooks, skill.DefaultRunbookID)
+		if !ok {
+			runbook = defaultProjectControlRunbook()
+		}
+	}
+	if task != nil {
+		task.RunbookID = runbook.ID
+	}
+	return skill, runbook
+}
+
+func projectControlRunbookForTask(task projectControlTask) projectControlRunbook {
+	_, runbook := projectControlResolveSkillAndRunbook(&task)
+	return runbook
 }
 
 func findProjectControlRunbookPhase(runbook projectControlRunbook, phaseID string) (projectControlRunbookPhase, bool) {
@@ -628,15 +758,10 @@ func refreshProjectControlTaskRunbookFields(task *projectControlTask, artifacts 
 	if task == nil {
 		return
 	}
-	if strings.TrimSpace(task.SelectedSkill) == "" {
-		task.SelectedSkill = projectControlDefaultSkillID
-	}
-	if strings.TrimSpace(task.RunbookID) == "" {
-		task.RunbookID = projectControlDefaultRunbookID
-	}
+	_, runbook := projectControlResolveSkillAndRunbook(task)
 	task.CurrentPhase = inferProjectControlCurrentPhase(*task)
 	task.RunbookState = inferProjectControlRunbookState(*task)
-	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, artifacts, defaultProjectControlRunbook(), "", "")
+	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, artifacts, runbook, "", "")
 }
 
 func projectControlPhaseAgentType(phase projectControlRunbookPhase) string {
@@ -711,7 +836,7 @@ func startProjectControlTaskPhase(state *projectControlState, task *projectContr
 		return errors.New("missing project control state")
 	}
 	refreshProjectControlTaskRunbookFields(task, state.Artifacts)
-	runbook := defaultProjectControlRunbook()
+	runbook := projectControlRunbookForTask(*task)
 	phaseID = normalizeProjectControlPhaseID(phaseID)
 	if phaseID == "" {
 		phaseID = task.CurrentPhase
@@ -830,7 +955,7 @@ func completeProjectControlTaskPhase(state *projectControlState, task *projectCo
 		return errors.New("missing project control state")
 	}
 	refreshProjectControlTaskRunbookFields(task, state.Artifacts)
-	runbook := defaultProjectControlRunbook()
+	runbook := projectControlRunbookForTask(*task)
 	phaseID := normalizeProjectControlPhaseID(req.PhaseID)
 	if phaseID == "" {
 		phaseID = task.CurrentPhase
@@ -959,7 +1084,7 @@ func failProjectControlTaskPhase(state *projectControlState, task *projectContro
 	task.AcceptanceStatus = "not_ready"
 	task.RecentSummary = "Runbook phase " + phaseID + " failed."
 	task.NextStep = "Start fix_or_replan, then rerun test and review evidence."
-	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, defaultProjectControlRunbook(), "", "")
+	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, projectControlRunbookForTask(*task), "", "")
 	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 		ID:           projectControlID("event", "phase-failed"),
 		Timestamp:    now,
@@ -1151,7 +1276,7 @@ func validateProjectControlFinalAcceptanceApproval(state *projectControlState, c
 		if normalizeProjectControlTaskState(task.State) != "execution_complete" {
 			return errors.New("final acceptance approval requires execution_complete task")
 		}
-		if missing := projectControlMissingCompletionEvidence(task, state.Artifacts, defaultProjectControlRunbook(), "", ""); len(missing) > 0 {
+		if missing := projectControlMissingCompletionEvidence(task, state.Artifacts, projectControlRunbookForTask(task), "", ""); len(missing) > 0 {
 			return fmt.Errorf("completion rules not satisfied: missing %s", strings.Join(missing, ","))
 		}
 		return nil
@@ -1280,7 +1405,7 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			RunbookID:        projectControlDefaultRunbookID,
 			CurrentPhase:     "plan",
 			RunbookState:     "not_started",
-			MissingEvidence:  []string{"plan", "diff_summary", "test_result", "review_result", "completion_check"},
+			MissingEvidence:  []string{},
 			RecentSummary:    "Task created from the Project Panel and waiting to be scheduled.",
 			NextStep:         "Open a session or connect a runtime-backed workflow to start execution.",
 			FilesChanged:     []string{},
@@ -1291,6 +1416,7 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			Audit:            []projectControlAuditItem{},
 			RowVersion:       1,
 		}
+		refreshProjectControlTaskRunbookFields(&task, state.Artifacts)
 		state.Tasks = append(state.Tasks, task)
 		state.ActiveProjectID = projectID
 		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
@@ -1458,7 +1584,7 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 					}
 				}
 				if candidate == "ready_for_acceptance" || candidate == "under_human_review" {
-					if missing := projectControlMissingCompletionEvidence(task, state.Artifacts, defaultProjectControlRunbook(), "", ""); len(missing) > 0 {
+					if missing := projectControlMissingCompletionEvidence(task, state.Artifacts, projectControlRunbookForTask(task), "", ""); len(missing) > 0 {
 						return fmt.Errorf("completion rules not satisfied: missing %s", strings.Join(missing, ","))
 					}
 				}
@@ -2313,6 +2439,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	projects := cloneProjectControlProjects(state.Projects)
 	workstreams := cloneProjectControlWorkstreams(state.Workstreams)
 	tasks := cloneProjectControlTasks(state.Tasks)
+	skills := cloneProjectControlSkills(defaultProjectControlSkills())
 	runbooks := defaultProjectControlRunbooks()
 	phaseAttempts := cloneProjectControlPhaseAttempts(state.PhaseAttempts)
 	artifacts := cloneProjectControlArtifacts(state.Artifacts)
@@ -2407,6 +2534,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		Tasks:           tasks,
 		Sessions:        sessions,
 		Runtimes:        runtimes,
+		Skills:          skills,
 		Runbooks:        runbooks,
 		PhaseAttempts:   phaseAttempts,
 		Artifacts:       artifacts,
@@ -2863,6 +2991,20 @@ func cloneProjectControlTasks(items []projectControlTask) []projectControlTask {
 		out[i].Timeline = append([]projectControlEvent{}, item.Timeline...)
 		out[i].Evidence = append([]projectControlEvidence{}, item.Evidence...)
 		out[i].Audit = append([]projectControlAuditItem{}, item.Audit...)
+	}
+	return out
+}
+
+func cloneProjectControlSkills(items []projectControlSkill) []projectControlSkill {
+	out := make([]projectControlSkill, len(items))
+	for i, item := range items {
+		out[i] = item
+		out[i].AllowedRunbookIDs = append([]string{}, item.AllowedRunbookIDs...)
+		out[i].RequiredArtifacts = append([]string{}, item.RequiredArtifacts...)
+		out[i].PermissionsByPhase = map[string]string{}
+		for phaseID, permission := range item.PermissionsByPhase {
+			out[i].PermissionsByPhase[phaseID] = permission
+		}
 	}
 	return out
 }

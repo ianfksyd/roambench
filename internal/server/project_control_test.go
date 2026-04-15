@@ -121,6 +121,21 @@ func TestProjectControlDashboardCountsRunningWorkstreamsFromWorkstreamStatus(t *
 }
 
 func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
+	skills := defaultProjectControlSkills()
+	if len(skills) != 1 {
+		t.Fatalf("len(skills) = %d, want 1", len(skills))
+	}
+	skill := skills[0]
+	if skill.ID != projectControlDefaultSkillID {
+		t.Fatalf("skill ID = %q, want %q", skill.ID, projectControlDefaultSkillID)
+	}
+	if skill.DefaultRunbookID != projectControlDefaultRunbookID {
+		t.Fatalf("DefaultRunbookID = %q, want %q", skill.DefaultRunbookID, projectControlDefaultRunbookID)
+	}
+	if skill.PermissionsByPhase["implement"] != "scoped_write" {
+		t.Fatalf("implement permission = %q, want scoped_write", skill.PermissionsByPhase["implement"])
+	}
+
 	runbook := defaultProjectControlRunbook()
 	if runbook.ID != projectControlDefaultRunbookID {
 		t.Fatalf("runbook ID = %q, want %q", runbook.ID, projectControlDefaultRunbookID)
@@ -139,6 +154,31 @@ func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	}
 	if next := nextProjectControlRunbookPhaseID(runbook, "fix_or_replan"); next != "test" {
 		t.Fatalf("next phase after fix_or_replan = %q, want test", next)
+	}
+}
+
+func TestProjectControlRunbookRegistryFallsBackToDefaultSkill(t *testing.T) {
+	task := projectControlTask{
+		ID:               "task-registry-fallback",
+		State:            "planned",
+		AcceptanceStatus: "not_ready",
+		SelectedSkill:    "unknown_skill",
+		RunbookID:        "unknown_runbook",
+	}
+
+	refreshProjectControlTaskRunbookFields(&task, nil)
+
+	if task.SelectedSkill != projectControlDefaultSkillID {
+		t.Fatalf("SelectedSkill = %q, want %q", task.SelectedSkill, projectControlDefaultSkillID)
+	}
+	if task.RunbookID != projectControlDefaultRunbookID {
+		t.Fatalf("RunbookID = %q, want %q", task.RunbookID, projectControlDefaultRunbookID)
+	}
+	if task.CurrentPhase != "plan" {
+		t.Fatalf("CurrentPhase = %q, want plan", task.CurrentPhase)
+	}
+	if got := strings.Join(task.MissingEvidence, ","); got != "plan,diff_summary,test_result:pass,review_result:pass,completion_check:pass" {
+		t.Fatalf("MissingEvidence = %q, want default code_change requirements", got)
 	}
 }
 
@@ -400,9 +440,12 @@ func TestProjectControlSnapshotRouteReturnsSeededPrototype(t *testing.T) {
 	if len(snapshot.Runbooks) != 1 || snapshot.Runbooks[0].ID != projectControlDefaultRunbookID {
 		t.Fatalf("Runbooks = %#v, want default runbook", snapshot.Runbooks)
 	}
+	if len(snapshot.Skills) != 1 || snapshot.Skills[0].ID != projectControlDefaultSkillID || snapshot.Skills[0].DefaultRunbookID != projectControlDefaultRunbookID {
+		t.Fatalf("Skills = %#v, want default code_change skill", snapshot.Skills)
+	}
 	for _, task := range snapshot.Tasks {
-		if task.RunbookID == "" || task.CurrentPhase == "" {
-			t.Fatalf("task %q missing runbook fields: %#v", task.ID, task)
+		if task.SelectedSkill == "" || task.RunbookID == "" || task.CurrentPhase == "" {
+			t.Fatalf("task %q missing skill/runbook fields: %#v", task.ID, task)
 		}
 		if task.ID == projectControlTaskIAID {
 			if task.AcceptanceStatus != "under_human_review" {
@@ -616,6 +659,19 @@ func TestProjectControlDashboardTimelineRecordsCreateEvents(t *testing.T) {
 		t.Fatalf("POST /api/project-control/tasks status = %d, want %d", taskRec.Code, http.StatusCreated)
 	}
 	taskSnapshot := decodeProjectControlSnapshot(t, taskRec)
+	foundTask := false
+	for _, task := range taskSnapshot.Tasks {
+		if task.Title != "Implement persisted panel" {
+			continue
+		}
+		foundTask = true
+		if task.SelectedSkill != projectControlDefaultSkillID || task.RunbookID != projectControlDefaultRunbookID {
+			t.Fatalf("created task skill/runbook = %q/%q, want %q/%q", task.SelectedSkill, task.RunbookID, projectControlDefaultSkillID, projectControlDefaultRunbookID)
+		}
+	}
+	if !foundTask {
+		t.Fatal("created task not found in snapshot")
+	}
 
 	joinedTimeline := strings.Join(taskSnapshot.Dashboard.ProjectTimeline, "\n")
 	if !strings.Contains(joinedTimeline, "project_created") {
