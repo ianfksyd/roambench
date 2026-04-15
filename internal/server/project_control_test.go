@@ -65,6 +65,147 @@ func TestProjectControlDashboardCountsRunningWorkstreamsFromWorkstreamStatus(t *
 	}
 }
 
+func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
+	runbook := defaultProjectControlRunbook()
+	if runbook.ID != projectControlDefaultRunbookID {
+		t.Fatalf("runbook ID = %q, want %q", runbook.ID, projectControlDefaultRunbookID)
+	}
+	wantPhases := []string{"plan", "implement", "test", "review", "fix_or_replan", "final_validation"}
+	if len(runbook.Phases) != len(wantPhases) {
+		t.Fatalf("len(runbook.Phases) = %d, want %d", len(runbook.Phases), len(wantPhases))
+	}
+	for i, want := range wantPhases {
+		if runbook.Phases[i].ID != want {
+			t.Fatalf("phase[%d] = %q, want %q", i, runbook.Phases[i].ID, want)
+		}
+	}
+	if next := nextProjectControlRunbookPhaseID(runbook, "review"); next != "final_validation" {
+		t.Fatalf("next phase after review = %q, want final_validation", next)
+	}
+	if next := nextProjectControlRunbookPhaseID(runbook, "fix_or_replan"); next != "test" {
+		t.Fatalf("next phase after fix_or_replan = %q, want test", next)
+	}
+}
+
+func TestProjectControlRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
+	state := projectControlState{
+		PhaseAttempts: []projectControlPhaseAttempt{},
+		Artifacts:     []projectControlArtifact{},
+	}
+	task := projectControlTask{
+		ID:               "task-runbook-lifecycle",
+		ProjectID:        "project-runbook",
+		WorkstreamID:     "workstream-runbook",
+		State:            "planned",
+		AcceptanceStatus: "not_ready",
+		RuntimeID:        projectControlRuntimeID,
+	}
+	projectControlNormalizeState(&state)
+	now := "2026-04-15T00:00:00Z"
+
+	steps := []struct {
+		phase string
+		kind  string
+		value string
+		next  string
+	}{
+		{phase: "plan", kind: "plan", value: "Plan artifact", next: "implement"},
+		{phase: "implement", kind: "diff_summary", value: "Changed project control runbook code", next: "test"},
+		{phase: "test", kind: "test_result", value: "go test ./... passed", next: "review"},
+		{phase: "review", kind: "review_result", value: "No high severity objections", next: "final_validation"},
+	}
+	for _, step := range steps {
+		if err := startProjectControlTaskPhase(&state, &task, step.phase, now); err != nil {
+			t.Fatalf("start %s error: %v", step.phase, err)
+		}
+		req := projectControlTaskUpdateRequest{
+			PhaseID:       step.phase,
+			ArtifactKind:  step.kind,
+			ArtifactLabel: step.kind,
+			ArtifactValue: step.value,
+		}
+		if err := completeProjectControlTaskPhase(&state, &task, req, now); err != nil {
+			t.Fatalf("complete %s error: %v", step.phase, err)
+		}
+		if task.CurrentPhase != step.next {
+			t.Fatalf("after %s CurrentPhase = %q, want %q", step.phase, task.CurrentPhase, step.next)
+		}
+	}
+
+	if len(state.Artifacts) != 4 {
+		t.Fatalf("len(Artifacts) = %d, want 4", len(state.Artifacts))
+	}
+	if task.DiffSummary != "Changed project control runbook code" {
+		t.Fatalf("DiffSummary = %q, want implement artifact value", task.DiffSummary)
+	}
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+		t.Fatalf("start final_validation error: %v", err)
+	}
+	req := projectControlTaskUpdateRequest{
+		PhaseID:       "final_validation",
+		ArtifactKind:  "completion_check",
+		ArtifactLabel: "completion_check",
+		ArtifactValue: "All completion rules satisfied",
+	}
+	if err := completeProjectControlTaskPhase(&state, &task, req, now); err != nil {
+		t.Fatalf("complete final_validation error: %v", err)
+	}
+	if task.State != "execution_complete" {
+		t.Fatalf("State = %q, want execution_complete", task.State)
+	}
+	if task.AcceptanceStatus != "ready_for_acceptance" {
+		t.Fatalf("AcceptanceStatus = %q, want ready_for_acceptance", task.AcceptanceStatus)
+	}
+	if task.CurrentPhase != "ready_for_acceptance" {
+		t.Fatalf("CurrentPhase = %q, want ready_for_acceptance", task.CurrentPhase)
+	}
+	if len(task.MissingEvidence) != 0 {
+		t.Fatalf("MissingEvidence = %#v, want empty", task.MissingEvidence)
+	}
+}
+
+func TestProjectControlFinalValidationRequiresCompletionEvidence(t *testing.T) {
+	state := projectControlState{
+		PhaseAttempts: []projectControlPhaseAttempt{},
+		Artifacts:     []projectControlArtifact{},
+	}
+	task := projectControlTask{
+		ID:               "task-runbook-missing-evidence",
+		ProjectID:        "project-runbook",
+		WorkstreamID:     "workstream-runbook",
+		State:            "running",
+		AcceptanceStatus: "not_ready",
+		RuntimeID:        projectControlRuntimeID,
+		SelectedSkill:    projectControlDefaultSkillID,
+		RunbookID:        projectControlDefaultRunbookID,
+		CurrentPhase:     "final_validation",
+		RunbookState:     "in_progress",
+	}
+	now := "2026-04-15T00:00:00Z"
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+		t.Fatalf("start final_validation error: %v", err)
+	}
+	req := projectControlTaskUpdateRequest{
+		PhaseID:       "final_validation",
+		ArtifactKind:  "completion_check",
+		ArtifactLabel: "completion_check",
+		ArtifactValue: "Completion claimed without prior evidence",
+	}
+	err := completeProjectControlTaskPhase(&state, &task, req, now)
+	if err == nil {
+		t.Fatal("complete final_validation error = nil, want missing evidence error")
+	}
+	if !strings.Contains(err.Error(), "missing plan") {
+		t.Fatalf("error = %q, want missing plan evidence", err.Error())
+	}
+	if task.AcceptanceStatus == "ready_for_acceptance" {
+		t.Fatalf("AcceptanceStatus = %q, should not be ready_for_acceptance", task.AcceptanceStatus)
+	}
+	if len(state.Artifacts) != 0 {
+		t.Fatalf("len(Artifacts) = %d, want 0 after rejected completion", len(state.Artifacts))
+	}
+}
+
 func TestProjectControlSnapshotRouteReturnsSeededPrototype(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
@@ -97,6 +238,61 @@ func TestProjectControlSnapshotRouteReturnsSeededPrototype(t *testing.T) {
 	}
 	if len(snapshot.Checkpoints) != 1 || snapshot.Checkpoints[0].Status != "pending" {
 		t.Fatalf("Checkpoints = %#v, want one pending checkpoint", snapshot.Checkpoints)
+	}
+	if len(snapshot.Runbooks) != 1 || snapshot.Runbooks[0].ID != projectControlDefaultRunbookID {
+		t.Fatalf("Runbooks = %#v, want default runbook", snapshot.Runbooks)
+	}
+	for _, task := range snapshot.Tasks {
+		if task.RunbookID == "" || task.CurrentPhase == "" {
+			t.Fatalf("task %q missing runbook fields: %#v", task.ID, task)
+		}
+	}
+}
+
+func TestProjectControlTaskPhaseActionsPersistThroughAPI(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	startReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_phase","phaseId":"plan"}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	startRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("PATCH start_phase status = %d, want %d: %s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+	startSnapshot := decodeProjectControlSnapshot(t, startRec)
+	if len(startSnapshot.PhaseAttempts) != 1 || startSnapshot.PhaseAttempts[0].Status != "running" {
+		t.Fatalf("PhaseAttempts after start = %#v, want one running attempt", startSnapshot.PhaseAttempts)
+	}
+
+	completeReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":2,"action":"complete_phase","phaseId":"plan","artifactKind":"plan","artifactLabel":"Plan","artifactValue":"Implementation plan recorded"}`))
+	completeReq.Header.Set("Content-Type", "application/json")
+	completeReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	completeRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(completeRec, completeReq)
+	if completeRec.Code != http.StatusOK {
+		t.Fatalf("PATCH complete_phase status = %d, want %d: %s", completeRec.Code, http.StatusOK, completeRec.Body.String())
+	}
+	completeSnapshot := decodeProjectControlSnapshot(t, completeRec)
+	if len(completeSnapshot.Artifacts) != 1 || completeSnapshot.Artifacts[0].Kind != "plan" {
+		t.Fatalf("Artifacts after complete = %#v, want one plan artifact", completeSnapshot.Artifacts)
+	}
+	foundTask := false
+	for _, task := range completeSnapshot.Tasks {
+		if task.ID == projectControlTaskPanelID {
+			foundTask = true
+			if task.CurrentPhase != "implement" {
+				t.Fatalf("CurrentPhase = %q, want implement", task.CurrentPhase)
+			}
+			if task.RunbookState != "in_progress" {
+				t.Fatalf("RunbookState = %q, want in_progress", task.RunbookState)
+			}
+			break
+		}
+	}
+	if !foundTask {
+		t.Fatalf("task %q not found", projectControlTaskPanelID)
 	}
 }
 

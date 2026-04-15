@@ -28,20 +28,25 @@ const (
 	projectControlTaskAttachID           = "task-terminal-attach"
 	projectControlTaskApprovalsID        = "task-approvals-inbox"
 	projectControlCheckpointAcceptanceID = "checkpoint-final-acceptance"
+	projectControlDefaultSkillID         = "code_change"
+	projectControlDefaultRunbookID       = "code_change_default"
 )
 
 type projectControlSnapshot struct {
-	GeneratedAt     string                     `json:"generatedAt"`
-	ActiveProjectID string                     `json:"activeProjectId"`
-	ApprovalsCount  int                        `json:"approvalsCount"`
-	Projects        []projectControlProject    `json:"projects"`
-	Workstreams     []projectControlWorkstream `json:"workstreams"`
-	Tasks           []projectControlTask       `json:"tasks"`
-	Sessions        []projectControlSession    `json:"sessions"`
-	Runtimes        []projectControlRuntime    `json:"runtimes"`
-	Checkpoints     []projectControlCheckpoint `json:"checkpoints"`
-	Decisions       []projectControlDecision   `json:"decisions,omitempty"`
-	Dashboard       projectControlDashboard    `json:"dashboard"`
+	GeneratedAt     string                       `json:"generatedAt"`
+	ActiveProjectID string                       `json:"activeProjectId"`
+	ApprovalsCount  int                          `json:"approvalsCount"`
+	Projects        []projectControlProject      `json:"projects"`
+	Workstreams     []projectControlWorkstream   `json:"workstreams"`
+	Tasks           []projectControlTask         `json:"tasks"`
+	Sessions        []projectControlSession      `json:"sessions"`
+	Runtimes        []projectControlRuntime      `json:"runtimes"`
+	Runbooks        []projectControlRunbook      `json:"runbooks"`
+	PhaseAttempts   []projectControlPhaseAttempt `json:"phaseAttempts"`
+	Artifacts       []projectControlArtifact     `json:"artifacts"`
+	Checkpoints     []projectControlCheckpoint   `json:"checkpoints"`
+	Decisions       []projectControlDecision     `json:"decisions,omitempty"`
+	Dashboard       projectControlDashboard      `json:"dashboard"`
 }
 
 type projectControlProject struct {
@@ -79,6 +84,11 @@ type projectControlTask struct {
 	Priority             string                    `json:"priority"`
 	AgentLabel           string                    `json:"agentLabel"`
 	RuntimeID            string                    `json:"runtimeId"`
+	SelectedSkill        string                    `json:"selectedSkill"`
+	RunbookID            string                    `json:"runbookId"`
+	CurrentPhase         string                    `json:"currentPhase"`
+	RunbookState         string                    `json:"runbookState"`
+	MissingEvidence      []string                  `json:"missingEvidence"`
 	RecentSummary        string                    `json:"recentSummary"`
 	NextStep             string                    `json:"nextStep"`
 	FilesChanged         []string                  `json:"filesChanged"`
@@ -106,6 +116,47 @@ type projectControlSession struct {
 	Claims         []string `json:"claims"`
 	Artifacts      []string `json:"artifacts"`
 	SupportsAttach bool     `json:"supportsAttach"`
+}
+
+type projectControlRunbook struct {
+	ID              string                       `json:"id"`
+	Skill           string                       `json:"skill"`
+	Version         string                       `json:"version"`
+	Phases          []projectControlRunbookPhase `json:"phases"`
+	CompletionRules []string                     `json:"completionRules"`
+}
+
+type projectControlRunbookPhase struct {
+	ID                string   `json:"id"`
+	ExecutionRole     string   `json:"executionRole"`
+	WriteAccess       string   `json:"writeAccess"`
+	RequiredArtifacts []string `json:"requiredArtifacts"`
+}
+
+type projectControlPhaseAttempt struct {
+	ID            string   `json:"id"`
+	TaskID        string   `json:"taskId"`
+	RunbookID     string   `json:"runbookId"`
+	PhaseID       string   `json:"phaseId"`
+	SessionID     string   `json:"sessionId,omitempty"`
+	AgentType     string   `json:"agentType"`
+	RuntimeID     string   `json:"runtimeId"`
+	WorkspaceRef  string   `json:"workspaceRef"`
+	StartedAt     string   `json:"startedAt"`
+	CompletedAt   string   `json:"completedAt,omitempty"`
+	Status        string   `json:"status"`
+	ArtifactIDs   []string `json:"artifactIds"`
+	FailureReason string   `json:"failureReason,omitempty"`
+}
+
+type projectControlArtifact struct {
+	ID             string `json:"id"`
+	TaskID         string `json:"taskId"`
+	PhaseAttemptID string `json:"phaseAttemptId,omitempty"`
+	Kind           string `json:"kind"`
+	Label          string `json:"label"`
+	Value          string `json:"value"`
+	CreatedAt      string `json:"createdAt"`
 }
 
 type projectControlRuntime struct {
@@ -190,6 +241,8 @@ type projectControlState struct {
 	Projects        []projectControlProject       `json:"projects"`
 	Workstreams     []projectControlWorkstream    `json:"workstreams"`
 	Tasks           []projectControlTask          `json:"tasks"`
+	PhaseAttempts   []projectControlPhaseAttempt  `json:"phaseAttempts,omitempty"`
+	Artifacts       []projectControlArtifact      `json:"artifacts,omitempty"`
 	Checkpoints     []projectControlCheckpoint    `json:"checkpoints"`
 	Decisions       []projectControlDecision      `json:"decisions,omitempty"`
 	Events          []projectControlRecordedEvent `json:"events,omitempty"`
@@ -243,6 +296,11 @@ type projectControlTaskUpdateRequest struct {
 	RiskLevel          string `json:"riskLevel"`
 	State              string `json:"state"`
 	AcceptanceStatus   string `json:"acceptanceStatus"`
+	PhaseID            string `json:"phaseId"`
+	ArtifactKind       string `json:"artifactKind"`
+	ArtifactLabel      string `json:"artifactLabel"`
+	ArtifactValue      string `json:"artifactValue"`
+	FailureReason      string `json:"failureReason"`
 }
 
 type projectControlEventsResponse struct {
@@ -357,6 +415,9 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 		if task == nil || task.AcceptanceStatus != "accepted" {
 			req.AcceptanceStatus = "not_ready"
 		}
+	case "start_phase", "complete_phase", "fail_phase":
+		// Phase actions are handled by the runbook helpers because they need
+		// access to PhaseAttempt and Artifact state.
 	default:
 		return fmt.Errorf("invalid task action: %s", action)
 	}
@@ -456,6 +517,408 @@ func validateProjectControlAcceptanceTransition(from, to, resultingTaskState str
 		}
 	}
 	return fmt.Errorf("illegal acceptance transition: %s -> %s", from, to)
+}
+
+func defaultProjectControlRunbooks() []projectControlRunbook {
+	return []projectControlRunbook{{
+		ID:      projectControlDefaultRunbookID,
+		Skill:   projectControlDefaultSkillID,
+		Version: "0.1",
+		Phases: []projectControlRunbookPhase{
+			{ID: "plan", ExecutionRole: "plan", WriteAccess: "read_only", RequiredArtifacts: []string{"plan"}},
+			{ID: "implement", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"diff_summary"}},
+			{ID: "test", ExecutionRole: "test", WriteAccess: "read_only", RequiredArtifacts: []string{"test_result"}},
+			{ID: "review", ExecutionRole: "review", WriteAccess: "read_only", RequiredArtifacts: []string{"review_result"}},
+			{ID: "fix_or_replan", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"diff_summary"}},
+			{ID: "final_validation", ExecutionRole: "verify", WriteAccess: "read_only", RequiredArtifacts: []string{"completion_check"}},
+		},
+		CompletionRules: []string{"plan", "diff_summary", "test_result", "review_result", "completion_check"},
+	}}
+}
+
+func defaultProjectControlRunbook() projectControlRunbook {
+	return defaultProjectControlRunbooks()[0]
+}
+
+func findProjectControlRunbookPhase(runbook projectControlRunbook, phaseID string) (projectControlRunbookPhase, bool) {
+	phaseID = normalizeProjectControlPhaseID(phaseID)
+	for _, phase := range runbook.Phases {
+		if phase.ID == phaseID {
+			return phase, true
+		}
+	}
+	return projectControlRunbookPhase{}, false
+}
+
+func nextProjectControlRunbookPhaseID(runbook projectControlRunbook, phaseID string) string {
+	switch normalizeProjectControlPhaseID(phaseID) {
+	case "plan":
+		return "implement"
+	case "implement":
+		return "test"
+	case "test":
+		return "review"
+	case "review":
+		return "final_validation"
+	case "fix_or_replan":
+		return "test"
+	case "final_validation":
+		return "ready_for_acceptance"
+	default:
+		return ""
+	}
+}
+
+func inferProjectControlCurrentPhase(task projectControlTask) string {
+	if phase := normalizeProjectControlPhaseID(task.CurrentPhase); phase != "" {
+		return phase
+	}
+	switch normalizeProjectControlTaskState(task.State) {
+	case "planned", "queued":
+		return "plan"
+	case "waiting_review":
+		return "review"
+	case "blocked", "failed":
+		return "fix_or_replan"
+	case "execution_complete", "archived":
+		return "ready_for_acceptance"
+	default:
+		return "implement"
+	}
+}
+
+func inferProjectControlRunbookState(task projectControlTask) string {
+	if state := normalizeProjectControlRunbookState(task.RunbookState); state != "" {
+		return state
+	}
+	switch normalizeProjectControlTaskState(task.State) {
+	case "planned", "queued":
+		return "not_started"
+	case "waiting_review":
+		return "waiting_review"
+	case "blocked", "failed":
+		return "needs_fix"
+	case "execution_complete":
+		if task.AcceptanceStatus == "accepted" {
+			return "accepted"
+		}
+		return "ready_for_acceptance"
+	case "archived":
+		return "archived"
+	default:
+		return "in_progress"
+	}
+}
+
+func refreshProjectControlTaskRunbookFields(task *projectControlTask, artifacts []projectControlArtifact) {
+	if task == nil {
+		return
+	}
+	if strings.TrimSpace(task.SelectedSkill) == "" {
+		task.SelectedSkill = projectControlDefaultSkillID
+	}
+	if strings.TrimSpace(task.RunbookID) == "" {
+		task.RunbookID = projectControlDefaultRunbookID
+	}
+	task.CurrentPhase = inferProjectControlCurrentPhase(*task)
+	task.RunbookState = inferProjectControlRunbookState(*task)
+	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, artifacts, defaultProjectControlRunbook(), "")
+}
+
+func projectControlPhaseAgentType(phase projectControlRunbookPhase) string {
+	switch phase.ExecutionRole {
+	case "review":
+		return "reviewer"
+	case "verify":
+		return "verifier"
+	case "test":
+		return "tester"
+	default:
+		return "worker"
+	}
+}
+
+func projectControlPhaseWorkspaceRef(phase projectControlRunbookPhase) string {
+	switch phase.WriteAccess {
+	case "scoped_write":
+		return "shared_repo"
+	default:
+		return "read_only_snapshot"
+	}
+}
+
+func projectControlTaskStateForPhase(phaseID string) string {
+	switch normalizeProjectControlPhaseID(phaseID) {
+	case "review":
+		return "waiting_review"
+	case "fix_or_replan":
+		return "running"
+	default:
+		return "running"
+	}
+}
+
+func projectControlCanStartPhase(task projectControlTask, phaseID string, runbook projectControlRunbook) error {
+	phaseID = normalizeProjectControlPhaseID(phaseID)
+	if phaseID == "" || phaseID == "ready_for_acceptance" {
+		return errors.New("valid phaseId is required")
+	}
+	if _, ok := findProjectControlRunbookPhase(runbook, phaseID); !ok {
+		return fmt.Errorf("unknown runbook phase: %s", phaseID)
+	}
+	if normalizeProjectControlTaskState(task.State) == "archived" {
+		return errors.New("archived task cannot start a runbook phase")
+	}
+	if normalizeProjectControlAcceptanceStatus(task.AcceptanceStatus) == "accepted" {
+		return errors.New("accepted task cannot start a runbook phase")
+	}
+	current := inferProjectControlCurrentPhase(task)
+	if current == "ready_for_acceptance" {
+		return errors.New("task is already ready for acceptance")
+	}
+	if phaseID != current {
+		return fmt.Errorf("cannot start phase %s while current phase is %s", phaseID, current)
+	}
+	return nil
+}
+
+func findRunningProjectControlPhaseAttemptIndex(attempts []projectControlPhaseAttempt, taskID, phaseID string) int {
+	for i := len(attempts) - 1; i >= 0; i-- {
+		attempt := attempts[i]
+		if attempt.TaskID == taskID && attempt.PhaseID == phaseID && attempt.Status == "running" {
+			return i
+		}
+	}
+	return -1
+}
+
+func startProjectControlTaskPhase(state *projectControlState, task *projectControlTask, phaseID, now string) error {
+	if state == nil || task == nil {
+		return errors.New("missing project control state")
+	}
+	refreshProjectControlTaskRunbookFields(task, state.Artifacts)
+	runbook := defaultProjectControlRunbook()
+	phaseID = normalizeProjectControlPhaseID(phaseID)
+	if phaseID == "" {
+		phaseID = task.CurrentPhase
+	}
+	if err := projectControlCanStartPhase(*task, phaseID, runbook); err != nil {
+		return err
+	}
+	if findRunningProjectControlPhaseAttemptIndex(state.PhaseAttempts, task.ID, phaseID) != -1 {
+		return fmt.Errorf("phase %s is already running", phaseID)
+	}
+	phase, _ := findProjectControlRunbookPhase(runbook, phaseID)
+	attempt := projectControlPhaseAttempt{
+		ID:           projectControlID("phase-attempt", task.ID+"-"+phaseID),
+		TaskID:       task.ID,
+		RunbookID:    task.RunbookID,
+		PhaseID:      phaseID,
+		AgentType:    projectControlPhaseAgentType(phase),
+		RuntimeID:    task.RuntimeID,
+		WorkspaceRef: projectControlPhaseWorkspaceRef(phase),
+		StartedAt:    now,
+		Status:       "running",
+		ArtifactIDs:  []string{},
+	}
+	state.PhaseAttempts = append(state.PhaseAttempts, attempt)
+	task.State = projectControlTaskStateForPhase(phaseID)
+	task.AcceptanceStatus = "not_ready"
+	task.CurrentPhase = phaseID
+	task.RunbookState = "in_progress"
+	task.RecentSummary = "Runbook phase " + phaseID + " started."
+	task.NextStep = "Complete " + phaseID + " with required evidence."
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "phase-started"),
+		Timestamp:    now,
+		Actor:        "runbook_engine",
+		Action:       "phase_started",
+		Detail:       "Started runbook phase " + phaseID + ".",
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+	})
+	return nil
+}
+
+func projectControlArtifactKindAllowed(phase projectControlRunbookPhase, kind string) bool {
+	if len(phase.RequiredArtifacts) == 0 {
+		return true
+	}
+	for _, required := range phase.RequiredArtifacts {
+		if normalizeProjectControlArtifactKind(required) == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func projectControlMissingCompletionEvidence(task projectControlTask, artifacts []projectControlArtifact, runbook projectControlRunbook, extraKind string) []string {
+	present := map[string]bool{}
+	hasTaskArtifacts := false
+	for _, artifact := range artifacts {
+		if artifact.TaskID == task.ID {
+			hasTaskArtifacts = true
+			present[normalizeProjectControlArtifactKind(artifact.Kind)] = true
+		}
+	}
+	if !hasTaskArtifacts && extraKind == "" && normalizeProjectControlTaskState(task.State) == "execution_complete" && normalizeProjectControlAcceptanceStatus(task.AcceptanceStatus) != "not_ready" {
+		return []string{}
+	}
+	if extraKind != "" {
+		present[normalizeProjectControlArtifactKind(extraKind)] = true
+	}
+	missing := []string{}
+	for _, rule := range runbook.CompletionRules {
+		kind := normalizeProjectControlArtifactKind(rule)
+		if kind != "" && !present[kind] {
+			missing = append(missing, kind)
+		}
+	}
+	return missing
+}
+
+func completeProjectControlTaskPhase(state *projectControlState, task *projectControlTask, req projectControlTaskUpdateRequest, now string) error {
+	if state == nil || task == nil {
+		return errors.New("missing project control state")
+	}
+	refreshProjectControlTaskRunbookFields(task, state.Artifacts)
+	runbook := defaultProjectControlRunbook()
+	phaseID := normalizeProjectControlPhaseID(req.PhaseID)
+	if phaseID == "" {
+		phaseID = task.CurrentPhase
+	}
+	phase, ok := findProjectControlRunbookPhase(runbook, phaseID)
+	if !ok {
+		return fmt.Errorf("unknown runbook phase: %s", phaseID)
+	}
+	attemptIndex := findRunningProjectControlPhaseAttemptIndex(state.PhaseAttempts, task.ID, phaseID)
+	if attemptIndex == -1 {
+		return fmt.Errorf("phase %s has no running attempt", phaseID)
+	}
+	artifactKind := normalizeProjectControlArtifactKind(req.ArtifactKind)
+	if len(phase.RequiredArtifacts) > 0 {
+		if artifactKind == "" {
+			return fmt.Errorf("phase %s requires artifact %s", phaseID, strings.Join(phase.RequiredArtifacts, ","))
+		}
+		if !projectControlArtifactKindAllowed(phase, artifactKind) {
+			return fmt.Errorf("phase %s does not accept artifact %s", phaseID, artifactKind)
+		}
+	}
+	if phaseID == "final_validation" {
+		if missing := projectControlMissingCompletionEvidence(*task, state.Artifacts, runbook, artifactKind); len(missing) > 0 {
+			return fmt.Errorf("completion rules not satisfied: missing %s", strings.Join(missing, ","))
+		}
+	}
+	attempt := state.PhaseAttempts[attemptIndex]
+	if artifactKind != "" {
+		label := strings.TrimSpace(req.ArtifactLabel)
+		if label == "" {
+			label = artifactKind
+		}
+		value := strings.TrimSpace(req.ArtifactValue)
+		if value == "" {
+			value = "Recorded " + artifactKind + " for phase " + phaseID + "."
+		}
+		artifact := projectControlArtifact{
+			ID:             projectControlID("artifact", task.ID+"-"+artifactKind),
+			TaskID:         task.ID,
+			PhaseAttemptID: attempt.ID,
+			Kind:           artifactKind,
+			Label:          label,
+			Value:          value,
+			CreatedAt:      now,
+		}
+		state.Artifacts = append(state.Artifacts, artifact)
+		attempt.ArtifactIDs = append(attempt.ArtifactIDs, artifact.ID)
+		task.Evidence = append(task.Evidence, projectControlEvidence{Label: label, Value: value})
+		if artifactKind == "diff_summary" {
+			task.DiffSummary = value
+		}
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "artifact-recorded"),
+			Timestamp:    now,
+			Actor:        "runbook_engine",
+			Action:       "artifact_recorded",
+			Detail:       "Recorded " + artifactKind + " artifact for phase " + phaseID + ".",
+			ProjectID:    task.ProjectID,
+			WorkstreamID: task.WorkstreamID,
+			TaskID:       task.ID,
+		})
+	}
+	attempt.Status = "completed"
+	attempt.CompletedAt = now
+	state.PhaseAttempts[attemptIndex] = attempt
+	nextPhase := nextProjectControlRunbookPhaseID(runbook, phaseID)
+	if nextPhase == "ready_for_acceptance" {
+		task.State = "execution_complete"
+		task.AcceptanceStatus = "ready_for_acceptance"
+		task.CurrentPhase = "ready_for_acceptance"
+		task.RunbookState = "ready_for_acceptance"
+		task.RecentSummary = "Runbook completion rules passed; task is ready for human acceptance."
+		task.NextStep = "Request final acceptance review to create the human checkpoint."
+		task.MissingEvidence = []string{}
+	} else {
+		task.CurrentPhase = nextPhase
+		task.RunbookState = "in_progress"
+		task.State = projectControlTaskStateForPhase(nextPhase)
+		task.RecentSummary = "Completed " + phaseID + "; next phase is " + nextPhase + "."
+		task.NextStep = "Start " + nextPhase + " and record its required evidence."
+		task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, runbook, "")
+	}
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "phase-completed"),
+		Timestamp:    now,
+		Actor:        "runbook_engine",
+		Action:       "phase_completed",
+		Detail:       "Completed runbook phase " + phaseID + ".",
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+	})
+	return nil
+}
+
+func failProjectControlTaskPhase(state *projectControlState, task *projectControlTask, phaseID, reason, now string) error {
+	if state == nil || task == nil {
+		return errors.New("missing project control state")
+	}
+	refreshProjectControlTaskRunbookFields(task, state.Artifacts)
+	phaseID = normalizeProjectControlPhaseID(phaseID)
+	if phaseID == "" {
+		phaseID = task.CurrentPhase
+	}
+	attemptIndex := findRunningProjectControlPhaseAttemptIndex(state.PhaseAttempts, task.ID, phaseID)
+	if attemptIndex == -1 {
+		return fmt.Errorf("phase %s has no running attempt", phaseID)
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Phase failed without a detailed reason."
+	}
+	attempt := state.PhaseAttempts[attemptIndex]
+	attempt.Status = "failed"
+	attempt.CompletedAt = now
+	attempt.FailureReason = reason
+	state.PhaseAttempts[attemptIndex] = attempt
+	task.State = "failed"
+	task.CurrentPhase = "fix_or_replan"
+	task.RunbookState = "needs_fix"
+	task.AcceptanceStatus = "not_ready"
+	task.RecentSummary = "Runbook phase " + phaseID + " failed."
+	task.NextStep = "Start fix_or_replan, then rerun test and review evidence."
+	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, defaultProjectControlRunbook(), "")
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "phase-failed"),
+		Timestamp:    now,
+		Actor:        "runbook_engine",
+		Action:       "phase_failed",
+		Detail:       "Phase " + phaseID + " failed: " + reason,
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+	})
+	return nil
 }
 
 func syncProjectControlAcceptanceCheckpoint(state *projectControlState, task projectControlTask, now string) {
@@ -742,6 +1205,11 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			Priority:         normalizeProjectControlPriority(req.Priority),
 			AgentLabel:       "worker",
 			RuntimeID:        projectControlRuntimeID,
+			SelectedSkill:    projectControlDefaultSkillID,
+			RunbookID:        projectControlDefaultRunbookID,
+			CurrentPhase:     "plan",
+			RunbookState:     "not_started",
+			MissingEvidence:  []string{"plan", "diff_summary", "test_result", "review_result", "completion_check"},
 			RecentSummary:    "Task created from the Project Panel and waiting to be scheduled.",
 			NextStep:         "Open a session or connect a runtime-backed workflow to start execution.",
 			FilesChanged:     []string{},
@@ -857,6 +1325,21 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 				return err
 			}
 			now := time.Now().UTC().Format(time.RFC3339)
+			action := strings.TrimSpace(strings.ToLower(req.Action))
+			switch action {
+			case "start_phase":
+				if err := startProjectControlTaskPhase(state, &task, req.PhaseID, now); err != nil {
+					return err
+				}
+			case "complete_phase":
+				if err := completeProjectControlTaskPhase(state, &task, req, now); err != nil {
+					return err
+				}
+			case "fail_phase":
+				if err := failProjectControlTaskPhase(state, &task, req.PhaseID, req.FailureReason, now); err != nil {
+					return err
+				}
+			}
 			if value := strings.TrimSpace(req.Title); value != "" {
 				task.Title = value
 			}
@@ -1586,7 +2069,7 @@ func defaultProjectControlState() projectControlState {
 	stampE := now.Add(-50 * time.Minute).Format(time.RFC3339)
 	stampF := now.Add(-45 * time.Minute).Format(time.RFC3339)
 
-	return projectControlState{
+	state := projectControlState{
 		ActiveProjectID: projectControlProjectID,
 		Projects: []projectControlProject{{
 			ID:          projectControlProjectID,
@@ -1713,6 +2196,8 @@ func defaultProjectControlState() projectControlState {
 		},
 		UpdatedAt: now.Format(time.RFC3339Nano),
 	}
+	projectControlNormalizeState(&state)
+	return state
 }
 
 func buildProjectControlSnapshot(state projectControlState, username string, terminals *terminal.Manager) projectControlSnapshot {
@@ -1737,10 +2222,16 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	projects := cloneProjectControlProjects(state.Projects)
 	workstreams := cloneProjectControlWorkstreams(state.Workstreams)
 	tasks := cloneProjectControlTasks(state.Tasks)
+	runbooks := defaultProjectControlRunbooks()
+	phaseAttempts := cloneProjectControlPhaseAttempts(state.PhaseAttempts)
+	artifacts := cloneProjectControlArtifacts(state.Artifacts)
 	checkpoints := cloneProjectControlCheckpoints(state.Checkpoints)
 	decisions := cloneProjectControlDecisions(state.Decisions)
 	events := cloneProjectControlRecordedEvents(state.Events)
 	applyRecordedEventsToTasks(tasks, events)
+	for i := range tasks {
+		refreshProjectControlTaskRunbookFields(&tasks[i], artifacts)
+	}
 	runtimes := []projectControlRuntime{{ID: projectControlRuntimeID, Name: runtimeName, Kind: runtimeKind, Status: "online", InteractiveAttach: terminals != nil, HealthSummary: healthSummary}}
 	sessions := []projectControlSession{{
 		ID:             "session-review-ia",
@@ -1825,6 +2316,9 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		Tasks:           tasks,
 		Sessions:        sessions,
 		Runtimes:        runtimes,
+		Runbooks:        runbooks,
+		PhaseAttempts:   phaseAttempts,
+		Artifacts:       artifacts,
 		Checkpoints:     checkpoints,
 		Decisions:       decisions,
 		Dashboard:       dashboard,
@@ -1979,6 +2473,42 @@ func normalizeProjectControlTaskState(value string) string {
 	}
 }
 
+func normalizeProjectControlPhaseID(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "plan", "implement", "test", "review", "fix_or_replan", "final_validation", "ready_for_acceptance":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return ""
+	}
+}
+
+func normalizeProjectControlRunbookState(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "not_started", "in_progress", "waiting_review", "needs_fix", "ready_for_acceptance", "accepted", "archived":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return ""
+	}
+}
+
+func normalizeProjectControlPhaseAttemptStatus(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "running", "completed", "failed", "cancelled":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return "running"
+	}
+}
+
+func normalizeProjectControlArtifactKind(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "plan", "diff_summary", "test_result", "review_result", "completion_check":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return strings.TrimSpace(strings.ToLower(value))
+	}
+}
+
 func normalizeProjectControlAcceptanceStatus(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case "not_ready", "ready_for_acceptance", "under_human_review", "accepted", "rejected":
@@ -2009,6 +2539,12 @@ func projectControlNormalizeState(state *projectControlState) {
 	}
 	if state.Tasks == nil {
 		state.Tasks = []projectControlTask{}
+	}
+	if state.PhaseAttempts == nil {
+		state.PhaseAttempts = []projectControlPhaseAttempt{}
+	}
+	if state.Artifacts == nil {
+		state.Artifacts = []projectControlArtifact{}
 	}
 	if state.Checkpoints == nil {
 		state.Checkpoints = []projectControlCheckpoint{}
@@ -2049,6 +2585,10 @@ func projectControlNormalizeState(state *projectControlState) {
 		state.Tasks[i].AcceptanceStatus = normalizeProjectControlAcceptanceStatus(state.Tasks[i].AcceptanceStatus)
 		state.Tasks[i].Priority = normalizeProjectControlPriority(state.Tasks[i].Priority)
 		state.Tasks[i].RiskLevel = normalizeProjectControlRisk(state.Tasks[i].RiskLevel)
+		state.Tasks[i].SelectedSkill = strings.TrimSpace(state.Tasks[i].SelectedSkill)
+		state.Tasks[i].RunbookID = strings.TrimSpace(state.Tasks[i].RunbookID)
+		state.Tasks[i].CurrentPhase = normalizeProjectControlPhaseID(state.Tasks[i].CurrentPhase)
+		state.Tasks[i].RunbookState = normalizeProjectControlRunbookState(state.Tasks[i].RunbookState)
 		if state.Tasks[i].FilesChanged == nil {
 			state.Tasks[i].FilesChanged = []string{}
 		}
@@ -2064,9 +2604,34 @@ func projectControlNormalizeState(state *projectControlState) {
 		if state.Tasks[i].Audit == nil {
 			state.Tasks[i].Audit = []projectControlAuditItem{}
 		}
+		refreshProjectControlTaskRunbookFields(&state.Tasks[i], state.Artifacts)
 		if state.Tasks[i].RowVersion < 1 {
 			state.Tasks[i].RowVersion = 1
 		}
+	}
+	for i := range state.PhaseAttempts {
+		state.PhaseAttempts[i].ID = strings.TrimSpace(state.PhaseAttempts[i].ID)
+		state.PhaseAttempts[i].TaskID = strings.TrimSpace(state.PhaseAttempts[i].TaskID)
+		state.PhaseAttempts[i].RunbookID = strings.TrimSpace(state.PhaseAttempts[i].RunbookID)
+		if state.PhaseAttempts[i].RunbookID == "" {
+			state.PhaseAttempts[i].RunbookID = projectControlDefaultRunbookID
+		}
+		state.PhaseAttempts[i].PhaseID = normalizeProjectControlPhaseID(state.PhaseAttempts[i].PhaseID)
+		state.PhaseAttempts[i].AgentType = strings.TrimSpace(state.PhaseAttempts[i].AgentType)
+		state.PhaseAttempts[i].RuntimeID = strings.TrimSpace(state.PhaseAttempts[i].RuntimeID)
+		state.PhaseAttempts[i].WorkspaceRef = strings.TrimSpace(state.PhaseAttempts[i].WorkspaceRef)
+		state.PhaseAttempts[i].Status = normalizeProjectControlPhaseAttemptStatus(state.PhaseAttempts[i].Status)
+		if state.PhaseAttempts[i].ArtifactIDs == nil {
+			state.PhaseAttempts[i].ArtifactIDs = []string{}
+		}
+	}
+	for i := range state.Artifacts {
+		state.Artifacts[i].ID = strings.TrimSpace(state.Artifacts[i].ID)
+		state.Artifacts[i].TaskID = strings.TrimSpace(state.Artifacts[i].TaskID)
+		state.Artifacts[i].PhaseAttemptID = strings.TrimSpace(state.Artifacts[i].PhaseAttemptID)
+		state.Artifacts[i].Kind = normalizeProjectControlArtifactKind(state.Artifacts[i].Kind)
+		state.Artifacts[i].Label = strings.TrimSpace(state.Artifacts[i].Label)
+		state.Artifacts[i].Value = strings.TrimSpace(state.Artifacts[i].Value)
 	}
 	for i := range state.Checkpoints {
 		state.Checkpoints[i].ID = strings.TrimSpace(state.Checkpoints[i].ID)
@@ -2200,12 +2765,28 @@ func cloneProjectControlTasks(items []projectControlTask) []projectControlTask {
 	out := make([]projectControlTask, len(items))
 	for i, item := range items {
 		out[i] = item
+		out[i].MissingEvidence = append([]string{}, item.MissingEvidence...)
 		out[i].FilesChanged = append([]string{}, item.FilesChanged...)
 		out[i].SessionIDs = append([]string{}, item.SessionIDs...)
 		out[i].Timeline = append([]projectControlEvent{}, item.Timeline...)
 		out[i].Evidence = append([]projectControlEvidence{}, item.Evidence...)
 		out[i].Audit = append([]projectControlAuditItem{}, item.Audit...)
 	}
+	return out
+}
+
+func cloneProjectControlPhaseAttempts(items []projectControlPhaseAttempt) []projectControlPhaseAttempt {
+	out := make([]projectControlPhaseAttempt, len(items))
+	for i, item := range items {
+		out[i] = item
+		out[i].ArtifactIDs = append([]string{}, item.ArtifactIDs...)
+	}
+	return out
+}
+
+func cloneProjectControlArtifacts(items []projectControlArtifact) []projectControlArtifact {
+	out := make([]projectControlArtifact, len(items))
+	copy(out, items)
 	return out
 }
 
