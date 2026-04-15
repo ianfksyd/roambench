@@ -5814,7 +5814,7 @@ button.tab-action:focus-visible {
 
 .project-command-stats {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 10px;
     min-width: 0;
     max-width: 100%;
@@ -5854,6 +5854,165 @@ button.tab-action:focus-visible {
 .project-command-stat.tone-warning .project-command-stat-value { color: var(--tone-warning); }
 .project-command-stat.tone-danger .project-command-stat-value { color: var(--tone-danger); }
 .project-command-stat.tone-success .project-command-stat-value { color: var(--tone-success); }
+
+.project-card-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+    margin-bottom: 10px;
+}
+
+.project-card-title-row h3 {
+    margin: 0;
+}
+
+.project-task-control-grid {
+    align-items: start;
+}
+
+.project-runbook-panel,
+.project-artifact-panel {
+    display: grid;
+    gap: 12px;
+}
+
+.project-phase-list,
+.project-artifact-list {
+    display: grid;
+    gap: 8px;
+}
+
+.project-phase-row,
+.project-artifact-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    min-height: 48px;
+    padding: 9px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-left-width: 4px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.project-artifact-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.project-phase-row.tone-info,
+.project-artifact-row.tone-info { border-left-color: var(--tone-info); }
+.project-phase-row.tone-warning,
+.project-artifact-row.tone-warning { border-left-color: var(--tone-warning); }
+.project-phase-row.tone-danger,
+.project-artifact-row.tone-danger { border-left-color: var(--tone-danger); }
+.project-phase-row.tone-success,
+.project-artifact-row.tone-success { border-left-color: var(--tone-success); }
+
+.project-phase-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.07);
+    font-size: 11px;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+}
+
+.project-phase-main,
+.project-artifact-main {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.project-phase-title,
+.project-artifact-value {
+    overflow-wrap: anywhere;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.project-phase-meta {
+    overflow: hidden;
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.project-missing-evidence {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.project-missing-evidence.compact {
+    margin: 4px 0;
+}
+
+.project-phase-control-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.project-phase-form {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.project-phase-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
+    gap: 10px;
+}
+
+.project-phase-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.project-phase-field span {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 10px;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.project-phase-field input,
+.project-phase-field select {
+    width: 100%;
+    min-height: 40px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.055);
+    color: var(--text);
+    padding: 9px 10px;
+}
+
+.project-phase-field input:focus,
+.project-phase-field select:focus {
+    outline: none;
+    border-color: rgba(98, 176, 255, 0.55);
+    box-shadow: 0 0 0 2px rgba(98, 176, 255, 0.16);
+}
+
+.project-phase-field input::placeholder {
+    color: rgba(255, 255, 255, 0.34);
+}
 
 .project-command-hero {
     display: grid;
@@ -6195,6 +6354,12 @@ button.tab-action:focus-visible {
 
     .project-command-stat {
         min-width: 0;
+    }
+
+    .project-phase-fields,
+    .project-phase-row,
+    .project-artifact-row {
+        grid-template-columns: 1fr;
     }
 
     .project-command-hero-side {

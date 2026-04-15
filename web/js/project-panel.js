@@ -27,7 +27,8 @@
         creatingWorkstreamProjectId: '',
         creatingWorkstreamTitle: '',
         creatingWorkstreamScope: '',
-        creatingWorkstreamSaving: false
+        creatingWorkstreamSaving: false,
+        phaseUpdatingTaskId: ''
     };
 
     function app() {
@@ -248,6 +249,55 @@
         }
     }
 
+    function humanizePhase(phaseId) {
+        switch (String(phaseId || '').trim().toLowerCase()) {
+        case 'plan':
+            return tr('project.phasePlan', 'Plan');
+        case 'implement':
+            return tr('project.phaseImplement', 'Implement');
+        case 'test':
+            return tr('project.phaseTest', 'Test');
+        case 'review':
+            return tr('project.phaseReview', 'Review');
+        case 'fix_or_replan':
+            return tr('project.phaseFixOrReplan', 'Fix or replan');
+        case 'final_validation':
+            return tr('project.phaseFinalValidation', 'Final validation');
+        case 'ready_for_acceptance':
+            return tr('project.phaseReadyForAcceptance', 'Ready for acceptance');
+        default:
+            return humanizeToken(phaseId);
+        }
+    }
+
+    function humanizeArtifactKind(kind) {
+        switch (String(kind || '').trim().toLowerCase()) {
+        case 'plan':
+            return tr('project.artifactPlan', 'Plan');
+        case 'diff_summary':
+            return tr('project.artifactDiffSummary', 'Diff summary');
+        case 'test_result':
+            return tr('project.artifactTestResult', 'Test result');
+        case 'review_result':
+            return tr('project.artifactReviewResult', 'Review result');
+        case 'completion_check':
+            return tr('project.artifactCompletionCheck', 'Completion check');
+        default:
+            return humanizeToken(kind);
+        }
+    }
+
+    function humanizeArtifactOutcome(outcome) {
+        switch (String(outcome || '').trim().toLowerCase()) {
+        case 'pass':
+            return tr('project.outcomePass', 'Pass');
+        case 'fail':
+            return tr('project.outcomeFail', 'Fail');
+        default:
+            return tr('project.outcomeRecorded', 'Recorded');
+        }
+    }
+
     function humanizeAgentLabel(agentLabel) {
         switch (String(agentLabel || '').trim().toLowerCase()) {
         case 'worker':
@@ -391,12 +441,191 @@
         return state.snapshot && Array.isArray(state.snapshot.checkpoints) ? state.snapshot.checkpoints : [];
     }
 
+    function runbooks() {
+        return state.snapshot && Array.isArray(state.snapshot.runbooks) ? state.snapshot.runbooks : [];
+    }
+
+    function phaseAttempts() {
+        return state.snapshot && Array.isArray(state.snapshot.phaseAttempts) ? state.snapshot.phaseAttempts : [];
+    }
+
+    function artifacts() {
+        return state.snapshot && Array.isArray(state.snapshot.artifacts) ? state.snapshot.artifacts : [];
+    }
+
     function runtimes() {
         return state.snapshot && Array.isArray(state.snapshot.runtimes) ? state.snapshot.runtimes : [];
     }
 
     function findById(items, id) {
         return (items || []).find(function(item) { return item.id === id; }) || null;
+    }
+
+    function runbookForTask(task) {
+        var items = runbooks();
+        var runbookId = task && task.runbookId ? task.runbookId : '';
+        return findById(items, runbookId) || items[0] || null;
+    }
+
+    function phasesForTask(task) {
+        var runbook = runbookForTask(task);
+        return runbook && Array.isArray(runbook.phases) ? runbook.phases : [];
+    }
+
+    function taskArtifacts(taskId) {
+        return artifacts().filter(function(item) { return item.taskId === taskId; });
+    }
+
+    function taskPhaseAttempts(taskId, phaseId) {
+        return phaseAttempts().filter(function(item) {
+            return item.taskId === taskId && (!phaseId || item.phaseId === phaseId);
+        });
+    }
+
+    function latestPhaseAttempt(taskId, phaseId) {
+        var items = taskPhaseAttempts(taskId, phaseId).slice();
+        if (!items.length) {
+            return null;
+        }
+        items.sort(function(a, b) {
+            var at = String(a.startedAt || '');
+            var bt = String(b.startedAt || '');
+            if (at === bt) {
+                return String(b.id || '').localeCompare(String(a.id || ''));
+            }
+            return bt.localeCompare(at);
+        });
+        return items[0];
+    }
+
+    function taskMissingEvidence(task) {
+        return task && Array.isArray(task.missingEvidence) ? task.missingEvidence : [];
+    }
+
+    function artifactKindForPhase(phase) {
+        return phase && Array.isArray(phase.requiredArtifacts) && phase.requiredArtifacts.length
+            ? String(phase.requiredArtifacts[0] || '').trim()
+            : '';
+    }
+
+    function currentPhaseForTask(task) {
+        return String(task && task.currentPhase || '').trim() || 'plan';
+    }
+
+    function currentRunbookPhase(task) {
+        var current = currentPhaseForTask(task);
+        return phasesForTask(task).filter(function(phase) { return phase.id === current; })[0] || null;
+    }
+
+    function phaseRequiresPassingOutcome(kind) {
+        kind = String(kind || '').trim().toLowerCase();
+        return kind === 'test_result' || kind === 'review_result' || kind === 'completion_check';
+    }
+
+    function defaultOutcomeForArtifact(kind) {
+        return phaseRequiresPassingOutcome(kind) ? 'pass' : 'recorded';
+    }
+
+    function artifactOutcomeTone(outcome) {
+        switch (String(outcome || '').trim().toLowerCase()) {
+        case 'pass':
+            return 'success';
+        case 'fail':
+            return 'danger';
+        default:
+            return 'info';
+        }
+    }
+
+    function taskArtifactForKind(taskId, kind) {
+        var normalizedKind = String(kind || '').trim().toLowerCase();
+        var items = taskArtifacts(taskId).filter(function(item) {
+            return String(item.kind || '').trim().toLowerCase() === normalizedKind;
+        });
+        if (!items.length) {
+            return null;
+        }
+        items.sort(function(a, b) {
+            var at = String(a.createdAt || '');
+            var bt = String(b.createdAt || '');
+            if (at === bt) {
+                return String(b.id || '').localeCompare(String(a.id || ''));
+            }
+            return bt.localeCompare(at);
+        });
+        return items[0];
+    }
+
+    function phaseStatusForTask(task, phase) {
+        var current = currentPhaseForTask(task);
+        if (!phase) {
+            return current === 'ready_for_acceptance' ? 'completed' : 'pending';
+        }
+        var attempt = latestPhaseAttempt(task && task.id, phase && phase.id);
+        var artifact = taskArtifactForKind(task && task.id, artifactKindForPhase(phase));
+        if (attempt && attempt.status === 'running') {
+            return 'running';
+        }
+        if ((attempt && attempt.status === 'failed') || (artifact && artifact.outcome === 'fail')) {
+            return 'failed';
+        }
+        if ((attempt && attempt.status === 'completed') || artifact) {
+            return 'completed';
+        }
+        if (phase && phase.id === current) {
+            return 'current';
+        }
+        return 'pending';
+    }
+
+    function phaseStatusTone(status) {
+        switch (String(status || '').trim().toLowerCase()) {
+        case 'completed':
+            return 'success';
+        case 'running':
+            return 'info';
+        case 'failed':
+            return 'danger';
+        case 'current':
+            return 'warning';
+        default:
+            return 'neutral';
+        }
+    }
+
+    function phaseStatusLabel(status) {
+        switch (String(status || '').trim().toLowerCase()) {
+        case 'completed':
+            return tr('project.phaseStatusCompleted', 'Completed');
+        case 'running':
+            return tr('project.phaseStatusRunning', 'Running');
+        case 'failed':
+            return tr('project.phaseStatusFailed', 'Failed');
+        case 'current':
+            return tr('project.phaseStatusCurrent', 'Current');
+        default:
+            return tr('project.phaseStatusPending', 'Pending');
+        }
+    }
+
+    function hasRunningCurrentPhase(task) {
+        var phaseId = currentPhaseForTask(task);
+        var attempt = latestPhaseAttempt(task && task.id, phaseId);
+        return !!(attempt && attempt.status === 'running');
+    }
+
+    function canRequestAcceptanceReview(task) {
+        return !!task
+            && task.acceptanceStatus === 'ready_for_acceptance'
+            && task.state === 'execution_complete'
+            && taskMissingEvidence(task).length === 0;
+    }
+
+    function canApproveFinalAcceptance(task) {
+        return !!task
+            && task.state === 'execution_complete'
+            && task.acceptanceStatus === 'under_human_review'
+            && taskMissingEvidence(task).length === 0;
     }
 
     function getSelectedProject() {
@@ -844,29 +1073,37 @@
         });
     }
 
-    function updateTaskInline(taskId, action) {
+    function updateTaskInline(taskId, action, extraPayload) {
         var task = findById(tasks(), taskId);
+        var body;
         if (!task) {
             return;
         }
         state.updatingTaskId = taskId;
+        state.phaseUpdatingTaskId = taskId;
         state.error = '';
         render();
+        body = {
+            expectedRowVersion: task.rowVersion,
+            action: action
+        };
+        Object.keys(extraPayload || {}).forEach(function(key) {
+            body[key] = extraPayload[key];
+        });
         fetchJSON('/api/project-control/tasks/' + encodeURIComponent(taskId), {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                expectedRowVersion: task.rowVersion,
-                action: action
-            })
+            body: JSON.stringify(body)
         }).then(function(snapshot) {
             state.updatingTaskId = '';
+            state.phaseUpdatingTaskId = '';
             state.snapshot = snapshot;
             openTask(taskId);
             updateBadge();
             render();
         }).catch(function(err) {
             state.updatingTaskId = '';
+            state.phaseUpdatingTaskId = '';
             if (err && err.status === 409) {
                 refreshSnapshotAfterConflict((err.message || tr('project.updateTaskFailed', 'Update task failed')) + ' ' + tr('project.reloadedLatest', 'Reloaded latest state.'));
                 return;
@@ -877,9 +1114,9 @@
     }
 
     function renderActionButtons(buttons, dataAttr, entityId, updating) {
-        var disabled = updating ? ' disabled' : '';
         return (buttons || []).map(function(button) {
             var tone = button.tone ? ' ' + button.tone : '';
+            var disabled = updating || button.disabled ? ' disabled' : '';
             return '<button type="button" class="project-inline-btn' + tone + '" ' + dataAttr + '="' + escapeHTML(entityId) + '" data-action="' + escapeHTML(button.action) + '"' + disabled + '>' + escapeHTML(button.label) + '</button>';
         }).join('');
     }
@@ -909,9 +1146,11 @@
     }
 
     function recommendedTaskActions(task) {
+        var currentPhase = currentPhaseForTask(task);
+        var phaseStartAction = { action: 'start_phase', label: tr('project.actionStartPhase', 'Start phase') + ': ' + humanizePhase(currentPhase), tone: 'primary' };
         if (task.acceptanceStatus === 'ready_for_acceptance') {
             return [
-                { action: 'request_acceptance_review', label: tr('project.actionSendApproval', 'Send for approval'), tone: 'primary' },
+                { action: 'request_acceptance_review', label: tr('project.actionSendApproval', 'Send for approval'), tone: 'primary', disabled: !canRequestAcceptanceReview(task) },
                 { action: 'reopen_task', label: tr('project.actionResumeTask', 'Resume task') }
             ];
         }
@@ -925,25 +1164,22 @@
         case 'planned':
             return [
                 { action: 'queue_task', label: tr('project.actionAddQueue', 'Add to queue') },
-                { action: 'start_execution', label: tr('project.actionStartTask', 'Start task'), tone: 'primary' }
+                phaseStartAction
             ];
         case 'queued':
             return [
-                { action: 'start_execution', label: tr('project.actionStartTask', 'Start task'), tone: 'primary' },
+                phaseStartAction,
                 { action: 'mark_blocked', label: tr('project.actionMarkBlocked', 'Mark blocked') }
             ];
         case 'running':
-            return [
+            return (hasRunningCurrentPhase(task) ? [] : [phaseStartAction]).concat([
                 { action: 'request_human_input', label: tr('project.actionNeedInput', 'Need input') },
-                { action: 'mark_waiting_review', label: tr('project.actionReadyReview', 'Ready for review') },
-                { action: 'mark_blocked', label: tr('project.actionMarkBlocked', 'Mark blocked') },
-                { action: 'mark_execution_complete', label: tr('project.actionExecutionDone', 'Execution done'), tone: 'primary' }
-            ];
+                { action: 'mark_blocked', label: tr('project.actionMarkBlocked', 'Mark blocked') }
+            ]);
         case 'waiting_review':
-            return [
-                { action: 'resume_execution', label: tr('project.actionResumeTask', 'Resume task') },
-                { action: 'mark_execution_complete', label: tr('project.actionExecutionDone', 'Execution done'), tone: 'primary' }
-            ];
+            return (hasRunningCurrentPhase(task) ? [] : [phaseStartAction]).concat([
+                { action: 'resume_execution', label: tr('project.actionResumeTask', 'Resume task') }
+            ]);
         case 'waiting_human':
             return [
                 { action: 'resume_execution', label: tr('project.actionResumeTask', 'Resume task'), tone: 'primary' },
@@ -960,7 +1196,6 @@
             }
             if (task.acceptanceStatus === 'not_ready') {
                 return [
-                    { action: 'mark_ready_for_acceptance', label: tr('project.actionReadyApproval', 'Ready for approval'), tone: 'primary' },
                     { action: 'request_archive_override', label: tr('project.actionArchiveException', 'Request archive exception') },
                     { action: 'reopen_task', label: tr('project.actionResumeTask', 'Resume task') }
                 ];
@@ -1218,6 +1453,13 @@
         }
     }
 
+    function renderCheckpointActionButton(action, checkpointId, source, task, kind) {
+        var disabled = kind === 'final_acceptance' && action === 'approve' && !canApproveFinalAcceptance(task);
+        return '<button type="button" class="project-inline-btn ' + (action === 'approve' ? 'primary' : '') + '" data-checkpoint-id="' + escapeHTML(checkpointId) + '" data-checkpoint-action="' + escapeHTML(action) + '"'
+            + (source ? ' data-checkpoint-source="' + escapeHTML(source) + '"' : '')
+            + (disabled ? ' disabled' : '') + '>' + escapeHTML(approvalActionLabel(action)) + '</button>';
+    }
+
     function approvalKindSummary(item) {
         var kind = String(item && item.kind || '').trim();
         if (kind === 'final_acceptance') {
@@ -1292,7 +1534,7 @@
         var finalAcceptance = currentTaskApprovalState(task, 'final_acceptance');
         var archiveOverride = currentTaskApprovalState(task, 'archive_override');
 
-        function renderStatusRow(label, approval) {
+        function renderStatusRow(label, approval, kind) {
             if (!approval) {
                 return '';
             }
@@ -1305,7 +1547,7 @@
                 + ((approval.actions || []).length
                     ? '<div class="project-approval-actions">'
                         + approval.actions.map(function(action) {
-                            return '<button type="button" class="project-inline-btn ' + (action === 'approve' ? 'primary' : '') + '" data-checkpoint-id="' + escapeHTML(approval.checkpointId) + '" data-checkpoint-action="' + escapeHTML(action) + '" data-checkpoint-source="task">' + escapeHTML(approvalActionLabel(action)) + '</button>';
+                            return renderCheckpointActionButton(action, approval.checkpointId, 'task', task, kind);
                         }).join('')
                         + '</div>'
                     : '')
@@ -1316,8 +1558,8 @@
             return '';
         }
         return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.currentApprovals', 'Current approvals')) + '</h3>'
-            + renderStatusRow(tr('project.finalAcceptance', 'Final acceptance'), finalAcceptance)
-            + renderStatusRow(tr('project.archiveOverride', 'Archive override'), archiveOverride)
+            + renderStatusRow(tr('project.finalAcceptance', 'Final acceptance'), finalAcceptance, 'final_acceptance')
+            + renderStatusRow(tr('project.archiveOverride', 'Archive override'), archiveOverride, 'archive_override')
             + '</div>';
     }
 
@@ -2768,11 +3010,100 @@
             + '</section>';
     }
 
+    function renderTaskRunbookPanel(task) {
+        var phases = phasesForTask(task);
+        var currentPhase = currentPhaseForTask(task);
+        var currentPhaseDef = currentRunbookPhase(task);
+        var missing = taskMissingEvidence(task);
+        var updating = state.phaseUpdatingTaskId === task.id || state.updatingTaskId === task.id;
+        var disabled = updating ? ' disabled' : '';
+        var runningAttempt = latestPhaseAttempt(task.id, currentPhase);
+        var isRunning = runningAttempt && runningAttempt.status === 'running';
+        var artifactKind = artifactKindForPhase(currentPhaseDef);
+        var defaultOutcome = defaultOutcomeForArtifact(artifactKind);
+        var canStart = currentPhaseDef && currentPhase !== 'ready_for_acceptance' && !isRunning && task.acceptanceStatus !== 'accepted' && task.state !== 'archived';
+        var canComplete = currentPhaseDef && currentPhase !== 'ready_for_acceptance' && isRunning;
+        var phaseRows = phases.map(function(phase, index) {
+            var status = phaseStatusForTask(task, phase);
+            var tone = phaseStatusTone(status);
+            var artifact = taskArtifactForKind(task.id, artifactKindForPhase(phase));
+            return '<div class="project-phase-row tone-' + escapeHTML(tone) + '">'
+                + '<div class="project-phase-index">' + escapeHTML(String(index + 1)) + '</div>'
+                + '<div class="project-phase-main"><div class="project-phase-title">' + escapeHTML(humanizePhase(phase.id)) + '</div>'
+                + '<div class="project-phase-meta">' + escapeHTML(artifact ? humanizeArtifactKind(artifact.kind) + ' • ' + humanizeArtifactOutcome(artifact.outcome) : humanizeArtifactKind(artifactKindForPhase(phase))) + '</div></div>'
+                + '<span class="project-pill tone-' + escapeHTML(tone) + '">' + escapeHTML(phaseStatusLabel(status)) + '</span>'
+                + '</div>';
+        }).join('');
+        var missingHTML = missing.length
+            ? '<div class="project-missing-evidence">' + missing.map(function(item) {
+                return '<span class="project-pill tone-warning">' + escapeHTML(item) + '</span>';
+            }).join('') + '</div>'
+            : '<div class="project-missing-evidence"><span class="project-pill tone-success">' + escapeHTML(tr('project.evidenceComplete', 'Evidence complete')) + '</span></div>';
+        var controlsHTML = '';
+
+        if (canStart) {
+            controlsHTML = '<div class="project-action-group">'
+                + '<button type="button" class="project-inline-btn primary" data-start-phase-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '"' + disabled + '>' + escapeHTML(tr('project.actionStartPhase', 'Start phase')) + ': ' + escapeHTML(humanizePhase(currentPhase)) + '</button>'
+                + '</div>';
+        } else if (canComplete) {
+            controlsHTML = '<div class="project-phase-control-grid">'
+                + '<form class="project-phase-form" data-phase-complete-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-artifact-kind="' + escapeHTML(artifactKind) + '">'
+                + '<div class="project-phase-fields">'
+                + '<label class="project-phase-field"><span>' + escapeHTML(tr('project.artifact', 'Artifact')) + '</span><input type="text" name="artifactValue" maxlength="280" placeholder="' + escapeHTML(humanizeArtifactKind(artifactKind)) + '"></label>'
+                + '<label class="project-phase-field"><span>' + escapeHTML(tr('project.outcome', 'Outcome')) + '</span><select name="artifactOutcome">'
+                + '<option value="recorded"' + (defaultOutcome === 'recorded' ? ' selected' : '') + '>' + escapeHTML(humanizeArtifactOutcome('recorded')) + '</option>'
+                + '<option value="pass"' + (defaultOutcome === 'pass' ? ' selected' : '') + '>' + escapeHTML(humanizeArtifactOutcome('pass')) + '</option>'
+                + '</select></label>'
+                + '</div><div class="project-action-group"><button type="submit" class="project-inline-btn primary"' + disabled + '>' + escapeHTML(tr('project.completePhase', 'Complete phase')) + '</button></div>'
+                + '</form>'
+                + '<form class="project-phase-form project-phase-fail-form" data-phase-fail-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '">'
+                + '<label class="project-phase-field"><span>' + escapeHTML(tr('project.failureReason', 'Failure reason')) + '</span><input type="text" name="failureReason" maxlength="220" placeholder="' + escapeHTML(humanizePhase(currentPhase)) + '"></label>'
+                + '<div class="project-action-group"><button type="submit" class="project-inline-btn"' + disabled + '>' + escapeHTML(tr('project.failPhase', 'Fail phase')) + '</button></div>'
+                + '</form>'
+                + '</div>';
+        } else if (currentPhase === 'ready_for_acceptance' && canRequestAcceptanceReview(task)) {
+            controlsHTML = '<div class="project-action-group"><button type="button" class="project-inline-btn primary" data-update-task="' + escapeHTML(task.id) + '" data-action="request_acceptance_review"' + disabled + '>' + escapeHTML(tr('project.actionSendApproval', 'Send for approval')) + '</button></div>';
+        }
+
+        return '<div class="project-card-list project-card-visual project-runbook-panel"><div class="project-card-title-row"><h3>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</h3>'
+            + '<span class="project-pill tone-info">' + escapeHTML(humanizePhase(currentPhase)) + '</span></div>'
+            + '<div class="project-phase-list">' + phaseRows + '</div>'
+            + missingHTML
+            + controlsHTML
+            + (updating ? '<div class="project-list-meta">' + escapeHTML(tr('project.saving', 'Saving…')) + '</div>' : '')
+            + '</div>';
+    }
+
+    function renderTaskArtifactsPanel(task) {
+        var items = taskArtifacts(task.id);
+        var missing = taskMissingEvidence(task);
+        return '<div class="project-card-list project-card-visual project-artifact-panel"><div class="project-card-title-row"><h3>' + escapeHTML(tr('project.artifacts', 'Artifacts')) + '</h3>'
+            + '<span class="project-pill tone-' + escapeHTML(missing.length ? 'warning' : 'success') + '">' + escapeHTML(missing.length ? String(missing.length) : tr('project.statusClear', 'Clear')) + '</span></div>'
+            + (missing.length ? '<div class="project-missing-evidence compact">' + missing.map(function(item) {
+                return '<span class="project-pill tone-warning">' + escapeHTML(item) + '</span>';
+            }).join('') + '</div>' : '')
+            + '<div class="project-artifact-list">'
+            + (items.length ? items.map(function(item) {
+                var tone = artifactOutcomeTone(item.outcome);
+                return '<div class="project-artifact-row tone-' + escapeHTML(tone) + '">'
+                    + '<div class="project-artifact-main"><div class="project-fact-label">' + escapeHTML(humanizeArtifactKind(item.kind)) + '</div>'
+                    + '<div class="project-artifact-value">' + escapeHTML(item.value || item.label || humanizeArtifactKind(item.kind)) + '</div>'
+                    + '<div class="project-list-meta">' + escapeHTML(formatTime(item.createdAt)) + '</div></div>'
+                    + '<span class="project-pill tone-' + escapeHTML(tone) + '">' + escapeHTML(humanizeArtifactOutcome(item.outcome)) + '</span>'
+                    + '</div>';
+            }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noArtifacts', 'No artifacts recorded yet.')) + '</div>')
+            + '</div></div>';
+    }
+
     function renderTaskEvidenceDisclosure(task, taskSessions, decisionCards) {
         return '<details class="project-disclosure project-evidence-disclosure"><summary><span>' + escapeHTML(tr('project.evidenceHistory', 'Evidence & history')) + '</span><small>' + escapeHTML(tr('project.evidenceHistorySubtitle', 'Timeline, files, sessions, audit')) + '</small></summary>'
             + '<div class="project-tab-sections">'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.timeline', 'Timeline')) + '</h3>'
             + renderStructuredEventStream(task.timeline || [], tr('project.noTimeline', 'No timeline entries yet.')) + '</div>'
+            + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.artifacts', 'Artifacts')) + '</h3>'
+            + (taskArtifacts(task.id).length ? taskArtifacts(task.id).map(function(item) {
+                return '<div class="project-list-item"><strong>' + escapeHTML(humanizeArtifactKind(item.kind)) + ':</strong> ' + escapeHTML(humanizeArtifactOutcome(item.outcome)) + ' • ' + escapeHTML(item.value || item.label || '') + '</div>';
+            }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noArtifacts', 'No artifacts recorded yet.')) + '</div>') + '</div>'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.evidence', 'Evidence')) + '</h3>'
             + renderFactList(task.evidence || [], tr('project.noEvidence', 'No evidence recorded yet.')) + '</div>'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.filesDiff', 'Files & Diff')) + '</h3>'
@@ -2818,10 +3149,13 @@
             + '<h2>' + escapeHTML(task.title) + '</h2><p>' + escapeHTML(taskAgentName(task) + ' / ' + taskWorkstreamName(task)) + '</p></div><div class="project-header-actions project-task-actions">' + renderTaskInlineControls(task) + '</div></div>'
             + renderCommandStats([
                 { label: tr('project.state', 'State'), value: shortStatusLabel(task.state), tone: statusTone(task.state) },
+                { label: tr('project.phase', 'Phase'), value: humanizePhase(currentPhaseForTask(task)), tone: phaseStatusTone(phaseStatusForTask(task, currentRunbookPhase(task))) },
+                { label: tr('project.evidence', 'Evidence'), value: taskMissingEvidence(task).length ? String(taskMissingEvidence(task).length) : tr('project.statusClear', 'Clear'), tone: taskMissingEvidence(task).length ? 'warning' : 'success' },
                 { label: tr('project.risk', 'Risk'), value: shortRiskLabel(task.riskLevel), tone: riskTone(task.riskLevel) },
                 { label: tr('project.sessions', 'Sessions'), value: taskSessions.length, tone: taskSessions.length ? 'info' : 'neutral' }
             ])
             + renderTaskExecutionGuide(task, taskSessions)
+            + '<div class="project-two-column project-task-control-grid">' + renderTaskRunbookPanel(task) + renderTaskArtifactsPanel(task) + '</div>'
             + renderTaskApprovalStatusCard(task)
             + renderTaskEvidenceDisclosure(task, taskSessions, decisionCards)
             + '</section>';
@@ -2860,6 +3194,7 @@
         var tone = approvalTone(item);
         var context = approvalContext(item);
         var headline = context && context.task ? context.task.title : item.title;
+        var missing = context && context.task && item.kind === 'final_acceptance' ? taskMissingEvidence(context.task) : [];
         return '<div class="project-approval-card decision-card tone-' + escapeHTML(tone) + '">'
             + '<div class="project-approval-rail tone-' + escapeHTML(tone) + '"></div>'
             + '<div class="project-approval-body">'
@@ -2873,11 +3208,12 @@
             + '</div>'
             + (item.taskId ? '<button type="button" class="project-inline-btn" data-task-id="' + escapeHTML(item.taskId) + '">' + escapeHTML(tr('project.openTask', 'Open task')) + '</button>' : '') + '</div>'
             + '<div class="project-approval-summary">' + escapeHTML(approvalKindSummary(item)) + '</div>'
+            + (missing.length ? '<div class="project-missing-evidence compact">' + missing.map(function(missingItem) { return '<span class="project-pill tone-warning">' + escapeHTML(missingItem) + '</span>'; }).join('') + '</div>' : '')
             + '<div class="project-card-copy">' + escapeHTML(item.reason || (context && context.task ? taskActionSummary(context.task) : '')) + '</div>'
             + '<div class="project-approval-footer"><div class="project-card-meta">' + escapeHTML(formatTime(item.requestedAt)) + '</div>'
             + '<div class="project-approval-actions">'
             + (item.allowedActions || []).map(function(action) {
-                return '<button type="button" class="project-inline-btn ' + (action === 'approve' ? 'primary' : '') + '" data-checkpoint-id="' + escapeHTML(item.id) + '" data-checkpoint-action="' + escapeHTML(action) + '">' + escapeHTML(approvalActionLabel(action)) + '</button>';
+                return renderCheckpointActionButton(action, item.id, '', context && context.task, item.kind);
             }).join('')
             + '</div></div>'
             + (item.decisionSummary ? '<div class="project-approval-note">' + escapeHTML(item.decisionSummary) + '</div>' : '')
@@ -3139,6 +3475,37 @@
         });
     }
 
+    function startTaskPhase(taskId, phaseId) {
+        updateTaskInline(taskId, 'start_phase', {
+            phaseId: phaseId || currentPhaseForTask(findById(tasks(), taskId))
+        });
+    }
+
+    function submitPhaseCompleteForm(form) {
+        var taskId = form.getAttribute('data-phase-complete-task') || '';
+        var phaseId = form.getAttribute('data-phase-id') || '';
+        var artifactKind = form.getAttribute('data-artifact-kind') || '';
+        var artifactValue = form.querySelector('[name="artifactValue"]');
+        var artifactOutcome = form.querySelector('[name="artifactOutcome"]');
+        updateTaskInline(taskId, 'complete_phase', {
+            phaseId: phaseId,
+            artifactKind: artifactKind,
+            artifactOutcome: artifactOutcome && artifactOutcome.value ? artifactOutcome.value : defaultOutcomeForArtifact(artifactKind),
+            artifactLabel: humanizeArtifactKind(artifactKind),
+            artifactValue: artifactValue && artifactValue.value ? artifactValue.value.trim() : ''
+        });
+    }
+
+    function submitPhaseFailForm(form) {
+        var taskId = form.getAttribute('data-phase-fail-task') || '';
+        var phaseId = form.getAttribute('data-phase-id') || '';
+        var failureReason = form.querySelector('[name="failureReason"]');
+        updateTaskInline(taskId, 'fail_phase', {
+            phaseId: phaseId,
+            failureReason: failureReason && failureReason.value ? failureReason.value.trim() : ''
+        });
+    }
+
     function bindInteractions(panel) {
         panel.querySelectorAll('[data-project-id]').forEach(function(node) {
             node.addEventListener('click', function() {
@@ -3186,6 +3553,23 @@
         panel.querySelectorAll('[data-update-task]').forEach(function(node) {
             node.addEventListener('click', function() {
                 updateTaskInline(node.getAttribute('data-update-task'), node.getAttribute('data-action') || '');
+            });
+        });
+        panel.querySelectorAll('[data-start-phase-task]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                startTaskPhase(node.getAttribute('data-start-phase-task'), node.getAttribute('data-phase-id') || '');
+            });
+        });
+        panel.querySelectorAll('[data-phase-complete-task]').forEach(function(form) {
+            form.addEventListener('submit', function(event) {
+                event.preventDefault();
+                submitPhaseCompleteForm(form);
+            });
+        });
+        panel.querySelectorAll('[data-phase-fail-task]').forEach(function(form) {
+            form.addEventListener('submit', function(event) {
+                event.preventDefault();
+                submitPhaseFailForm(form);
             });
         });
         panel.querySelectorAll('[data-events-load-more]').forEach(function(node) {
