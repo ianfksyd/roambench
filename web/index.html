@@ -45,9 +45,23 @@
                 <img class="header-brand-icon" src="__ROAMBENCH_BASE_PATH__/favicon.svg" alt="RoamBench">
             </button>
             <span class="header-title" id="header-title">RoamBench</span>
-            <div class="app-mode-switcher" role="tablist" aria-label="App Mode">
-                <button class="header-btn app-mode-btn active" id="app-mode-terminal" type="button">Terminal</button>
-                <button class="header-btn app-mode-btn" id="app-mode-project" type="button">Project Panel</button>
+            <div class="app-mode-switcher" role="tablist" aria-label="App Mode" data-i18n-aria-label="header.appMode">
+                <button class="header-btn app-mode-btn active" id="app-mode-terminal" type="button" role="tab" aria-selected="true" title="Terminal" aria-label="Terminal" data-i18n-title="header.terminal" data-i18n-aria-label="header.terminal">
+                    <svg class="header-btn-icon app-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3.5" y="5" width="17" height="14" rx="2"></rect>
+                        <path d="M7.5 10l2.2 2-2.2 2"></path>
+                        <path d="M12 14h4.5"></path>
+                    </svg>
+                </button>
+                <button class="header-btn app-mode-btn" id="app-mode-project" type="button" role="tab" aria-selected="false" title="Project Panel" aria-label="Project Panel" data-i18n-title="header.projectPanel" data-i18n-aria-label="header.projectPanel">
+                    <svg class="header-btn-icon app-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="4" y="4.5" width="16" height="15" rx="2"></rect>
+                        <path d="M8.5 4.5v15"></path>
+                        <path d="M8.5 9.5H20"></path>
+                        <path d="M12 13.25h4.5"></path>
+                        <path d="M12 16.25h3.5"></path>
+                    </svg>
+                </button>
             </div>
             <button class="header-btn approvals-badge" id="approvals-badge" type="button" aria-live="polite">0</button>
             <div class="header-memory" id="memory-indicator" aria-live="polite">
@@ -88,9 +102,25 @@
             <div class="tab-bar" id="tab-bar"></div>
             <button class="header-btn tab-scroll-btn tab-scroll-right" id="workspace-tabs-scroll-right" onclick="scrollWorkspaceTabs(1)" title="Scroll views right" aria-label="Scroll views right" disabled>&#x276F;</button>
             <div class="tab-layout-switcher" role="group" aria-label="Terminal Layout" data-i18n-aria-label="workspace.layoutSwitcher">
-                <button class="tab-layout-btn" id="layout-btn-1" onclick="setActiveWorkspaceLayout('1')" title="Single Terminal" aria-label="Single Terminal" data-i18n-title="workspace.layout.single" data-i18n-aria-label="workspace.layout.single">1</button>
-                <button class="tab-layout-btn" id="layout-btn-2" onclick="setActiveWorkspaceLayout('2')" title="Two Terminals" aria-label="Two Terminals" data-i18n-title="workspace.layout.double" data-i18n-aria-label="workspace.layout.double">2</button>
-                <button class="tab-layout-btn" id="layout-btn-4" onclick="setActiveWorkspaceLayout('4')" title="Four Terminals" aria-label="Four Terminals" data-i18n-title="workspace.layout.quad" data-i18n-aria-label="workspace.layout.quad">4</button>
+                <button class="tab-layout-btn tab-layout-btn-icon" id="layout-btn-1" onclick="setActiveWorkspaceLayout('1')" title="Single Terminal" aria-label="Single Terminal" data-i18n-title="workspace.layout.single" data-i18n-aria-label="workspace.layout.single">
+                    <svg class="tab-layout-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+                    </svg>
+                </button>
+                <button class="tab-layout-btn tab-layout-btn-icon" id="layout-btn-2" onclick="setActiveWorkspaceLayout('2')" title="Two Terminals" aria-label="Two Terminals" data-i18n-title="workspace.layout.double" data-i18n-aria-label="workspace.layout.double">
+                    <svg class="tab-layout-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3.5" y="5" width="7" height="14" rx="1.5"></rect>
+                        <rect x="13.5" y="5" width="7" height="14" rx="1.5"></rect>
+                    </svg>
+                </button>
+                <button class="tab-layout-btn tab-layout-btn-icon" id="layout-btn-4" onclick="setActiveWorkspaceLayout('4')" title="Four Terminals" aria-label="Four Terminals" data-i18n-title="workspace.layout.quad" data-i18n-aria-label="workspace.layout.quad">
+                    <svg class="tab-layout-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="4" y="4.5" width="6.5" height="6.5" rx="1.3"></rect>
+                        <rect x="13.5" y="4.5" width="6.5" height="6.5" rx="1.3"></rect>
+                        <rect x="4" y="13" width="6.5" height="6.5" rx="1.3"></rect>
+                        <rect x="13.5" y="13" width="6.5" height="6.5" rx="1.3"></rect>
+                    </svg>
+                </button>
                 <button class="tab-layout-btn tab-layout-btn-icon" id="layout-btn-4w" onclick="setActiveWorkspaceLayout('4w')" title="Four Columns" aria-label="Four Columns" data-i18n-title="workspace.layout.quadWide" data-i18n-aria-label="workspace.layout.quadWide">
                     <svg class="tab-layout-svg" viewBox="0 0 24 24" aria-hidden="true">
                         <rect x="2.5" y="4" width="4" height="16" rx="1.2"></rect>
