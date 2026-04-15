@@ -43,6 +43,61 @@ func decodeProjectControlSnapshot(t *testing.T, rec *httptest.ResponseRecorder) 
 	return snapshot
 }
 
+func patchProjectControlTask(t *testing.T, srv *Server, token, taskID, body string) projectControlSnapshot {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+taskID, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH task status = %d, want %d for %s: %s", rec.Code, http.StatusOK, body, rec.Body.String())
+	}
+	return decodeProjectControlSnapshot(t, rec)
+}
+
+func completeProjectControlTaskRunbook(t *testing.T, srv *Server, token, taskID string, rowVersion int) (projectControlSnapshot, int) {
+	t.Helper()
+	steps := []string{
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"plan"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"plan","artifactKind":"plan","artifactOutcome":"recorded","artifactLabel":"Plan","artifactValue":"Implementation plan recorded"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"implement"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"implement","artifactKind":"diff_summary","artifactOutcome":"recorded","artifactLabel":"Diff summary","artifactValue":"Implementation diff recorded"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"test"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"test","artifactKind":"test_result","artifactOutcome":"pass","artifactLabel":"Test result","artifactValue":"go test ./... passed"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"review"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"review","artifactKind":"review_result","artifactOutcome":"pass","artifactLabel":"Review result","artifactValue":"No blocking review findings"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"final_validation"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"final_validation","artifactKind":"completion_check","artifactOutcome":"pass","artifactLabel":"Completion check","artifactValue":"Completion rules satisfied"}`,
+	}
+	var snapshot projectControlSnapshot
+	for _, step := range steps {
+		snapshot = patchProjectControlTask(t, srv, token, taskID, fmt.Sprintf(step, rowVersion))
+		rowVersion++
+	}
+	return snapshot, rowVersion
+}
+
+func completeProjectControlTaskToAcceptanceReview(t *testing.T, srv *Server, token, taskID string, rowVersion int) (projectControlSnapshot, int) {
+	t.Helper()
+	snapshot, rowVersion := completeProjectControlTaskRunbook(t, srv, token, taskID, rowVersion)
+	if !projectControlSnapshotHasTaskAcceptance(snapshot, taskID, "ready_for_acceptance") {
+		t.Fatalf("task %q did not reach ready_for_acceptance", taskID)
+	}
+	snapshot = patchProjectControlTask(t, srv, token, taskID, fmt.Sprintf(`{"expectedRowVersion":%d,"action":"request_acceptance_review"}`, rowVersion))
+	rowVersion++
+	return snapshot, rowVersion
+}
+
+func projectControlSnapshotHasTaskAcceptance(snapshot projectControlSnapshot, taskID, acceptanceStatus string) bool {
+	for _, task := range snapshot.Tasks {
+		if task.ID == taskID && task.AcceptanceStatus == acceptanceStatus {
+			return true
+		}
+	}
+	return false
+}
+
 func TestProjectControlDashboardCountsRunningWorkstreamsFromWorkstreamStatus(t *testing.T) {
 	dashboard := buildProjectControlDashboard(
 		[]projectControlWorkstream{
@@ -104,25 +159,27 @@ func TestProjectControlRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
 	now := "2026-04-15T00:00:00Z"
 
 	steps := []struct {
-		phase string
-		kind  string
-		value string
-		next  string
+		phase   string
+		kind    string
+		outcome string
+		value   string
+		next    string
 	}{
-		{phase: "plan", kind: "plan", value: "Plan artifact", next: "implement"},
-		{phase: "implement", kind: "diff_summary", value: "Changed project control runbook code", next: "test"},
-		{phase: "test", kind: "test_result", value: "go test ./... passed", next: "review"},
-		{phase: "review", kind: "review_result", value: "No high severity objections", next: "final_validation"},
+		{phase: "plan", kind: "plan", outcome: "recorded", value: "Plan artifact", next: "implement"},
+		{phase: "implement", kind: "diff_summary", outcome: "recorded", value: "Changed project control runbook code", next: "test"},
+		{phase: "test", kind: "test_result", outcome: "pass", value: "go test ./... passed", next: "review"},
+		{phase: "review", kind: "review_result", outcome: "pass", value: "No high severity objections", next: "final_validation"},
 	}
 	for _, step := range steps {
 		if err := startProjectControlTaskPhase(&state, &task, step.phase, now); err != nil {
 			t.Fatalf("start %s error: %v", step.phase, err)
 		}
 		req := projectControlTaskUpdateRequest{
-			PhaseID:       step.phase,
-			ArtifactKind:  step.kind,
-			ArtifactLabel: step.kind,
-			ArtifactValue: step.value,
+			PhaseID:         step.phase,
+			ArtifactKind:    step.kind,
+			ArtifactOutcome: step.outcome,
+			ArtifactLabel:   step.kind,
+			ArtifactValue:   step.value,
 		}
 		if err := completeProjectControlTaskPhase(&state, &task, req, now); err != nil {
 			t.Fatalf("complete %s error: %v", step.phase, err)
@@ -142,10 +199,11 @@ func TestProjectControlRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
-		PhaseID:       "final_validation",
-		ArtifactKind:  "completion_check",
-		ArtifactLabel: "completion_check",
-		ArtifactValue: "All completion rules satisfied",
+		PhaseID:         "final_validation",
+		ArtifactKind:    "completion_check",
+		ArtifactOutcome: "pass",
+		ArtifactLabel:   "completion_check",
+		ArtifactValue:   "All completion rules satisfied",
 	}
 	if err := completeProjectControlTaskPhase(&state, &task, req, now); err != nil {
 		t.Fatalf("complete final_validation error: %v", err)
@@ -186,10 +244,11 @@ func TestProjectControlFinalValidationRequiresCompletionEvidence(t *testing.T) {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
-		PhaseID:       "final_validation",
-		ArtifactKind:  "completion_check",
-		ArtifactLabel: "completion_check",
-		ArtifactValue: "Completion claimed without prior evidence",
+		PhaseID:         "final_validation",
+		ArtifactKind:    "completion_check",
+		ArtifactOutcome: "pass",
+		ArtifactLabel:   "completion_check",
+		ArtifactValue:   "Completion claimed without prior evidence",
 	}
 	err := completeProjectControlTaskPhase(&state, &task, req, now)
 	if err == nil {
@@ -203,6 +262,105 @@ func TestProjectControlFinalValidationRequiresCompletionEvidence(t *testing.T) {
 	}
 	if len(state.Artifacts) != 0 {
 		t.Fatalf("len(Artifacts) = %d, want 0 after rejected completion", len(state.Artifacts))
+	}
+}
+
+func TestProjectControlCompletionEvidenceRequiresPassingOutcomes(t *testing.T) {
+	state := projectControlState{
+		PhaseAttempts: []projectControlPhaseAttempt{},
+		Artifacts: []projectControlArtifact{
+			{ID: "artifact-plan", TaskID: "task-runbook-failed-test", Kind: "plan", Outcome: "recorded"},
+			{ID: "artifact-diff", TaskID: "task-runbook-failed-test", Kind: "diff_summary", Outcome: "recorded"},
+			{ID: "artifact-test", TaskID: "task-runbook-failed-test", Kind: "test_result", Outcome: "fail"},
+			{ID: "artifact-review", TaskID: "task-runbook-failed-test", Kind: "review_result", Outcome: "pass"},
+		},
+	}
+	task := projectControlTask{
+		ID:               "task-runbook-failed-test",
+		ProjectID:        "project-runbook",
+		WorkstreamID:     "workstream-runbook",
+		State:            "running",
+		AcceptanceStatus: "not_ready",
+		RuntimeID:        projectControlRuntimeID,
+		SelectedSkill:    projectControlDefaultSkillID,
+		RunbookID:        projectControlDefaultRunbookID,
+		CurrentPhase:     "final_validation",
+		RunbookState:     "in_progress",
+	}
+	now := "2026-04-15T00:00:00Z"
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+		t.Fatalf("start final_validation error: %v", err)
+	}
+	req := projectControlTaskUpdateRequest{
+		PhaseID:         "final_validation",
+		ArtifactKind:    "completion_check",
+		ArtifactOutcome: "pass",
+		ArtifactLabel:   "completion_check",
+		ArtifactValue:   "Completion claimed with failed test evidence",
+	}
+	err := completeProjectControlTaskPhase(&state, &task, req, now)
+	if err == nil {
+		t.Fatal("complete final_validation error = nil, want failed test evidence error")
+	}
+	if !strings.Contains(err.Error(), "test_result:pass") {
+		t.Fatalf("error = %q, want missing passing test evidence", err.Error())
+	}
+	if len(state.Artifacts) != 4 {
+		t.Fatalf("len(Artifacts) = %d, want original artifacts only after rejected completion", len(state.Artifacts))
+	}
+}
+
+func TestProjectControlFinalAcceptanceApprovalRequiresCompletionEvidence(t *testing.T) {
+	state := projectControlState{
+		Tasks: []projectControlTask{{
+			ID:               "task-acceptance-without-evidence",
+			State:            "execution_complete",
+			AcceptanceStatus: "under_human_review",
+		}},
+		Artifacts: []projectControlArtifact{},
+	}
+	checkpoint := projectControlCheckpoint{
+		ID:     "checkpoint-final-acceptance",
+		TaskID: "task-acceptance-without-evidence",
+		Kind:   "final_acceptance",
+		Status: "pending",
+	}
+	err := validateProjectControlFinalAcceptanceApproval(&state, checkpoint)
+	if err == nil {
+		t.Fatal("final acceptance approval error = nil, want missing evidence error")
+	}
+	if !strings.Contains(err.Error(), "missing plan") {
+		t.Fatalf("error = %q, want missing plan evidence", err.Error())
+	}
+}
+
+func TestProjectControlFinalAcceptanceApprovalRequiresExecutionComplete(t *testing.T) {
+	state := projectControlState{
+		Tasks: []projectControlTask{{
+			ID:               "task-acceptance-running",
+			State:            "running",
+			AcceptanceStatus: "under_human_review",
+		}},
+		Artifacts: []projectControlArtifact{
+			{ID: "artifact-plan", TaskID: "task-acceptance-running", Kind: "plan", Outcome: "recorded"},
+			{ID: "artifact-diff", TaskID: "task-acceptance-running", Kind: "diff_summary", Outcome: "recorded"},
+			{ID: "artifact-test", TaskID: "task-acceptance-running", Kind: "test_result", Outcome: "pass"},
+			{ID: "artifact-review", TaskID: "task-acceptance-running", Kind: "review_result", Outcome: "pass"},
+			{ID: "artifact-completion", TaskID: "task-acceptance-running", Kind: "completion_check", Outcome: "pass"},
+		},
+	}
+	checkpoint := projectControlCheckpoint{
+		ID:     "checkpoint-final-acceptance",
+		TaskID: "task-acceptance-running",
+		Kind:   "final_acceptance",
+		Status: "pending",
+	}
+	err := validateProjectControlFinalAcceptanceApproval(&state, checkpoint)
+	if err == nil {
+		t.Fatal("final acceptance approval error = nil, want execution_complete error")
+	}
+	if !strings.Contains(err.Error(), "requires execution_complete") {
+		t.Fatalf("error = %q, want execution_complete guard", err.Error())
 	}
 }
 
@@ -246,6 +404,14 @@ func TestProjectControlSnapshotRouteReturnsSeededPrototype(t *testing.T) {
 		if task.RunbookID == "" || task.CurrentPhase == "" {
 			t.Fatalf("task %q missing runbook fields: %#v", task.ID, task)
 		}
+		if task.ID == projectControlTaskIAID {
+			if task.AcceptanceStatus != "under_human_review" {
+				t.Fatalf("seed IA acceptanceStatus = %q, want under_human_review", task.AcceptanceStatus)
+			}
+			if len(task.MissingEvidence) != 0 {
+				t.Fatalf("seed IA MissingEvidence = %#v, want empty", task.MissingEvidence)
+			}
+		}
 	}
 }
 
@@ -275,8 +441,15 @@ func TestProjectControlTaskPhaseActionsPersistThroughAPI(t *testing.T) {
 		t.Fatalf("PATCH complete_phase status = %d, want %d: %s", completeRec.Code, http.StatusOK, completeRec.Body.String())
 	}
 	completeSnapshot := decodeProjectControlSnapshot(t, completeRec)
-	if len(completeSnapshot.Artifacts) != 1 || completeSnapshot.Artifacts[0].Kind != "plan" {
-		t.Fatalf("Artifacts after complete = %#v, want one plan artifact", completeSnapshot.Artifacts)
+	foundPlanArtifact := false
+	for _, artifact := range completeSnapshot.Artifacts {
+		if artifact.TaskID == projectControlTaskPanelID && artifact.Kind == "plan" && artifact.Outcome == "recorded" {
+			foundPlanArtifact = true
+			break
+		}
+	}
+	if !foundPlanArtifact {
+		t.Fatalf("Artifacts after complete = %#v, want recorded plan artifact for task", completeSnapshot.Artifacts)
 	}
 	foundTask := false
 	for _, task := range completeSnapshot.Tasks {
@@ -296,48 +469,29 @@ func TestProjectControlTaskPhaseActionsPersistThroughAPI(t *testing.T) {
 	}
 }
 
-func TestProjectControlCheckpointDecisionApproveUpdatesSnapshot(t *testing.T) {
+func TestProjectControlPhaseActionsRejectDirectStateOverrides(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_execution"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_phase","phaseId":"plan","state":"execution_complete","acceptanceStatus":"ready_for_acceptance"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH start execution status = %d, want %d", rec.Code, http.StatusOK)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH phase action with direct state status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
+	if !strings.Contains(rec.Body.String(), "phase actions cannot include direct state") {
+		t.Fatalf("PATCH phase action error = %q, want direct state rejection", rec.Body.String())
+	}
+}
 
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":2,"action":"mark_execution_complete"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH execution complete status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH ready for acceptance status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":4,"action":"request_acceptance_review"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH request acceptance review status = %d, want %d", rec.Code, http.StatusOK)
-	}
+func TestProjectControlCheckpointDecisionApproveUpdatesSnapshot(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
 
 	checkpointID := ""
-	readySnapshot := decodeProjectControlSnapshot(t, rec)
+	readySnapshot, _ := completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 	for _, checkpoint := range readySnapshot.Checkpoints {
 		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "final_acceptance" && checkpoint.Status == "pending" {
 			checkpointID = checkpoint.ID
@@ -348,10 +502,10 @@ func TestProjectControlCheckpointDecisionApproveUpdatesSnapshot(t *testing.T) {
 		t.Fatal("expected pending final_acceptance checkpoint for task")
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+checkpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
+	rec := httptest.NewRecorder()
 
 	srv.mux.ServeHTTP(rec, req)
 
@@ -763,14 +917,21 @@ func TestProjectControlTaskAndWorkstreamActionTransitions(t *testing.T) {
 	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	taskRec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(taskRec, taskReq)
-	if taskRec.Code != http.StatusOK {
-		t.Fatalf("PATCH task ready action status = %d, want %d", taskRec.Code, http.StatusOK)
+	if taskRec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH task ready action status = %d, want %d", taskRec.Code, http.StatusBadRequest)
 	}
-	taskSnapshot := decodeProjectControlSnapshot(t, taskRec)
+	if !strings.Contains(taskRec.Body.String(), "missing plan") {
+		t.Fatalf("PATCH task ready error = %q, want missing plan evidence", taskRec.Body.String())
+	}
+
+	taskSnapshot, rowVersion := completeProjectControlTaskRunbook(t, srv, token, projectControlTaskPanelID, 3)
+	if rowVersion != 13 {
+		t.Fatalf("rowVersion after runbook = %d, want 13", rowVersion)
+	}
 	for _, task := range taskSnapshot.Tasks {
 		if task.ID == projectControlTaskPanelID {
-			if task.State != "execution_complete" || task.AcceptanceStatus != "ready_for_acceptance" || task.RowVersion != 4 {
-				t.Fatalf("task after actions = %#v, want execution_complete + ready_for_acceptance + rowVersion=4", task)
+			if task.State != "execution_complete" || task.AcceptanceStatus != "ready_for_acceptance" || task.RowVersion != 13 {
+				t.Fatalf("task after actions = %#v, want execution_complete + ready_for_acceptance + rowVersion=13", task)
 			}
 		}
 	}
@@ -835,42 +996,7 @@ func TestProjectControlReadyForAcceptanceCreatesCheckpoint(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_execution"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec := httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH start execution status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":2,"action":"mark_execution_complete"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH execution complete status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH ready for acceptance status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":4,"action":"request_acceptance_review"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH request acceptance review status = %d, want %d", rec.Code, http.StatusOK)
-	}
-	snapshot := decodeProjectControlSnapshot(t, rec)
+	snapshot, _ := completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	foundTask := false
 	for _, task := range snapshot.Tasks {
@@ -897,46 +1023,12 @@ func TestProjectControlLeavingAcceptanceFlowExpiresCheckpoint(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_execution"}`))
+	_, rowVersion := completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(fmt.Sprintf(`{"expectedRowVersion":%d,"action":"reopen_task"}`, rowVersion)))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	rec := httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH start execution status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":2,"action":"mark_execution_complete"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH execution complete status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH ready for acceptance status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":4,"action":"request_acceptance_review"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH request acceptance review status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":5,"action":"reopen_task"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH reopen task status = %d, want %d", rec.Code, http.StatusOK)
@@ -949,7 +1041,7 @@ func TestProjectControlLeavingAcceptanceFlowExpiresCheckpoint(t *testing.T) {
 		}
 	}
 
-	eventsReq := httptest.NewRequest(http.MethodGet, "/api/project-control/events?taskId="+projectControlTaskPanelID+"&limit=20", nil)
+	eventsReq := httptest.NewRequest(http.MethodGet, "/api/project-control/events?taskId="+projectControlTaskPanelID+"&limit=100", nil)
 	eventsReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	eventsRec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(eventsRec, eventsReq)
@@ -1240,22 +1332,7 @@ func TestProjectControlReplayExposesFinalAcceptanceDecision(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	steps := []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
-		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
-	}
-	for _, body := range steps {
-		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		rec := httptest.NewRecorder()
-		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
-		}
-	}
+	completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
 	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
@@ -1317,22 +1394,7 @@ func TestProjectControlDecisionEventsIncludeDecisionMadeAndCheckpointResolved(t 
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	steps := []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
-		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
-	}
-	for _, body := range steps {
-		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		rec := httptest.NewRecorder()
-		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
-		}
-	}
+	completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
 	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
@@ -1408,21 +1470,7 @@ func TestProjectControlFinalAcceptanceDecisionPersistsAndBackfillsTaskReference(
 	}
 
 	srv := NewServer(cfg, nil, sessions, nil, nil)
-	for _, body := range []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
-		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
-	} {
-		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		rec := httptest.NewRecorder()
-		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
-		}
-	}
+	completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
 	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
@@ -1486,21 +1534,7 @@ func TestProjectControlReplayIncludesAcceptanceDecisionMetadata(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	for _, body := range []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
-		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
-	} {
-		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		rec := httptest.NewRecorder()
-		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
-		}
-	}
+	completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
 	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
@@ -1553,21 +1587,7 @@ func TestProjectControlUnarchivePreservesAcceptanceDecisionMetadata(t *testing.T
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	for _, body := range []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
-		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
-	} {
-		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		rec := httptest.NewRecorder()
-		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
-		}
-	}
+	completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
 	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
@@ -1669,21 +1689,7 @@ func TestProjectControlAcceptedTaskRejectsGenericAcceptanceReset(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	for _, body := range []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
-		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
-	} {
-		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		rec := httptest.NewRecorder()
-		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
-		}
-	}
+	completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
 	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
@@ -1929,15 +1935,7 @@ func TestProjectControlReadyForAcceptanceExpiresArchiveOverrideCheckpoint(t *tes
 		}
 	}
 
-	readyReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":4,"action":"mark_ready_for_acceptance"}`))
-	readyReq.Header.Set("Content-Type", "application/json")
-	readyReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	readyRec := httptest.NewRecorder()
-	srv.mux.ServeHTTP(readyRec, readyReq)
-	if readyRec.Code != http.StatusOK {
-		t.Fatalf("PATCH ready for acceptance status = %d, want %d", readyRec.Code, http.StatusOK)
-	}
-	snapshot := decodeProjectControlSnapshot(t, readyRec)
+	snapshot, _ := completeProjectControlTaskRunbook(t, srv, token, projectControlTaskPanelID, 4)
 	for _, checkpoint := range snapshot.Checkpoints {
 		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
 			t.Fatalf("expected archive_override checkpoint to expire when entering acceptance path, got %#v", checkpoint)
@@ -2087,23 +2085,9 @@ func TestProjectControlArchiveOverrideRejectsPendingAcceptanceReview(t *testing.
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	for _, body := range []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
-		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
-	} {
-		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		rec := httptest.NewRecorder()
-		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
-		}
-	}
+	_, rowVersion := completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
-	requestReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":5,"action":"request_archive_override"}`))
+	requestReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(fmt.Sprintf(`{"expectedRowVersion":%d,"action":"request_archive_override"}`, rowVersion)))
 	requestReq.Header.Set("Content-Type", "application/json")
 	requestReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	requestRec := httptest.NewRecorder()
@@ -2240,21 +2224,7 @@ func TestProjectControlAcceptedTaskCanArchive(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
-	for _, body := range []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`,
-		`{"expectedRowVersion":4,"action":"request_acceptance_review"}`,
-	} {
-		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		rec := httptest.NewRecorder()
-		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
-		}
-	}
+	completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
 	snapshotReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})

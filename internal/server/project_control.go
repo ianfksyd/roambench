@@ -154,6 +154,7 @@ type projectControlArtifact struct {
 	TaskID         string `json:"taskId"`
 	PhaseAttemptID string `json:"phaseAttemptId,omitempty"`
 	Kind           string `json:"kind"`
+	Outcome        string `json:"outcome"`
 	Label          string `json:"label"`
 	Value          string `json:"value"`
 	CreatedAt      string `json:"createdAt"`
@@ -298,6 +299,7 @@ type projectControlTaskUpdateRequest struct {
 	AcceptanceStatus   string `json:"acceptanceStatus"`
 	PhaseID            string `json:"phaseId"`
 	ArtifactKind       string `json:"artifactKind"`
+	ArtifactOutcome    string `json:"artifactOutcome"`
 	ArtifactLabel      string `json:"artifactLabel"`
 	ArtifactValue      string `json:"artifactValue"`
 	FailureReason      string `json:"failureReason"`
@@ -432,6 +434,15 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 	return nil
 }
 
+func isProjectControlPhaseAction(action string) bool {
+	switch strings.TrimSpace(strings.ToLower(action)) {
+	case "start_phase", "complete_phase", "fail_phase":
+		return true
+	default:
+		return false
+	}
+}
+
 func isAllowedProjectControlWorkstreamTransition(from, to string) bool {
 	from = normalizeProjectControlWorkstreamStatus(from)
 	to = normalizeProjectControlWorkstreamStatus(to)
@@ -493,6 +504,9 @@ func validateProjectControlAcceptanceTransition(from, to, resultingTaskState str
 	}
 	if to == "ready_for_acceptance" && normalizeProjectControlTaskState(resultingTaskState) != "execution_complete" {
 		return errors.New("ready_for_acceptance requires execution_complete state")
+	}
+	if to == "under_human_review" && normalizeProjectControlTaskState(resultingTaskState) != "execution_complete" {
+		return errors.New("under_human_review requires execution_complete state")
 	}
 	switch from {
 	case "not_ready":
@@ -622,7 +636,7 @@ func refreshProjectControlTaskRunbookFields(task *projectControlTask, artifacts 
 	}
 	task.CurrentPhase = inferProjectControlCurrentPhase(*task)
 	task.RunbookState = inferProjectControlRunbookState(*task)
-	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, artifacts, defaultProjectControlRunbook(), "")
+	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, artifacts, defaultProjectControlRunbook(), "", "")
 }
 
 func projectControlPhaseAgentType(phase projectControlRunbookPhase) string {
@@ -753,26 +767,59 @@ func projectControlArtifactKindAllowed(phase projectControlRunbookPhase, kind st
 	return false
 }
 
-func projectControlMissingCompletionEvidence(task projectControlTask, artifacts []projectControlArtifact, runbook projectControlRunbook, extraKind string) []string {
+func normalizeProjectControlArtifactOutcome(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "pass", "passed", "success", "ok", "clean", "no_objection", "approved":
+		return "pass"
+	case "fail", "failed", "error", "blocked", "objection", "rejected":
+		return "fail"
+	default:
+		return "recorded"
+	}
+}
+
+func projectControlArtifactOutcomePasses(kind, outcome string) bool {
+	kind = normalizeProjectControlArtifactKind(kind)
+	outcome = normalizeProjectControlArtifactOutcome(outcome)
+	switch kind {
+	case "test_result", "review_result", "completion_check":
+		return outcome == "pass"
+	default:
+		return outcome != "fail"
+	}
+}
+
+func projectControlCompletionEvidenceRequirement(kind string) string {
+	kind = normalizeProjectControlArtifactKind(kind)
+	switch kind {
+	case "test_result", "review_result", "completion_check":
+		return kind + ":pass"
+	default:
+		return kind
+	}
+}
+
+func projectControlMissingCompletionEvidence(task projectControlTask, artifacts []projectControlArtifact, runbook projectControlRunbook, extraKind, extraOutcome string) []string {
 	present := map[string]bool{}
-	hasTaskArtifacts := false
 	for _, artifact := range artifacts {
 		if artifact.TaskID == task.ID {
-			hasTaskArtifacts = true
-			present[normalizeProjectControlArtifactKind(artifact.Kind)] = true
+			kind := normalizeProjectControlArtifactKind(artifact.Kind)
+			if projectControlArtifactOutcomePasses(kind, artifact.Outcome) {
+				present[kind] = true
+			}
 		}
 	}
-	if !hasTaskArtifacts && extraKind == "" && normalizeProjectControlTaskState(task.State) == "execution_complete" && normalizeProjectControlAcceptanceStatus(task.AcceptanceStatus) != "not_ready" {
-		return []string{}
-	}
 	if extraKind != "" {
-		present[normalizeProjectControlArtifactKind(extraKind)] = true
+		kind := normalizeProjectControlArtifactKind(extraKind)
+		if projectControlArtifactOutcomePasses(kind, extraOutcome) {
+			present[kind] = true
+		}
 	}
 	missing := []string{}
 	for _, rule := range runbook.CompletionRules {
 		kind := normalizeProjectControlArtifactKind(rule)
 		if kind != "" && !present[kind] {
-			missing = append(missing, kind)
+			missing = append(missing, projectControlCompletionEvidenceRequirement(kind))
 		}
 	}
 	return missing
@@ -805,8 +852,12 @@ func completeProjectControlTaskPhase(state *projectControlState, task *projectCo
 			return fmt.Errorf("phase %s does not accept artifact %s", phaseID, artifactKind)
 		}
 	}
+	artifactOutcome := normalizeProjectControlArtifactOutcome(req.ArtifactOutcome)
+	if artifactKind != "" && !projectControlArtifactOutcomePasses(artifactKind, artifactOutcome) {
+		return fmt.Errorf("phase %s artifact %s outcome must pass before completing the phase", phaseID, artifactKind)
+	}
 	if phaseID == "final_validation" {
-		if missing := projectControlMissingCompletionEvidence(*task, state.Artifacts, runbook, artifactKind); len(missing) > 0 {
+		if missing := projectControlMissingCompletionEvidence(*task, state.Artifacts, runbook, artifactKind, artifactOutcome); len(missing) > 0 {
 			return fmt.Errorf("completion rules not satisfied: missing %s", strings.Join(missing, ","))
 		}
 	}
@@ -825,6 +876,7 @@ func completeProjectControlTaskPhase(state *projectControlState, task *projectCo
 			TaskID:         task.ID,
 			PhaseAttemptID: attempt.ID,
 			Kind:           artifactKind,
+			Outcome:        artifactOutcome,
 			Label:          label,
 			Value:          value,
 			CreatedAt:      now,
@@ -864,7 +916,7 @@ func completeProjectControlTaskPhase(state *projectControlState, task *projectCo
 		task.State = projectControlTaskStateForPhase(nextPhase)
 		task.RecentSummary = "Completed " + phaseID + "; next phase is " + nextPhase + "."
 		task.NextStep = "Start " + nextPhase + " and record its required evidence."
-		task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, runbook, "")
+		task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, runbook, "", "")
 	}
 	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 		ID:           projectControlID("event", "phase-completed"),
@@ -907,7 +959,7 @@ func failProjectControlTaskPhase(state *projectControlState, task *projectContro
 	task.AcceptanceStatus = "not_ready"
 	task.RecentSummary = "Runbook phase " + phaseID + " failed."
 	task.NextStep = "Start fix_or_replan, then rerun test and review evidence."
-	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, defaultProjectControlRunbook(), "")
+	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, defaultProjectControlRunbook(), "", "")
 	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 		ID:           projectControlID("event", "phase-failed"),
 		Timestamp:    now,
@@ -1086,6 +1138,25 @@ func checkpointWorkstreamID(state *projectControlState, taskID string) string {
 		}
 	}
 	return ""
+}
+
+func validateProjectControlFinalAcceptanceApproval(state *projectControlState, checkpoint projectControlCheckpoint) error {
+	if state == nil {
+		return errors.New("missing project control state")
+	}
+	for _, task := range state.Tasks {
+		if task.ID != checkpoint.TaskID {
+			continue
+		}
+		if normalizeProjectControlTaskState(task.State) != "execution_complete" {
+			return errors.New("final acceptance approval requires execution_complete task")
+		}
+		if missing := projectControlMissingCompletionEvidence(task, state.Artifacts, defaultProjectControlRunbook(), "", ""); len(missing) > 0 {
+			return fmt.Errorf("completion rules not satisfied: missing %s", strings.Join(missing, ","))
+		}
+		return nil
+	}
+	return errors.New("checkpoint task not found")
 }
 
 func newProjectControlStore(basePersistDir string) *projectControlStore {
@@ -1321,11 +1392,14 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			}
 			originalState := task.State
 			originalAcceptance := task.AcceptanceStatus
+			action := strings.TrimSpace(strings.ToLower(req.Action))
+			if isProjectControlPhaseAction(action) && (strings.TrimSpace(req.State) != "" || strings.TrimSpace(req.AcceptanceStatus) != "") {
+				return errors.New("phase actions cannot include direct state or acceptanceStatus")
+			}
 			if err := applyProjectControlTaskAction(&task, &req); err != nil {
 				return err
 			}
 			now := time.Now().UTC().Format(time.RFC3339)
-			action := strings.TrimSpace(strings.ToLower(req.Action))
 			switch action {
 			case "start_phase":
 				if err := startProjectControlTaskPhase(state, &task, req.PhaseID, now); err != nil {
@@ -1381,6 +1455,11 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 				if !(strings.TrimSpace(strings.ToLower(req.Action)) == "unarchive" && originalAcceptance == "accepted" && candidate == "not_ready") {
 					if err := validateProjectControlAcceptanceTransition(originalAcceptance, candidate, task.State, false); err != nil {
 						return err
+					}
+				}
+				if candidate == "ready_for_acceptance" || candidate == "under_human_review" {
+					if missing := projectControlMissingCompletionEvidence(task, state.Artifacts, defaultProjectControlRunbook(), "", ""); len(missing) > 0 {
+						return fmt.Errorf("completion rules not satisfied: missing %s", strings.Join(missing, ","))
 					}
 				}
 				from := task.AcceptanceStatus
@@ -1475,6 +1554,11 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 		isArchiveOverride := checkpoint.Kind == "archive_override"
 		if isArchiveOverride && action == "reroute" {
 			return errors.New("reroute not allowed for archive override")
+		}
+		if isFinalAcceptance && action == "approve" {
+			if err := validateProjectControlFinalAcceptanceApproval(state, checkpoint); err != nil {
+				return err
+			}
 		}
 		switch action {
 		case "approve":
@@ -2092,7 +2176,7 @@ func defaultProjectControlState() projectControlState {
 				Title:            "Review information architecture proposal",
 				Goal:             "Confirm that the Project Panel drill-down matches the docs and is ready for explicit human acceptance.",
 				State:            "execution_complete",
-				AcceptanceStatus: "ready_for_acceptance",
+				AcceptanceStatus: "under_human_review",
 				RiskLevel:        "medium",
 				Priority:         "high",
 				AgentLabel:       "reviewer",
@@ -2173,6 +2257,13 @@ func defaultProjectControlState() projectControlState {
 				Audit:            []projectControlAuditItem{},
 				RowVersion:       1,
 			},
+		},
+		Artifacts: []projectControlArtifact{
+			{ID: "artifact-seed-ia-plan", TaskID: projectControlTaskIAID, Kind: "plan", Outcome: "recorded", Label: "Plan", Value: "Information architecture review plan recorded.", CreatedAt: stampA},
+			{ID: "artifact-seed-ia-diff", TaskID: projectControlTaskIAID, Kind: "diff_summary", Outcome: "recorded", Label: "Diff summary", Value: "Refined Project Panel drill-down documentation and acceptance split.", CreatedAt: stampB},
+			{ID: "artifact-seed-ia-test", TaskID: projectControlTaskIAID, Kind: "test_result", Outcome: "pass", Label: "Test result", Value: "Documentation review completed without blocking validation findings.", CreatedAt: stampB},
+			{ID: "artifact-seed-ia-review", TaskID: projectControlTaskIAID, Kind: "review_result", Outcome: "pass", Label: "Review result", Value: "No blocking objections before final human acceptance.", CreatedAt: stampC},
+			{ID: "artifact-seed-ia-completion", TaskID: projectControlTaskIAID, Kind: "completion_check", Outcome: "pass", Label: "Completion check", Value: "Seeded IA task has all completion evidence required for final acceptance review.", CreatedAt: stampC},
 		},
 		Checkpoints: []projectControlCheckpoint{{
 			ID:              projectControlCheckpointAcceptanceID,
@@ -2630,6 +2721,7 @@ func projectControlNormalizeState(state *projectControlState) {
 		state.Artifacts[i].TaskID = strings.TrimSpace(state.Artifacts[i].TaskID)
 		state.Artifacts[i].PhaseAttemptID = strings.TrimSpace(state.Artifacts[i].PhaseAttemptID)
 		state.Artifacts[i].Kind = normalizeProjectControlArtifactKind(state.Artifacts[i].Kind)
+		state.Artifacts[i].Outcome = normalizeProjectControlArtifactOutcome(state.Artifacts[i].Outcome)
 		state.Artifacts[i].Label = strings.TrimSpace(state.Artifacts[i].Label)
 		state.Artifacts[i].Value = strings.TrimSpace(state.Artifacts[i].Value)
 	}
