@@ -995,6 +995,10 @@ func completeProjectControlTaskPhase(state *projectControlState, task *projectCo
 			return fmt.Errorf("completion rules not satisfied: missing %s", strings.Join(missing, ","))
 		}
 	}
+	nextPhase := nextProjectControlRunbookPhaseID(runbook, phaseID)
+	if nextPhase == "" {
+		return fmt.Errorf("phase %s has no next phase in runbook %s", phaseID, runbook.ID)
+	}
 	attempt := state.PhaseAttempts[attemptIndex]
 	if artifactKind != "" {
 		label := strings.TrimSpace(req.ArtifactLabel)
@@ -1035,7 +1039,6 @@ func completeProjectControlTaskPhase(state *projectControlState, task *projectCo
 	attempt.Status = "completed"
 	attempt.CompletedAt = now
 	state.PhaseAttempts[attemptIndex] = attempt
-	nextPhase := nextProjectControlRunbookPhaseID(runbook, phaseID)
 	if nextPhase == "ready_for_acceptance" {
 		task.State = "execution_complete"
 		task.AcceptanceStatus = "ready_for_acceptance"

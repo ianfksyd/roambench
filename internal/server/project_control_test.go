@@ -161,6 +161,9 @@ func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	if next := nextProjectControlRunbookPhaseID(runbook, "missing"); next != "" {
 		t.Fatalf("next phase after missing = %q, want empty", next)
 	}
+	if next := nextProjectControlRunbookPhaseID(runbook, "ready_for_acceptance"); next != "" {
+		t.Fatalf("next phase after ready_for_acceptance = %q, want empty", next)
+	}
 }
 
 func TestProjectControlRunbookPhaseProgressionUsesRunbookOrder(t *testing.T) {
