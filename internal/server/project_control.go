@@ -98,7 +98,8 @@ type projectControlSession struct {
 	AgentType      string   `json:"agentType"`
 	RuntimeID      string   `json:"runtimeId"`
 	State          string   `json:"state"`
-	Role           string   `json:"role"`
+	ExecutionRole  string   `json:"executionRole"`
+	SystemRole     string   `json:"systemRole"`
 	DurationLabel  string   `json:"durationLabel"`
 	StartedAt      string   `json:"startedAt"`
 	Summary        string   `json:"summary"`
@@ -1748,7 +1749,8 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		AgentType:      "reviewer",
 		RuntimeID:      projectControlRuntimeID,
 		State:          "completed",
-		Role:           "review",
+		ExecutionRole:  "review",
+		SystemRole:     "worker",
 		DurationLabel:  "18m",
 		StartedAt:      now.Add(-2 * time.Hour).Format(time.RFC3339),
 		Summary:        "Reviewed the information architecture draft and requested explicit final acceptance before archive.",
@@ -1774,7 +1776,8 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 			AgentType:      "worker",
 			RuntimeID:      projectControlRuntimeID,
 			State:          "active",
-			Role:           "implement",
+			ExecutionRole:  "implement",
+			SystemRole:     "worker",
 			DurationLabel:  humanizeSince(live.CreatedAt, now),
 			StartedAt:      live.CreatedAt.UTC().Format(time.RFC3339),
 			Summary:        "Live terminal session surfaced through the Project Panel so the operator can attach back into Terminal mode.",
@@ -1787,7 +1790,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 			targetTaskIndex = 2
 		} else if index >= 2 {
 			targetTaskIndex = 3
-			pcSession.Role = "verify"
+			pcSession.ExecutionRole = "verify"
 		}
 		if targetTaskIndex < len(tasks) {
 			pcSession.TaskID = tasks[targetTaskIndex].ID
@@ -1812,7 +1815,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		sessions = append(sessions, pcSession)
 	}
 
-	dashboard := buildProjectControlDashboard(tasks, checkpoints, runtimes, events)
+	dashboard := buildProjectControlDashboard(workstreams, tasks, checkpoints, runtimes, events)
 	return projectControlSnapshot{
 		GeneratedAt:     now.Format(time.RFC3339),
 		ActiveProjectID: state.ActiveProjectID,
@@ -1846,19 +1849,23 @@ func projectControlWorkstreamExists(state projectControlState, workstreamID, pro
 	return false
 }
 
-func buildProjectControlDashboard(tasks []projectControlTask, checkpoints []projectControlCheckpoint, runtimes []projectControlRuntime, events []projectControlRecordedEvent) projectControlDashboard {
-	runningWorkstreams := map[string]bool{}
+func buildProjectControlDashboard(workstreams []projectControlWorkstream, tasks []projectControlTask, checkpoints []projectControlCheckpoint, runtimes []projectControlRuntime, events []projectControlRecordedEvent) projectControlDashboard {
+	runningWorkstreams := 0
 	runningTasks := 0
 	blockedTasks := 0
 	recentFailures := []string{}
 	recentDecisions := []string{}
 	runtimeHealth := []string{}
 	projectTimeline := []string{}
+	for _, workstream := range workstreams {
+		if workstream.Status == "running" {
+			runningWorkstreams++
+		}
+	}
 	for _, task := range tasks {
 		switch task.State {
 		case "running", "waiting_review", "waiting_human":
 			runningTasks++
-			runningWorkstreams[task.WorkstreamID] = true
 		case "blocked", "failed":
 			blockedTasks++
 			if task.State == "failed" {
@@ -1896,7 +1903,7 @@ func buildProjectControlDashboard(tasks []projectControlTask, checkpoints []proj
 		recentDecisions = []string{"No decisions recorded yet"}
 	}
 	return projectControlDashboard{
-		RunningWorkstreams: len(runningWorkstreams),
+		RunningWorkstreams: runningWorkstreams,
 		RunningTasks:       runningTasks,
 		BlockedTasks:       blockedTasks,
 		PendingApprovals:   countPendingProjectControlCheckpoints(checkpoints),

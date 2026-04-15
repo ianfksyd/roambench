@@ -43,6 +43,28 @@ func decodeProjectControlSnapshot(t *testing.T, rec *httptest.ResponseRecorder) 
 	return snapshot
 }
 
+func TestProjectControlDashboardCountsRunningWorkstreamsFromWorkstreamStatus(t *testing.T) {
+	dashboard := buildProjectControlDashboard(
+		[]projectControlWorkstream{
+			{ID: "workstream-running", Status: "running"},
+			{ID: "workstream-planned", Status: "planned"},
+		},
+		[]projectControlTask{
+			{ID: "task-running", WorkstreamID: "workstream-planned", State: "running"},
+		},
+		nil,
+		nil,
+		nil,
+	)
+
+	if dashboard.RunningWorkstreams != 1 {
+		t.Fatalf("RunningWorkstreams = %d, want 1 from workstream status only", dashboard.RunningWorkstreams)
+	}
+	if dashboard.RunningTasks != 1 {
+		t.Fatalf("RunningTasks = %d, want 1", dashboard.RunningTasks)
+	}
+}
+
 func TestProjectControlSnapshotRouteReturnsSeededPrototype(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()

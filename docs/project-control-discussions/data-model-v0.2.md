@@ -63,6 +63,8 @@ v0.2 相对 v0.1 的主要变化：
 - `Checkpoint`
 - `Event`
 
+说明：`Agent` 不是 Project 下的层级容器，也不是 Workstream 的同义词。Agent 是执行/复核主体，通过 `Task.agent_strategy`、`Task.preferred_agent_type`、`Session.agent_type`、`Session.agent_version` 和共享 actor identity 中的 `agent` 类型表达；未来如需稳定身份、能力发现和版本追踪，应增加 agent registry，而不是把 Agent 放进 `Project -> Workstream -> Task -> Session` 的导航层级。
+
 ## 4. 对象定义
 
 ## 4.0 共享 Actor Identity 约束
@@ -194,6 +196,7 @@ v0.2 相对 v0.1 的主要变化：
 - `shares_artifact` 表示两个任务共享产物引用，用于追踪数据流
 - `blocks` 依赖是 level-triggered，而不是“一次满足后永久放行”
 - 如果依赖失效导致任务离开 `ready_for_acceptance` 或 `under_human_review`，pending 的 `final_acceptance` checkpoint 必须同步失效
+- MVP 实现可先用 `agent_label` / `agent_type` 字符串表达 worker、reviewer、policy_engine 等角色；这只是 agent registry 落地前的兼容层，不应把 Workstream 命名或 UI 层级改写成 Agent。
 
 ## 4.4 Session
 

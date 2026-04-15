@@ -29,6 +29,7 @@
 实现基础对象（参见 data-model-v0.2.md）：
 
 - Project
+- Workstream
 - Task
 - Session
 - Runtime

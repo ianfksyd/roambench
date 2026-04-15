@@ -670,14 +670,14 @@ body.view-login #terminal-view {
     padding: 16px;
 }
 
-.project-empty-workflow-card,
-.project-workflow-wizard {
+.project-empty-workstream-card,
+.project-workstream-wizard {
     display: grid;
     gap: 12px;
 }
 
-.project-empty-workflow-card h3,
-.project-workflow-wizard h3 {
+.project-empty-workstream-card h3,
+.project-workstream-wizard h3 {
     margin: 0;
     font-size: 20px;
     line-height: 1.2;
@@ -5144,8 +5144,8 @@ button.tab-action:focus-visible {
     line-height: 1.2;
 }
 
-.project-empty-workflow-card h3,
-.project-workflow-wizard h3 {
+.project-empty-workstream-card h3,
+.project-workstream-wizard h3 {
     margin-bottom: 0;
     font-size: 20px;
 }
@@ -5529,13 +5529,13 @@ button.tab-action:focus-visible {
     text-transform: uppercase;
 }
 
-.project-agent-grid {
+.project-workstream-tile-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 8px;
 }
 
-.project-agent-tile {
+.project-workstream-tile {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 10px;
@@ -5550,12 +5550,12 @@ button.tab-action:focus-visible {
     cursor: pointer;
 }
 
-.project-agent-tile:hover {
+.project-workstream-tile:hover {
     border-color: rgba(98, 176, 255, 0.36);
     background: rgba(98, 176, 255, 0.08);
 }
 
-.project-agent-avatar {
+.project-workstream-tile-avatar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -5570,36 +5570,36 @@ button.tab-action:focus-visible {
     letter-spacing: 0.04em;
 }
 
-.project-agent-avatar.tone-info { background: rgba(98, 176, 255, 0.18); }
-.project-agent-avatar.tone-warning { background: rgba(216, 164, 75, 0.2); }
-.project-agent-avatar.tone-danger { background: rgba(223, 106, 106, 0.18); }
-.project-agent-avatar.tone-success { background: rgba(85, 179, 127, 0.18); }
+.project-workstream-tile-avatar.tone-info { background: rgba(98, 176, 255, 0.18); }
+.project-workstream-tile-avatar.tone-warning { background: rgba(216, 164, 75, 0.2); }
+.project-workstream-tile-avatar.tone-danger { background: rgba(223, 106, 106, 0.18); }
+.project-workstream-tile-avatar.tone-success { background: rgba(85, 179, 127, 0.18); }
 
-.project-agent-body {
+.project-workstream-tile-body {
     display: grid;
     min-width: 0;
     gap: 6px;
 }
 
-.project-agent-name,
-.project-agent-task {
+.project-workstream-tile-name,
+.project-workstream-tile-task {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.project-agent-name {
+.project-workstream-tile-name {
     color: rgba(255, 255, 255, 0.9);
     font-size: 13px;
     font-weight: 850;
 }
 
-.project-agent-task {
+.project-workstream-tile-task {
     color: rgba(255, 255, 255, 0.5);
     font-size: 12px;
 }
 
-.project-agent-counts {
+.project-workstream-tile-counts {
     display: grid;
     gap: 4px;
     min-width: 68px;
@@ -5609,13 +5609,13 @@ button.tab-action:focus-visible {
     text-transform: uppercase;
 }
 
-.project-agent-counts span {
+.project-workstream-tile-counts span {
     display: flex;
     justify-content: space-between;
     gap: 8px;
 }
 
-.project-agent-counts strong {
+.project-workstream-tile-counts strong {
     color: rgba(255, 255, 255, 0.9);
     font-variant-numeric: tabular-nums;
 }
@@ -5777,7 +5777,7 @@ button.tab-action:focus-visible {
         display: none;
     }
 
-    .project-agent-grid {
+    .project-workstream-tile-grid {
         grid-template-columns: 1fr;
     }
 

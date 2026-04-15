@@ -52,8 +52,8 @@
         return countText(count, 'project.countLanesSingular', '{count} lane', 'project.countLanesPlural', '{count} lanes');
     }
 
-    function workflowCountText(count) {
-        return countText(count, 'project.countWorkflowsSingular', '{count} workflow', 'project.countWorkflowsPlural', '{count} workflows');
+    function workstreamCountText(count) {
+        return countText(count, 'project.countWorkstreamsSingular', '{count} workstream', 'project.countWorkstreamsPlural', '{count} workstreams');
     }
 
     function agentCountText(count) {
@@ -155,8 +155,8 @@
         return titleCaseWords(String(value || '').trim().replace(/[_-]+/g, ' ')) || '—';
     }
 
-    function workflowLabel(plural) {
-        return plural ? tr('project.workflowPlural', 'Workflows') : tr('project.workflowSingular', 'Workflow');
+    function workstreamLabel(plural) {
+        return plural ? tr('project.workstreamPlural', 'Workstreams') : tr('project.workstreamSingular', 'Workstream');
     }
 
     function humanizePriority(priority) {
@@ -261,7 +261,7 @@
         }
     }
 
-    function humanizeSessionRole(role) {
+    function humanizeExecutionRole(role) {
         switch (String(role || '').trim().toLowerCase()) {
         case 'implement':
             return tr('project.sessionImplementation', 'Implementation');
@@ -269,6 +269,17 @@
             return tr('project.sessionReview', 'Review');
         case 'verify':
             return tr('project.sessionVerification', 'Verification');
+        default:
+            return humanizeToken(role);
+        }
+    }
+
+    function humanizeSystemRole(role) {
+        switch (String(role || '').trim().toLowerCase()) {
+        case 'worker':
+            return tr('project.systemWorker', 'Worker');
+        case 'orchestrator':
+            return tr('project.systemOrchestrator', 'Orchestrator');
         default:
             return humanizeToken(role);
         }
@@ -825,10 +836,10 @@
         }).catch(function(err) {
             state.updatingWorkstreamId = '';
             if (err && err.status === 409) {
-                refreshSnapshotAfterConflict((err.message || tr('project.updateWorkflowFailed', 'Update workflow failed')) + ' ' + tr('project.reloadedLatest', 'Reloaded latest state.'));
+                refreshSnapshotAfterConflict((err.message || tr('project.updateWorkstreamFailed', 'Update workstream failed')) + ' ' + tr('project.reloadedLatest', 'Reloaded latest state.'));
                 return;
             }
-            state.error = err.message || tr('project.updateWorkflowFailed', 'Update workflow failed');
+            state.error = err.message || tr('project.updateWorkstreamFailed', 'Update workstream failed');
             render();
         });
     }
@@ -876,7 +887,7 @@
     function recommendedWorkstreamActions(workstream) {
         switch (workstream.status) {
         case 'planned':
-            return [{ action: 'start_execution', label: tr('project.actionStartWorkflow', 'Start workflow'), tone: 'primary' }];
+            return [{ action: 'start_execution', label: tr('project.actionStartWorkstream', 'Start workstream'), tone: 'primary' }];
         case 'running':
             return [
                 { action: 'request_human_input', label: tr('project.actionNeedInput', 'Need input') },
@@ -885,13 +896,13 @@
             ];
         case 'waiting_human':
             return [
-                { action: 'resume_execution', label: tr('project.actionResumeWorkflow', 'Resume workflow'), tone: 'primary' },
+                { action: 'resume_execution', label: tr('project.actionResumeWorkstream', 'Resume workstream'), tone: 'primary' },
                 { action: 'mark_blocked', label: tr('project.actionMarkBlocked', 'Mark blocked') }
             ];
         case 'blocked':
-            return [{ action: 'resume_execution', label: tr('project.actionResumeWorkflow', 'Resume workflow'), tone: 'primary' }];
+            return [{ action: 'resume_execution', label: tr('project.actionResumeWorkstream', 'Resume workstream'), tone: 'primary' }];
         case 'completed':
-            return [{ action: 'archive', label: tr('project.actionArchiveWorkflow', 'Archive workflow') }];
+            return [{ action: 'archive', label: tr('project.actionArchiveWorkstream', 'Archive workstream') }];
         default:
             return [];
         }
@@ -1526,13 +1537,13 @@
     function renderWorkstreamWizard(project) {
         var projectId = project && project.id ? project.id : '';
         var disabled = state.creatingWorkstreamSaving ? ' disabled' : '';
-        return '<form class="project-card-list project-workflow-wizard" data-workstream-wizard="' + escapeHTML(projectId) + '">'
-            + '<h3>' + escapeHTML(tr('project.newWorkflow', 'New workflow')) + '</h3>'
+        return '<form class="project-card-list project-workstream-wizard" data-workstream-wizard="' + escapeHTML(projectId) + '">'
+            + '<h3>' + escapeHTML(tr('project.newWorkstream', 'New workstream')) + '</h3>'
             + '<div class="project-wizard-fields">'
-            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.workflowName', 'Name')) + '</span>'
-            + '<input type="text" name="title" maxlength="120" data-workstream-title-input value="' + escapeHTML(state.creatingWorkstreamTitle || '') + '" placeholder="' + escapeHTML(tr('project.workflowNamePlaceholder', 'Name')) + '"' + disabled + '></label>'
-            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.workflowScope', 'Scope')) + '</span>'
-            + '<input type="text" name="scopeSummary" maxlength="220" data-workstream-scope-input value="' + escapeHTML(state.creatingWorkstreamScope || '') + '" placeholder="' + escapeHTML(tr('project.workflowScopePlaceholder', 'Scope (optional)')) + '"' + disabled + '></label>'
+            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.workstreamName', 'Name')) + '</span>'
+            + '<input type="text" name="title" maxlength="120" data-workstream-title-input value="' + escapeHTML(state.creatingWorkstreamTitle || '') + '" placeholder="' + escapeHTML(tr('project.workstreamNamePlaceholder', 'Name')) + '"' + disabled + '></label>'
+            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.workstreamScope', 'Scope')) + '</span>'
+            + '<input type="text" name="scopeSummary" maxlength="220" data-workstream-scope-input value="' + escapeHTML(state.creatingWorkstreamScope || '') + '" placeholder="' + escapeHTML(tr('project.workstreamScopePlaceholder', 'Scope (optional)')) + '"' + disabled + '></label>'
             + '</div>'
             + '<div class="project-action-group">'
             + '<button type="button" class="project-inline-btn" data-cancel-workstream-wizard="1"' + disabled + '>' + escapeHTML(tr('project.cancel', 'Cancel')) + '</button>'
@@ -1643,7 +1654,7 @@
             copy = blockedTask.title;
             note = taskActionSummary(blockedTask);
             actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(blockedTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-                + (focusWorkstreamForTask ? '<button type="button" class="project-inline-btn" data-workstream-id="' + escapeHTML(focusWorkstreamForTask.id) + '">' + escapeHTML(workflowLabel(false)) + '</button>' : '');
+                + (focusWorkstreamForTask ? '<button type="button" class="project-inline-btn" data-workstream-id="' + escapeHTML(focusWorkstreamForTask.id) + '">' + escapeHTML(workstreamLabel(false)) + '</button>' : '');
         } else if (waitingTask) {
             tone = 'warning';
             title = tr('project.statusWaiting', 'Waiting');
@@ -1674,7 +1685,7 @@
             actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(nextTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>';
         } else if (focusWorkstream) {
             tone = statusTone(focusWorkstream.status);
-            title = tr('project.focusNextWorkflow', 'Next workflow');
+            title = tr('project.focusNextWorkstream', 'Next workstream');
             copy = focusWorkstream.title;
             note = focusWorkstream.scopeSummary || focusWorkstream.description || workstreamFlowSummary(focusWorkstream);
             actionsHTML = '<button type="button" class="project-inline-btn primary" data-workstream-id="' + escapeHTML(focusWorkstream.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
@@ -1747,13 +1758,13 @@
         if (state.creatingWorkstreamProjectId === project.id) {
             return renderWorkstreamWizard(project);
         }
-        return '<div class="project-card-list project-empty-workflow-card">'
-            + '<h3>' + escapeHTML(tr('project.noWorkflowsYet', 'No workflows')) + '</h3>'
-            + '<button type="button" class="project-inline-btn primary" data-create-workstream="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.newAgentShort', '+ Workflow')) + '</button>'
+        return '<div class="project-card-list project-empty-workstream-card">'
+            + '<h3>' + escapeHTML(tr('project.noWorkstreamsYet', 'No workstreams')) + '</h3>'
+            + '<button type="button" class="project-inline-btn primary" data-create-workstream="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.newWorkstreamShort', '+ Workstream')) + '</button>'
             + '</div>';
     }
 
-    function renderWorkflowGuide(workstream, taskList) {
+    function renderWorkstreamGuide(workstream, taskList) {
         var waitingCount = taskList.filter(function(item) { return item.state === 'waiting_human' || item.state === 'waiting_review'; }).length;
         var blockedTask = pickPreferredTask(taskList.filter(function(item) {
             return item.state === 'blocked' || item.state === 'failed';
@@ -1771,29 +1782,29 @@
             return item.state === 'execution_complete' && item.acceptanceStatus !== 'accepted';
         }));
         var tone = statusTone(workstream.status);
-        var title = tr('project.guideWorkflowMovingTitle', 'Keep this workflow moving');
-        var copy = tr('project.guideWorkflowMovingCopy', 'Add the next task, open it, then come back only when the workflow needs a decision.');
+        var title = tr('project.guideWorkstreamMovingTitle', 'Keep this workstream moving');
+        var copy = tr('project.guideWorkstreamMovingCopy', 'Add the next task, open it, then come back only when the workstream needs a decision.');
         var note = workstream.scopeSummary || workstream.description || workstreamFlowSummary(workstream);
         var actionsHTML = '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
 
         if (blockedTask) {
             tone = 'danger';
             title = tr('project.guideResolveBlockerTitle', 'Resolve the blocker first');
-            copy = tr('project.guideBlockedCopy', '{title} is stopping this workflow.', { title: blockedTask.title });
+            copy = tr('project.guideBlockedCopy', '{title} is stopping this workstream.', { title: blockedTask.title });
             note = taskActionSummary(blockedTask);
             actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(blockedTask.id) + '">' + escapeHTML(tr('project.openBlockedTask', 'Open blocked task')) + '</button>'
                 + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
         } else if (waitingTask) {
             tone = 'warning';
             title = tr('project.guideDecisionWaitingTitle', 'A decision is waiting');
-            copy = tr('project.guideWaitingCopy', '{title} needs review or explicit input before this workflow can move cleanly.', { title: waitingTask.title });
+            copy = tr('project.guideWaitingCopy', '{title} needs review or explicit input before this workstream can move cleanly.', { title: waitingTask.title });
             note = taskActionSummary(waitingTask);
             actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(waitingTask.id) + '">' + escapeHTML(tr('project.openWaitingTask', 'Open waiting task')) + '</button>'
                 + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
         } else if (runningTask) {
             tone = 'info';
             title = tr('project.guideContinueLiveTitle', 'Continue the live task');
-            copy = tr('project.guideRunningCopy', '{title} is already active inside this workflow.', { title: runningTask.title });
+            copy = tr('project.guideRunningCopy', '{title} is already active inside this workstream.', { title: runningTask.title });
             note = taskActionSummary(runningTask);
             actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(runningTask.id) + '">' + escapeHTML(tr('project.openLiveTask', 'Open live task')) + '</button>'
                 + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
@@ -1814,13 +1825,13 @@
         } else if (!taskList.length) {
             tone = 'neutral';
             title = tr('project.addFirstTask', 'Add the first task');
-            copy = tr('project.guideEmptyWorkflowCopy', 'This workflow exists, but nothing concrete is queued yet.');
-            note = tr('project.guideEmptyWorkflowNote', 'Start with the next smallest executable step.');
+            copy = tr('project.guideEmptyWorkstreamCopy', 'This workstream exists, but nothing concrete is queued yet.');
+            note = tr('project.guideEmptyWorkstreamNote', 'Start with the next smallest executable step.');
             actionsHTML = '<button type="button" class="project-inline-btn primary" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addFirstTask', 'Add first task')) + '</button>';
         }
 
         return renderFocusCard({
-            kicker: tr('project.workflowFocus', '{workflow} focus', { workflow: workflowLabel(false) }),
+            kicker: tr('project.workstreamFocus', '{workstream} focus', { workstream: workstreamLabel(false) }),
             title: title,
             copy: copy,
             note: note,
@@ -1878,7 +1889,7 @@
             tone: tone,
             badges: [
                 renderProjectPill(humanizeTaskState(task.state), statusTone(task.state)),
-                renderProjectPill((workstream ? workstream.title : workflowLabel(false)) || workflowLabel(false), '', 'outline'),
+                renderProjectPill((workstream ? workstream.title : workstreamLabel(false)) || workstreamLabel(false), '', 'outline'),
                 renderProjectPill(sessionCountText(taskSessions.length))
             ],
             actionsHTML: actions
@@ -2148,7 +2159,7 @@
 
     function taskWorkstreamName(task) {
         var workstream = task && task.workstreamId ? findById(workstreams(), task.workstreamId) : null;
-        return workstream ? workstream.title : workflowLabel(false);
+        return workstream ? workstream.title : workstreamLabel(false);
     }
 
     function taskAgentName(task) {
@@ -2225,7 +2236,7 @@
 
     function renderCommandHero(project, projectSnapshot) {
         var focus = resolveProjectFocus(projectSnapshot);
-        var context = taskCountText(projectSnapshot.tasks.length) + ' / ' + workflowCountText(projectSnapshot.workstreams.length);
+        var context = taskCountText(projectSnapshot.tasks.length) + ' / ' + workstreamCountText(projectSnapshot.workstreams.length);
         return '<div class="project-command-hero tone-' + escapeHTML(focus.tone) + '">'
             + '<div class="project-command-hero-main">'
             + '<div class="project-command-hero-mark">' + renderSidebarSignal(focus.tone) + '</div>'
@@ -2259,7 +2270,7 @@
         return '<button type="button" class="project-command-lane-row tone-' + escapeHTML(tone) + '" data-workstream-id="' + escapeHTML(workstream.id) + '">'
             + '<span class="project-command-lane-index">' + escapeHTML(index < 9 ? '0' + String(index + 1) : String(index + 1)) + '</span>'
             + '<span class="project-command-lane-main">'
-            + '<span class="project-command-lane-title">' + escapeHTML(compactText(workstream.title, workflowLabel(false), 42)) + '</span>'
+            + '<span class="project-command-lane-title">' + escapeHTML(compactText(workstream.title, workstreamLabel(false), 42)) + '</span>'
             + '<span class="project-command-lane-task">' + escapeHTML(currentTask ? compactText(currentTask.title, '', 64) : tr('project.noActiveTask', 'No active task')) + '</span>'
             + '</span>'
             + '<span class="project-command-lane-chips">' + chips + '</span>'
@@ -2276,7 +2287,7 @@
         var hiddenLanes = lanes.filter(function(workstream) {
             return visibleLanes.indexOf(workstream) === -1;
         });
-        var title = attentionLanes.length ? tr('project.needsAttention', 'Needs attention') : tr('project.agentLanes', 'Workflows');
+        var title = attentionLanes.length ? tr('project.needsAttention', 'Needs attention') : tr('project.workstreamLanes', 'Workstreams');
 
         if (!lanes.length) {
             return '';
@@ -2390,7 +2401,7 @@
             tone: 'success',
             label: tr('project.statusClear', 'Clear'),
             title: projectSnapshot.tasks.length ? tr('project.noUrgentTask', 'No urgent task') : tr('project.noTasksYet', 'No tasks yet'),
-            meta: projectSnapshot.tasks.length ? tr('project.allTrackedCalm', 'All tracked work is calm') : tr('project.createAgentLaneStart', 'Add a task to start'),
+            meta: projectSnapshot.tasks.length ? tr('project.allTrackedCalm', 'All tracked work is calm') : tr('project.createWorkstreamStart', 'Add a task to start'),
             actionHTML: ''
         };
     }
@@ -2408,7 +2419,7 @@
             + '</div>';
     }
 
-    function renderAgentTile(workstream, index) {
+    function renderWorkstreamTile(workstream, index) {
         var taskList = tasksForWorkstream(workstream.id);
         var currentTask = pickPreferredTask(taskList);
         var runningCount = countTasksByStates(workstream.id, ['running']);
@@ -2416,13 +2427,13 @@
         var blockedCount = countTasksByStates(workstream.id, ['blocked', 'failed']);
         var doneCount = countTasksByStates(workstream.id, ['execution_complete']);
         var tone = blockedCount ? 'danger' : (waitingCount ? 'warning' : (runningCount ? 'info' : statusTone(workstream.status)));
-        var agentNumber = index + 1;
-        var agentCode = agentNumber < 10 ? 'A0' + agentNumber : 'A' + agentNumber;
-        return '<button type="button" class="project-agent-tile tone-' + escapeHTML(tone) + '" data-workstream-id="' + escapeHTML(workstream.id) + '">'
-            + '<span class="project-agent-avatar tone-' + escapeHTML(tone) + '">' + escapeHTML(agentCode) + '</span>'
-            + '<span class="project-agent-body">'
-            + '<span class="project-agent-name">' + escapeHTML(compactText(workstream.title, workflowLabel(false), 34)) + '</span>'
-            + '<span class="project-agent-task">' + escapeHTML(currentTask ? compactText(currentTask.title, '', 42) : tr('project.idle', 'Idle')) + '</span>'
+        var workstreamNumber = index + 1;
+        var workstreamCode = workstreamNumber < 10 ? 'W0' + workstreamNumber : 'W' + workstreamNumber;
+        return '<button type="button" class="project-workstream-tile tone-' + escapeHTML(tone) + '" data-workstream-id="' + escapeHTML(workstream.id) + '">'
+            + '<span class="project-workstream-tile-avatar tone-' + escapeHTML(tone) + '">' + escapeHTML(workstreamCode) + '</span>'
+            + '<span class="project-workstream-tile-body">'
+            + '<span class="project-workstream-tile-name">' + escapeHTML(compactText(workstream.title, workstreamLabel(false), 34)) + '</span>'
+            + '<span class="project-workstream-tile-task">' + escapeHTML(currentTask ? compactText(currentTask.title, '', 42) : tr('project.idle', 'Idle')) + '</span>'
             + renderStatusMeter([
                 { count: runningCount, tone: 'info', label: tr('project.statusRunning', 'running') },
                 { count: waitingCount, tone: 'warning', label: tr('project.statusWaiting', 'waiting') },
@@ -2430,7 +2441,7 @@
                 { count: doneCount, tone: 'success', label: tr('project.statusDone', 'done') }
             ])
             + '</span>'
-            + '<span class="project-agent-counts">'
+            + '<span class="project-workstream-tile-counts">'
             + '<span><strong>' + escapeHTML(String(runningCount)) + '</strong> ' + escapeHTML(tr('project.runShortTitle', 'Run')) + '</span>'
             + '<span><strong>' + escapeHTML(String(waitingCount)) + '</strong> ' + escapeHTML(tr('project.waitShortTitle', 'Wait')) + '</span>'
             + '<span><strong>' + escapeHTML(String(blockedCount)) + '</strong> ' + escapeHTML(tr('project.blockShortTitle', 'Block')) + '</span>'
@@ -2438,16 +2449,16 @@
             + '</button>';
     }
 
-    function renderAgentOverview(projectSnapshot) {
+    function renderWorkstreamOverview(projectSnapshot) {
         var workstreamList = projectSnapshot.workstreams || [];
         if (!workstreamList.length) {
             return '';
         }
         return '<div class="project-manager-block">'
-            + '<div class="project-manager-block-head"><h3>' + escapeHTML(tr('project.agents', 'Workflows')) + '</h3><span>' + escapeHTML(workflowCountText(workstreamList.length)) + '</span></div>'
-            + '<div class="project-agent-grid">'
+            + '<div class="project-manager-block-head"><h3>' + escapeHTML(tr('project.workstreams', 'Workstreams')) + '</h3><span>' + escapeHTML(workstreamCountText(workstreamList.length)) + '</span></div>'
+            + '<div class="project-workstream-tile-grid">'
             + workstreamList.map(function(workstream, index) {
-                return renderAgentTile(workstream, index);
+                return renderWorkstreamTile(workstream, index);
             }).join('')
             + '</div>'
             + '</div>';
@@ -2550,14 +2561,14 @@
                 return '<button type="button" class="project-nav-btn project-nav-compact' + (project.id === state.selectedProjectId && state.currentView === 'dashboard' ? ' active' : '') + '" data-project-id="' + escapeHTML(project.id) + '">'
                     + '<span class="project-nav-row">'
                     + '<span class="project-nav-main">' + renderSidebarSignal(statusTone(project.status)) + '<span class="project-nav-title">' + escapeHTML(project.name) + '</span></span>'
-                    + renderSidebarBadge(projectWorkstreamCount, 'neutral', workflowLabel(projectWorkstreamCount !== 1).toLowerCase())
+                    + renderSidebarBadge(projectWorkstreamCount, 'neutral', workstreamLabel(projectWorkstreamCount !== 1).toLowerCase())
                     + '</span>'
                     + '<span class="project-nav-meta-row"><span class="project-nav-meta">' + escapeHTML(shortStatusLabel(project.status || 'active')) + '</span></span>'
                     + '</button>';
             }).join('')
             + '</div>'
             + '<div class="project-sidebar-section">'
-            + '<div class="project-sidebar-kicker">' + escapeHTML(tr('project.sidebarWorkstreams', workflowLabel(true))) + '</div>'
+            + '<div class="project-sidebar-kicker">' + escapeHTML(tr('project.sidebarWorkstreams', workstreamLabel(true))) + '</div>'
             + workstreamList.map(function(item) {
                 return '<button type="button" class="project-nav-btn project-nav-compact' + (item.id === state.selectedWorkstreamId && state.currentView === 'workstream' ? ' active' : '') + '" data-workstream-id="' + escapeHTML(item.id) + '">'
                     + '<span class="project-nav-row">'
@@ -2634,10 +2645,10 @@
         return '<section class="project-main-section project-manager-view project-command-view">'
             + '<div class="project-section-header">'
             + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.taskManager', 'Task Manager')) + '</div>'
-            + '<h2>' + escapeHTML(project.name) + '</h2><p>' + escapeHTML(taskCountText(taskList.length) + ' / ' + workflowCountText(projectSnapshot.workstreams.length)) + '</p></div>'
+            + '<h2>' + escapeHTML(project.name) + '</h2><p>' + escapeHTML(taskCountText(taskList.length) + ' / ' + workstreamCountText(projectSnapshot.workstreams.length)) + '</p></div>'
             + '<div class="project-header-actions">'
             + (projectSnapshot.focusWorkstream ? '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(projectSnapshot.focusWorkstream.id) + '">' + escapeHTML(tr('project.newTaskShort', '+ Task')) + '</button>' : '')
-            + '<button type="button" class="project-inline-btn" data-create-workstream="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.newAgentShort', '+ Workflow')) + '</button>'
+            + '<button type="button" class="project-inline-btn" data-create-workstream="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.newWorkstreamShort', '+ Workstream')) + '</button>'
             + (projectSnapshot.pendingApprovals.length ? '<button type="button" class="project-inline-btn primary" data-open-approvals="1">' + escapeHTML(tr('project.statusReview', 'Review')) + '</button>' : '')
             + '</div>'
             + '</div>'
@@ -2729,7 +2740,7 @@
         });
         return '<section class="project-main-section project-manager-view">'
             + '<div class="project-section-header">'
-            + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.agentLane', 'Workflow')) + '</div>'
+            + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.workstreamLane', 'Workstream')) + '</div>'
             + '<h2>' + escapeHTML(workstream.title) + '</h2><p>' + escapeHTML(workstreamFlowSummary(workstream)) + '</p></div>'
             + '<div class="project-header-actions">'
             + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.newTaskShort', '+ Task')) + '</button>'
@@ -2741,7 +2752,7 @@
                 { label: tr('project.statusWaiting', 'Waiting'), value: waitCount, tone: waitCount ? 'warning' : 'success' },
                 { label: tr('project.statusBlocked', 'Blocked'), value: blockCount, tone: blockCount ? 'danger' : 'success' }
             ])
-            + renderWorkflowGuide(workstream, tasks)
+            + renderWorkstreamGuide(workstream, tasks)
             + (visibleColumns.length
                 ? '<div class="project-board project-board-progressive">'
                     + visibleColumns.map(function(column) {
@@ -2830,7 +2841,8 @@
             + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.sessionInfo', 'Session Info')) + '</h3>'
             + '<div class="project-list-item"><strong>ID:</strong> ' + escapeHTML(session.id) + '</div>'
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.runtime', 'Runtime')) + ':</strong> ' + escapeHTML(session.runtimeId) + '</div>'
-            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.role', 'Role')) + ':</strong> ' + escapeHTML(humanizeSessionRole(session.role)) + '</div>'
+            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.executionRole', 'Execution role')) + ':</strong> ' + escapeHTML(humanizeExecutionRole(session.executionRole)) + '</div>'
+            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.systemRole', 'System role')) + ':</strong> ' + escapeHTML(humanizeSystemRole(session.systemRole || 'worker')) + '</div>'
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.startedAt', 'Started')) + ':</strong> ' + escapeHTML(formatTime(session.startedAt)) + '</div>'
             + '</div>'
             + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.claims', 'Claims')) + '</h3>'
@@ -3053,7 +3065,7 @@
         state.creatingWorkstreamTitle = title;
         state.creatingWorkstreamScope = scopeSummary;
         if (!projectId || !title) {
-            state.error = tr('project.workflowNameRequired', 'Name required.');
+            state.error = tr('project.workstreamNameRequired', 'Name required.');
             render();
             focusWorkstreamWizard();
             return;
@@ -3088,7 +3100,7 @@
             render();
         }).catch(function(err) {
             state.creatingWorkstreamSaving = false;
-            state.error = err.message || tr('project.createWorkflowFailed', 'Create workflow failed');
+            state.error = err.message || tr('project.createWorkstreamFailed', 'Create workstream failed');
             render();
             focusWorkstreamWizard();
         });
