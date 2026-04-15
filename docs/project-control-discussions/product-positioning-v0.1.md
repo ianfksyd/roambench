@@ -65,13 +65,18 @@
 | **OpenAI Codex app** | 自家生态的多 agent 开发工作台 | 项目、并行线程、diff 审阅、人工接管 | 偏 OpenAI 闭环生态 |
 | **Anthropic Managed Agents** | 托管式 agent harness | 长时异步任务、受管基础设施 | 偏云端托管 |
 | **JetBrains Central** | 组织级 control and execution plane | agent-driven software production | 偏大组织、跨 IDE |
-| **OpenClaw / Hermes** | 个人自托管 agent runtime / 自进化 agent | 跨消息入口、技能、持续运行 | 偏广义个人助理或 agent 本体 |
+| **OpenClaw** | 个人自托管 agent automation platform | 跨消息入口、skills、standing orders、subagents、持续运行 | 偏广义个人助理与聊天入口自动化 |
+| **Hermes** | 自托管 agent runtime / 自进化 agent | skills、memory、MCP、cron、runtime decoupling | 偏 agent 本体与执行智能 |
 | **OpenHands** | Model-agnostic coding-agent 平台 | 可自托管、可审计、子 agent 委派 | 偏 coding-agent 平台 |
 | **LangGraph / LangSmith** | Workflow 框架 + 可观测层 | 图结构、state、tracing | 是框架层，不是终端产品 |
 
 ### 4.2 我们的空位
 
-真正还没被充分占住的是：**轻量、模型中立、开发者优先、local + remote 统一、强调历史与证据的 agent runtime console。**
+真正还没被充分占住的是：**轻量、模型中立、开发者优先、local + remote 统一、强调历史与证据的 project execution control plane。**
+
+更直接地说：
+
+> RoamBench 要工程化推进复杂软件项目，而不是做一个更热闹的 agent 聊天平台。
 
 ### 4.3 五个竞争力点
 
@@ -86,7 +91,7 @@
 - 不和 Codex app 比"谁更像 AI IDE"
 - 不和 Anthropic Managed Agents 比"谁的托管 harness 更省心"
 - 不和 JetBrains Central 比"谁更适合大组织"
-- 不和 OpenClaw 比"谁更适合做通用个人助理"
+- 不和 OpenClaw 比"谁更适合做通用个人助理或聊天入口自动化"
 
 ### 4.5 护城河
 
@@ -120,11 +125,29 @@ CLI 给的建议经常是长篇幅汇报，人类的作用变成纠正 AI 的错
 - **Layer 2：结构化摘要** — 修改文件 4 个、测试 8 过 / 2 失败、风险中
 - **Layer 3：完整输出** — 只在需要时展开看原始 CLI 文本
 
+### 5.3 工程化推进复杂项目
+
+RoamBench 的目标不是让多个 agent 互相聊天，而是把复杂项目推进变成可管理的工程系统。
+
+工程化推进意味着：
+
+- 目标先落到 `Project / Workstream / Task`
+- 每个 Task 绑定 `Skill / Runbook / Policy`
+- 每次执行沉淀为 `Session / PhaseAttempt`
+- 每个关键动作生成 `Event / Artifact`
+- 每个完成主张必须通过 `Claim / Review / Decision`
+- 需要人类判断时才生成 `Checkpoint`
+- 最终验收必须满足 completion rules，而不是相信 agent final answer
+
+因此，chat/thread 可以作为交互入口，但不能成为控制层或历史真相来源。
+
 ## 6. Hermes Agent 集成策略
 
 ### 6.1 定位
 
 Hermes 值得接，不值得被当成底层命运共同体。应该站在 Hermes 之上，但不依附于 Hermes。
+
+详细对比见 [hermes-agent-comparison-v0.1.md](./hermes-agent-comparison-v0.1.md)。
 
 ### 6.2 集成方式
 
@@ -147,9 +170,68 @@ Hermes 值得接，不值得被当成底层命运共同体。应该站在 Hermes
 - 不做多消息平台网关
 - 不把持久化模型绑到 Hermes 的 memory 语义
 
-## 7. 共享层设计
+### 6.5 创新边界
 
-### 7.1 四层共享范围
+RoamBench 不应该创新成“另一个 Hermes”，而应该创新在 Hermes 没有站稳的项目控制层：
+
+- Project / Workstream / Task 原生的执行图
+- agent-neutral 的 Skill Registry 与 Runbook
+- Policy-bound permissions，而不是 agent 自行决定权限
+- Claim / Review / Decision 协作协议
+- Evidence-native UI，而不是先呈现长篇 agent 输出
+- Tool Gateway 统一 MCP、本地工具、runtime tools 与审计记录
+- Workspace isolation：`shared_repo` / `isolated_worktree` / `read_only_snapshot`
+- Checkpoint、final acceptance、replay 与 recovery 作为一等产品表面
+
+边界原则：
+
+> Hermes owns agent-local execution intelligence.
+> RoamBench owns project-level control, audit, policy, and acceptance.
+
+## 7. OpenClaw 借鉴边界
+
+详细对比见 [openclaw-comparison-v0.1.md](./openclaw-comparison-v0.1.md)。
+
+OpenClaw 值得借鉴，但不应该成为 RoamBench 的产品模型。
+
+应借鉴：
+
+- skills 发现、优先级、allowlist 与 registry 思路
+- standing orders 中的 scope / trigger / approval gate / escalation rule
+- cron、heartbeat、background tasks、task flow 等自动化原语
+- subagent 的 timeout、并发上限、嵌套深度、tool policy、cascade stop
+- hooks / webhooks 作为外部触发机制
+
+不应照搬：
+
+- chat 作为 source of truth
+- 多 agent 群聊作为编排模型
+- persona / memory 作为项目事实来源
+- broad standing authority
+- 把自动开发塞进一个超大 skill prompt
+
+RoamBench 中的自动开发应该是：
+
+```text
+Skill
+-> Runbook
+-> Policy
+-> WorkspaceRef
+-> PhaseAttempt
+-> Artifact / Claim
+-> Review / Decision
+-> Checkpoint
+```
+
+边界原则：
+
+> Chat is an interface, not the control plane.
+> Skills are capability packages, not autonomy grants.
+> Automatic development is a project execution system, not a single agent prompt.
+
+## 8. 共享层设计
+
+### 8.1 四层共享范围
 
 | 范围 | 内容 | 说明 |
 |---|---|---|
@@ -158,7 +240,7 @@ Hermes 值得接，不值得被当成底层命运共同体。应该站在 Hermes
 | **Scope C: Review Memory** | claim、证据、reviewer 结论、人类裁定 | 审查轨迹 |
 | **Scope D: Project History** | 重要决策、关键失败、回滚原因、checkpoint 决策 | 项目级长期记忆 |
 
-### 7.2 多 agent 协作模型
+### 8.2 多 agent 协作模型
 
 不做"所有 agent 在一个群聊里互相说话"。采用 **manager + workers + reviewers** 模式：
 

@@ -16,6 +16,10 @@
 
 > 如何为复杂软件项目提供一个面向多工作线、多 agent、多 runtime、跨多天执行的控制系统，让人始终不迷失方向。
 
+更直接地说：
+
+> RoamBench 要工程化推进复杂项目，而不是做一个多 agent 聊天平台。
+
 由此收束出的几条主线是：
 
 - 顶层对象必须是 `Project / Workstream / Task`，而不是 terminal 或聊天线程。
@@ -32,6 +36,8 @@
   面向复杂软件项目的控制台定义、产品目标、非目标、需求优先级、核心判断、迁移路径与 Agent 接口契约。
 - [policy-and-decision-rules-v0.2.md](./policy-and-decision-rules-v0.2.md)
   规则文件、自动化边界、Decision Classifier（含 Class B 边界判定）、质量门槛、审批逻辑、策略版本绑定与规则冲突解决。
+- [task-runbook-and-skills-v0.1.md](./task-runbook-and-skills-v0.1.md)
+  Task 执行闭环、Skill / Runbook / Policy 分工、阶段权限、Tool Gateway / MCP 接入、共享文件体系、定时规则与通知规则。
 - [data-model-v0.2.md](./data-model-v0.2.md)
   规范对象模型、核心实体、关系链、状态机（含 `execution_complete` 重命名）、Task 依赖、Session 角色拆分、Event 管理与实施顺序。
 - [cross-cutting-concerns-v0.1.md](./cross-cutting-concerns-v0.1.md)
@@ -41,6 +47,10 @@
 
 - [product-positioning-v0.1.md](./product-positioning-v0.1.md)
   产品定位、竞争分析（vs Codex/Anthropic/JetBrains/Hermes/OpenClaw）、八条产品原则、共享层设计、Hermes 集成策略、三层摘要原则。
+- [hermes-agent-comparison-v0.1.md](./hermes-agent-comparison-v0.1.md)
+  Hermes Agent 对比、可借鉴能力、不可照搬边界、RoamBench 的创新方向与 HermesAdapter 集成规则。
+- [openclaw-comparison-v0.1.md](./openclaw-comparison-v0.1.md)
+  OpenClaw 对比、自动开发边界、skills/standing orders/subagents 可借鉴点，以及为什么 chat 只能作为交互层而非控制层。
 - [information-architecture.md](./information-architecture.md)
   顶层双模式（Terminal / Project Panel）、Project Panel 逐层递进结构、Workstream Board / Task Detail / Session Detail / Approvals Inbox 的当前设计稿。
 - [ui-information-architecture-v0.1.md](./ui-information-architecture-v0.1.md)
@@ -57,20 +67,23 @@
 ### 第一轮：理解问题与系统定义
 
 1. `product-positioning-v0.1.md` — 产品是什么、不是什么、竞争格局
-2. `system-requirements-v0.2.md` — 问题定义、边界、需求优先级
-3. `policy-and-decision-rules-v0.2.md` — 哪些判断由系统接管、哪些升级给人类
+2. `hermes-agent-comparison-v0.1.md` — 与 Hermes 的差异、借鉴边界与创新方向
+3. `openclaw-comparison-v0.1.md` — 与 OpenClaw 的差异、自动化原语和 chat 边界
+4. `system-requirements-v0.2.md` — 问题定义、边界、需求优先级
+5. `policy-and-decision-rules-v0.2.md` — 哪些判断由系统接管、哪些升级给人类
 
 ### 第二轮：理解系统如何构建
 
-4. `data-model-v0.2.md` — 核心对象模型与状态机
-5. `autonomy-policy-v0.1.md` — 自治边界与控制规则
-6. `cross-cutting-concerns-v0.1.md` — 存储、API、并发、协议
+6. `task-runbook-and-skills-v0.1.md` — Task 如何按 Skill / Runbook / Policy 闭环执行
+7. `data-model-v0.2.md` — 核心对象模型与状态机
+8. `autonomy-policy-v0.1.md` — 自治边界与控制规则
+9. `cross-cutting-concerns-v0.1.md` — 存储、API、并发、协议
 
 ### 第三轮：理解如何实施与运营
 
-7. `ui-information-architecture-v0.1.md` — 页面结构与交互设计
-8. `implementation-plan-v0.1.md` — 12 周实施计划与后端架构
-9. `business-strategy-v0.1.md` — 开源边界与商业策略
+10. `ui-information-architecture-v0.1.md` — 页面结构与交互设计
+11. `implementation-plan-v0.1.md` — 12 周实施计划与后端架构
+12. `business-strategy-v0.1.md` — 开源边界与商业策略
 
 ## v0.1 → v0.2 变更摘要
 
@@ -96,15 +109,18 @@
 
 ### 新增文档（扩展阶段）
 - `product-positioning-v0.1.md`：产品定位、竞争分析、产品原则、共享层、Hermes 策略
+- `hermes-agent-comparison-v0.1.md`：Hermes Agent 对比、借鉴边界、创新方向、Adapter 集成规则
+- `openclaw-comparison-v0.1.md`：OpenClaw 对比、自动开发边界、可借鉴自动化原语、chat 非控制层原则
 - `ui-information-architecture-v0.1.md`：页面架构、三层摘要、历史记录、查询映射
 - `autonomy-policy-v0.1.md`：自治规则、预算、checkpoint、merge
 - `implementation-plan-v0.1.md`：12 周计划、后端架构、服务层、状态流
 - `business-strategy-v0.1.md`：开源边界、变现路径、商业分层
+- `task-runbook-and-skills-v0.1.md`：Task 执行闭环、Skills / Runbooks、Tool Gateway / MCP、权限与定时规则
 
 ## 后续可继续扩展的方向
 
 - 数据库 DDL（基于 data-model-v0.2 的 SQLite/PostgreSQL schema）
-- `EXECUTION_POLICY.yaml` 完整示例文件
+- `EXECUTION_POLICY.yaml`、`SKILL.yaml`、`RUNBOOK.yaml` 完整示例文件
 - Agent Adapter 实现规范（Hermes adapter 作为第一个样例）
 - 前端组件设计与原型
 - E2E 测试计划
