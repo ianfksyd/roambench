@@ -122,8 +122,8 @@ func TestProjectControlDashboardCountsRunningWorkstreamsFromWorkstreamStatus(t *
 
 func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	skills := defaultProjectControlSkills()
-	if len(skills) != 1 {
-		t.Fatalf("len(skills) = %d, want 1", len(skills))
+	if len(skills) != 2 {
+		t.Fatalf("len(skills) = %d, want 2", len(skills))
 	}
 	skill := skills[0]
 	if skill.ID != projectControlDefaultSkillID {
@@ -134,6 +134,16 @@ func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	}
 	if skill.PermissionsByPhase["implement"] != "scoped_write" {
 		t.Fatalf("implement permission = %q, want scoped_write", skill.PermissionsByPhase["implement"])
+	}
+	docsSkill := skills[1]
+	if docsSkill.ID != projectControlDocsUpdateSkillID {
+		t.Fatalf("docs skill ID = %q, want %q", docsSkill.ID, projectControlDocsUpdateSkillID)
+	}
+	if docsSkill.DefaultRunbookID != projectControlDocsUpdateRunbookID {
+		t.Fatalf("docs DefaultRunbookID = %q, want %q", docsSkill.DefaultRunbookID, projectControlDocsUpdateRunbookID)
+	}
+	if docsSkill.PermissionsByPhase["write"] != "scoped_write" {
+		t.Fatalf("write permission = %q, want scoped_write", docsSkill.PermissionsByPhase["write"])
 	}
 
 	runbook := defaultProjectControlRunbook()
@@ -163,6 +173,23 @@ func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	}
 	if next := nextProjectControlRunbookPhaseID(runbook, "ready_for_acceptance"); next != "" {
 		t.Fatalf("next phase after ready_for_acceptance = %q, want empty", next)
+	}
+
+	docsRunbook, ok := findProjectControlRunbook(defaultProjectControlRunbooks(), projectControlDocsUpdateRunbookID)
+	if !ok {
+		t.Fatalf("docs runbook %q not found", projectControlDocsUpdateRunbookID)
+	}
+	wantDocsPhases := []string{"plan", "write", "review", "final_validation"}
+	if len(docsRunbook.Phases) != len(wantDocsPhases) {
+		t.Fatalf("len(docsRunbook.Phases) = %d, want %d", len(docsRunbook.Phases), len(wantDocsPhases))
+	}
+	for i, want := range wantDocsPhases {
+		if docsRunbook.Phases[i].ID != want {
+			t.Fatalf("docs phase[%d] = %q, want %q", i, docsRunbook.Phases[i].ID, want)
+		}
+	}
+	if next := nextProjectControlRunbookPhaseID(docsRunbook, "plan"); next != "write" {
+		t.Fatalf("docs next phase after plan = %q, want write", next)
 	}
 }
 
@@ -217,6 +244,13 @@ func TestProjectControlSkillRunbookSelectionValidatesRegistry(t *testing.T) {
 	if skill.ID != projectControlDefaultSkillID || runbook.ID != projectControlDefaultRunbookID {
 		t.Fatalf("selection = %q/%q, want %q/%q", skill.ID, runbook.ID, projectControlDefaultSkillID, projectControlDefaultRunbookID)
 	}
+	skill, runbook, err = validateProjectControlSkillRunbookSelection("docs_update", "docs_update_default")
+	if err != nil {
+		t.Fatalf("validate docs_update error: %v", err)
+	}
+	if skill.ID != projectControlDocsUpdateSkillID || runbook.ID != projectControlDocsUpdateRunbookID {
+		t.Fatalf("docs selection = %q/%q, want %q/%q", skill.ID, runbook.ID, projectControlDocsUpdateSkillID, projectControlDocsUpdateRunbookID)
+	}
 
 	_, _, err = validateProjectControlSkillRunbookSelection("unknown", "")
 	if err == nil || !strings.Contains(err.Error(), "unknown skill") {
@@ -226,6 +260,10 @@ func TestProjectControlSkillRunbookSelectionValidatesRegistry(t *testing.T) {
 	_, _, err = validateProjectControlSkillRunbookSelection("code_change", "missing_runbook")
 	if err == nil || !strings.Contains(err.Error(), "unknown runbook") {
 		t.Fatalf("unknown runbook error = %v, want unknown runbook", err)
+	}
+	_, _, err = validateProjectControlSkillRunbookSelection("docs_update", "code_change_default")
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("mismatched runbook error = %v, want not allowed", err)
 	}
 }
 
@@ -334,6 +372,75 @@ func TestProjectControlRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
 	}
 }
 
+func TestProjectControlDocsUpdateRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
+	state := projectControlState{
+		PhaseAttempts: []projectControlPhaseAttempt{},
+		Artifacts:     []projectControlArtifact{},
+	}
+	task := projectControlTask{
+		ID:               "task-docs-runbook-lifecycle",
+		ProjectID:        "project-runbook",
+		WorkstreamID:     "workstream-runbook",
+		State:            "planned",
+		AcceptanceStatus: "not_ready",
+		RuntimeID:        projectControlRuntimeID,
+		SelectedSkill:    projectControlDocsUpdateSkillID,
+		RunbookID:        projectControlDocsUpdateRunbookID,
+	}
+	projectControlNormalizeState(&state)
+	now := "2026-04-15T00:00:00Z"
+
+	steps := []struct {
+		phase   string
+		kind    string
+		outcome string
+		value   string
+		next    string
+	}{
+		{phase: "plan", kind: "plan", outcome: "recorded", value: "Docs plan artifact", next: "write"},
+		{phase: "write", kind: "doc_summary", outcome: "recorded", value: "Updated docs for runbook selection", next: "review"},
+		{phase: "review", kind: "review_result", outcome: "pass", value: "Docs review passed", next: "final_validation"},
+	}
+	for _, step := range steps {
+		if err := startProjectControlTaskPhase(&state, &task, step.phase, now); err != nil {
+			t.Fatalf("start %s error: %v", step.phase, err)
+		}
+		req := projectControlTaskUpdateRequest{
+			PhaseID:         step.phase,
+			ArtifactKind:    step.kind,
+			ArtifactOutcome: step.outcome,
+			ArtifactLabel:   step.kind,
+			ArtifactValue:   step.value,
+		}
+		if err := completeProjectControlTaskPhase(&state, &task, req, now); err != nil {
+			t.Fatalf("complete %s error: %v", step.phase, err)
+		}
+		if task.CurrentPhase != step.next {
+			t.Fatalf("after %s CurrentPhase = %q, want %q", step.phase, task.CurrentPhase, step.next)
+		}
+	}
+
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+		t.Fatalf("start final_validation error: %v", err)
+	}
+	req := projectControlTaskUpdateRequest{
+		PhaseID:         "final_validation",
+		ArtifactKind:    "completion_check",
+		ArtifactOutcome: "pass",
+		ArtifactLabel:   "completion_check",
+		ArtifactValue:   "Docs completion rules satisfied",
+	}
+	if err := completeProjectControlTaskPhase(&state, &task, req, now); err != nil {
+		t.Fatalf("complete final_validation error: %v", err)
+	}
+	if task.State != "execution_complete" || task.AcceptanceStatus != "ready_for_acceptance" {
+		t.Fatalf("task state/acceptance = %q/%q, want execution_complete/ready_for_acceptance", task.State, task.AcceptanceStatus)
+	}
+	if len(task.MissingEvidence) != 0 {
+		t.Fatalf("MissingEvidence = %#v, want empty", task.MissingEvidence)
+	}
+}
+
 func TestProjectControlFinalValidationRequiresCompletionEvidence(t *testing.T) {
 	state := projectControlState{
 		PhaseAttempts: []projectControlPhaseAttempt{},
@@ -418,6 +525,49 @@ func TestProjectControlCompletionEvidenceRequiresPassingOutcomes(t *testing.T) {
 		t.Fatalf("error = %q, want missing passing test evidence", err.Error())
 	}
 	if len(state.Artifacts) != 4 {
+		t.Fatalf("len(Artifacts) = %d, want original artifacts only after rejected completion", len(state.Artifacts))
+	}
+}
+
+func TestProjectControlDocsUpdateFinalValidationRequiresDocSummary(t *testing.T) {
+	state := projectControlState{
+		PhaseAttempts: []projectControlPhaseAttempt{},
+		Artifacts: []projectControlArtifact{
+			{ID: "artifact-plan", TaskID: "task-docs-missing-summary", Kind: "plan", Outcome: "recorded"},
+			{ID: "artifact-review", TaskID: "task-docs-missing-summary", Kind: "review_result", Outcome: "pass"},
+		},
+	}
+	task := projectControlTask{
+		ID:               "task-docs-missing-summary",
+		ProjectID:        "project-runbook",
+		WorkstreamID:     "workstream-runbook",
+		State:            "running",
+		AcceptanceStatus: "not_ready",
+		RuntimeID:        projectControlRuntimeID,
+		SelectedSkill:    projectControlDocsUpdateSkillID,
+		RunbookID:        projectControlDocsUpdateRunbookID,
+		CurrentPhase:     "final_validation",
+		RunbookState:     "in_progress",
+	}
+	now := "2026-04-15T00:00:00Z"
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+		t.Fatalf("start final_validation error: %v", err)
+	}
+	req := projectControlTaskUpdateRequest{
+		PhaseID:         "final_validation",
+		ArtifactKind:    "completion_check",
+		ArtifactOutcome: "pass",
+		ArtifactLabel:   "completion_check",
+		ArtifactValue:   "Docs completion claimed without summary",
+	}
+	err := completeProjectControlTaskPhase(&state, &task, req, now)
+	if err == nil {
+		t.Fatal("complete docs final_validation error = nil, want missing doc_summary error")
+	}
+	if !strings.Contains(err.Error(), "doc_summary") {
+		t.Fatalf("error = %q, want doc_summary evidence", err.Error())
+	}
+	if len(state.Artifacts) != 2 {
 		t.Fatalf("len(Artifacts) = %d, want original artifacts only after rejected completion", len(state.Artifacts))
 	}
 }
@@ -509,11 +659,11 @@ func TestProjectControlSnapshotRouteReturnsSeededPrototype(t *testing.T) {
 	if len(snapshot.Checkpoints) != 1 || snapshot.Checkpoints[0].Status != "pending" {
 		t.Fatalf("Checkpoints = %#v, want one pending checkpoint", snapshot.Checkpoints)
 	}
-	if len(snapshot.Runbooks) != 1 || snapshot.Runbooks[0].ID != projectControlDefaultRunbookID {
-		t.Fatalf("Runbooks = %#v, want default runbook", snapshot.Runbooks)
+	if len(snapshot.Runbooks) != 2 || snapshot.Runbooks[0].ID != projectControlDefaultRunbookID || snapshot.Runbooks[1].ID != projectControlDocsUpdateRunbookID {
+		t.Fatalf("Runbooks = %#v, want code_change and docs_update runbooks", snapshot.Runbooks)
 	}
-	if len(snapshot.Skills) != 1 || snapshot.Skills[0].ID != projectControlDefaultSkillID || snapshot.Skills[0].DefaultRunbookID != projectControlDefaultRunbookID {
-		t.Fatalf("Skills = %#v, want default code_change skill", snapshot.Skills)
+	if len(snapshot.Skills) != 2 || snapshot.Skills[0].ID != projectControlDefaultSkillID || snapshot.Skills[1].ID != projectControlDocsUpdateSkillID {
+		t.Fatalf("Skills = %#v, want code_change and docs_update skills", snapshot.Skills)
 	}
 	for _, task := range snapshot.Tasks {
 		if task.SelectedSkill == "" || task.RunbookID == "" || task.CurrentPhase == "" {
@@ -782,6 +932,36 @@ func TestProjectControlCreateTaskAcceptsExplicitSkillRunbook(t *testing.T) {
 		return
 	}
 	t.Fatal("created task not found")
+}
+
+func TestProjectControlCreateTaskAcceptsDocsUpdateSkillRunbook(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	taskBody := fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"Docs Update Task","goal":"verify docs skill","priority":"medium","riskLevel":"low","selectedSkill":"docs_update","runbookId":"docs_update_default"}`,
+		projectControlProjectID, projectControlWorkstreamUXID)
+	taskReq := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(taskBody))
+	taskReq.Header.Set("Content-Type", "application/json")
+	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	taskRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(taskRec, taskReq)
+	if taskRec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/project-control/tasks status = %d, want %d: %s", taskRec.Code, http.StatusCreated, taskRec.Body.String())
+	}
+	snapshot := decodeProjectControlSnapshot(t, taskRec)
+	for _, task := range snapshot.Tasks {
+		if task.Title != "Docs Update Task" {
+			continue
+		}
+		if task.SelectedSkill != projectControlDocsUpdateSkillID || task.RunbookID != projectControlDocsUpdateRunbookID {
+			t.Fatalf("created docs task skill/runbook = %q/%q, want %q/%q", task.SelectedSkill, task.RunbookID, projectControlDocsUpdateSkillID, projectControlDocsUpdateRunbookID)
+		}
+		if got := strings.Join(task.MissingEvidence, ","); got != "plan,doc_summary,review_result:pass,completion_check:pass" {
+			t.Fatalf("docs task MissingEvidence = %q, want docs requirements", got)
+		}
+		return
+	}
+	t.Fatal("created docs task not found")
 }
 
 func TestProjectControlCreateTaskRejectsUnknownSkillRunbook(t *testing.T) {

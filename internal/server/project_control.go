@@ -30,6 +30,8 @@ const (
 	projectControlCheckpointAcceptanceID = "checkpoint-final-acceptance"
 	projectControlDefaultSkillID         = "code_change"
 	projectControlDefaultRunbookID       = "code_change_default"
+	projectControlDocsUpdateSkillID      = "docs_update"
+	projectControlDocsUpdateRunbookID    = "docs_update_default"
 )
 
 type projectControlSnapshot struct {
@@ -547,30 +549,53 @@ func validateProjectControlAcceptanceTransition(from, to, resultingTaskState str
 }
 
 func defaultProjectControlSkills() []projectControlSkill {
-	return []projectControlSkill{{
-		ID:               projectControlDefaultSkillID,
-		Name:             "Code Change",
-		Version:          "0.1",
-		DefaultRunbookID: projectControlDefaultRunbookID,
-		AllowedRunbookIDs: []string{
-			projectControlDefaultRunbookID,
+	return []projectControlSkill{
+		{
+			ID:               projectControlDefaultSkillID,
+			Name:             "Code Change",
+			Version:          "0.1",
+			DefaultRunbookID: projectControlDefaultRunbookID,
+			AllowedRunbookIDs: []string{
+				projectControlDefaultRunbookID,
+			},
+			RequiredArtifacts: []string{
+				"plan",
+				"diff_summary",
+				"test_result",
+				"review_result",
+				"completion_check",
+			},
+			PermissionsByPhase: map[string]string{
+				"plan":             "read_only",
+				"implement":        "scoped_write",
+				"test":             "read_only",
+				"review":           "read_only",
+				"fix_or_replan":    "scoped_write",
+				"final_validation": "read_only",
+			},
 		},
-		RequiredArtifacts: []string{
-			"plan",
-			"diff_summary",
-			"test_result",
-			"review_result",
-			"completion_check",
+		{
+			ID:               projectControlDocsUpdateSkillID,
+			Name:             "Docs Update",
+			Version:          "0.1",
+			DefaultRunbookID: projectControlDocsUpdateRunbookID,
+			AllowedRunbookIDs: []string{
+				projectControlDocsUpdateRunbookID,
+			},
+			RequiredArtifacts: []string{
+				"plan",
+				"doc_summary",
+				"review_result",
+				"completion_check",
+			},
+			PermissionsByPhase: map[string]string{
+				"plan":             "read_only",
+				"write":            "scoped_write",
+				"review":           "read_only",
+				"final_validation": "read_only",
+			},
 		},
-		PermissionsByPhase: map[string]string{
-			"plan":             "read_only",
-			"implement":        "scoped_write",
-			"test":             "read_only",
-			"review":           "read_only",
-			"fix_or_replan":    "scoped_write",
-			"final_validation": "read_only",
-		},
-	}}
+	}
 }
 
 func defaultProjectControlSkill() projectControlSkill {
@@ -584,20 +609,34 @@ func defaultProjectControlSkill() projectControlSkill {
 }
 
 func defaultProjectControlRunbooks() []projectControlRunbook {
-	return []projectControlRunbook{{
-		ID:      projectControlDefaultRunbookID,
-		Skill:   projectControlDefaultSkillID,
-		Version: "0.1",
-		Phases: []projectControlRunbookPhase{
-			{ID: "plan", ExecutionRole: "plan", WriteAccess: "read_only", RequiredArtifacts: []string{"plan"}},
-			{ID: "implement", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"diff_summary"}},
-			{ID: "test", ExecutionRole: "test", WriteAccess: "read_only", RequiredArtifacts: []string{"test_result"}},
-			{ID: "review", ExecutionRole: "review", WriteAccess: "read_only", RequiredArtifacts: []string{"review_result"}},
-			{ID: "fix_or_replan", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"diff_summary"}},
-			{ID: "final_validation", ExecutionRole: "verify", WriteAccess: "read_only", RequiredArtifacts: []string{"completion_check"}},
+	return []projectControlRunbook{
+		{
+			ID:      projectControlDefaultRunbookID,
+			Skill:   projectControlDefaultSkillID,
+			Version: "0.1",
+			Phases: []projectControlRunbookPhase{
+				{ID: "plan", ExecutionRole: "plan", WriteAccess: "read_only", RequiredArtifacts: []string{"plan"}},
+				{ID: "implement", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"diff_summary"}},
+				{ID: "test", ExecutionRole: "test", WriteAccess: "read_only", RequiredArtifacts: []string{"test_result"}},
+				{ID: "review", ExecutionRole: "review", WriteAccess: "read_only", RequiredArtifacts: []string{"review_result"}},
+				{ID: "fix_or_replan", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"diff_summary"}},
+				{ID: "final_validation", ExecutionRole: "verify", WriteAccess: "read_only", RequiredArtifacts: []string{"completion_check"}},
+			},
+			CompletionRules: []string{"plan", "diff_summary", "test_result", "review_result", "completion_check"},
 		},
-		CompletionRules: []string{"plan", "diff_summary", "test_result", "review_result", "completion_check"},
-	}}
+		{
+			ID:      projectControlDocsUpdateRunbookID,
+			Skill:   projectControlDocsUpdateSkillID,
+			Version: "0.1",
+			Phases: []projectControlRunbookPhase{
+				{ID: "plan", ExecutionRole: "plan", WriteAccess: "read_only", RequiredArtifacts: []string{"plan"}},
+				{ID: "write", ExecutionRole: "implement", WriteAccess: "scoped_write", RequiredArtifacts: []string{"doc_summary"}},
+				{ID: "review", ExecutionRole: "review", WriteAccess: "read_only", RequiredArtifacts: []string{"review_result"}},
+				{ID: "final_validation", ExecutionRole: "verify", WriteAccess: "read_only", RequiredArtifacts: []string{"completion_check"}},
+			},
+			CompletionRules: []string{"plan", "doc_summary", "review_result", "completion_check"},
+		},
+	}
 }
 
 func defaultProjectControlRunbook() projectControlRunbook {
@@ -827,6 +866,8 @@ func projectControlTaskStateForPhase(phaseID string) string {
 	case "review":
 		return "waiting_review"
 	case "fix_or_replan":
+		return "running"
+	case "write":
 		return "running"
 	default:
 		return "running"
@@ -2737,7 +2778,7 @@ func normalizeProjectControlTaskState(value string) string {
 
 func normalizeProjectControlPhaseID(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "plan", "implement", "test", "review", "fix_or_replan", "final_validation", "ready_for_acceptance":
+	case "plan", "implement", "write", "test", "review", "fix_or_replan", "final_validation", "ready_for_acceptance":
 		return strings.TrimSpace(strings.ToLower(value))
 	default:
 		return ""
@@ -2764,7 +2805,7 @@ func normalizeProjectControlPhaseAttemptStatus(value string) string {
 
 func normalizeProjectControlArtifactKind(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "plan", "diff_summary", "test_result", "review_result", "completion_check":
+	case "plan", "diff_summary", "doc_summary", "test_result", "review_result", "completion_check":
 		return strings.TrimSpace(strings.ToLower(value))
 	default:
 		return strings.TrimSpace(strings.ToLower(value))

@@ -261,6 +261,8 @@
             return tr('project.phasePlan', 'Plan');
         case 'implement':
             return tr('project.phaseImplement', 'Implement');
+        case 'write':
+            return tr('project.phaseWrite', 'Write');
         case 'test':
             return tr('project.phaseTest', 'Test');
         case 'review':
@@ -282,6 +284,8 @@
             return tr('project.artifactPlan', 'Plan');
         case 'diff_summary':
             return tr('project.artifactDiffSummary', 'Diff summary');
+        case 'doc_summary':
+            return tr('project.artifactDocSummary', 'Doc summary');
         case 'test_result':
             return tr('project.artifactTestResult', 'Test result');
         case 'review_result':
@@ -312,6 +316,8 @@
         switch (String(skillOrId || '').trim().toLowerCase()) {
         case 'code_change':
             return tr('project.skillCodeChange', 'Code change');
+        case 'docs_update':
+            return tr('project.skillDocsUpdate', 'Docs update');
         default:
             return humanizeToken(skillOrId);
         }
