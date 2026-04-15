@@ -1,7 +1,7 @@
 # 项目控制讨论整理
 
 整理时间：`2026-04-13` UTC
-更新时间：`2026-04-13` UTC（v0.2 + 扩展文档）
+更新时间：`2026-04-15` UTC（v0.2 + 扩展文档）
 
 来源：
 
@@ -37,7 +37,7 @@
 - [policy-and-decision-rules-v0.2.md](./policy-and-decision-rules-v0.2.md)
   规则文件、自动化边界、Decision Classifier（含 Class B 边界判定）、质量门槛、审批逻辑、策略版本绑定与规则冲突解决。
 - [task-runbook-and-skills-v0.1.md](./task-runbook-and-skills-v0.1.md)
-  Task 执行闭环、Skill / Runbook / Policy 分工、阶段权限、Tool Gateway / MCP 接入、共享文件体系、定时规则与通知规则。
+  Task 执行闭环、Runbook 作为控制内核、Skill 作为执行策略层、阶段权限、Tool Gateway / MCP 接入、共享文件体系、定时规则与通知规则。
 - [data-model-v0.2.md](./data-model-v0.2.md)
   规范对象模型、核心实体、关系链、状态机（含 `execution_complete` 重命名）、Task 依赖、Session 角色拆分、Event 管理与实施顺序。
 - [cross-cutting-concerns-v0.1.md](./cross-cutting-concerns-v0.1.md)
@@ -115,7 +115,7 @@
 - `autonomy-policy-v0.1.md`：自治规则、预算、checkpoint、merge
 - `implementation-plan-v0.1.md`：12 周计划、后端架构、服务层、状态流
 - `business-strategy-v0.1.md`：开源边界、变现路径、商业分层
-- `task-runbook-and-skills-v0.1.md`：Task 执行闭环、Skills / Runbooks、Tool Gateway / MCP、权限与定时规则
+- `task-runbook-and-skills-v0.1.md`：Task 执行闭环、Runbook / State Machine 与 Skills 的边界、Tool Gateway / MCP、权限与定时规则
 
 ## 后续可继续扩展的方向
 

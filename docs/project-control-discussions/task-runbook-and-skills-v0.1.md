@@ -38,6 +38,42 @@ Session = 某个 agent 执行某一步
 | `Session` | 某个 agent 在某个 runtime/workspace 上执行某一阶段 | 不拥有项目级自治权 |
 | `Tool Gateway` | 统一代理 MCP、本地工具、文件系统、测试 runner 等能力 | 不让 agent 直接绕过审计 |
 
+### 2.1 Runbook 与 Skill 的最终边界
+
+Runbook 和 Skill 不应二选一。
+
+更合理的架构是：
+
+```text
+Project / Workstream / Task
+        ↓
+Runbook / State Machine：规定任务必须怎么推进
+        ↓
+Phase：plan / implement / test / review / fix_or_replan / final_validation
+        ↓
+Skill：每个 phase 具体怎么做、需要什么工具、产出什么 artifact
+        ↓
+Agent / Runtime：谁来执行
+        ↓
+Artifact / Evidence / Checkpoint：怎么证明完成，什么时候需要人批准
+```
+
+因此：
+
+- Runbook 是控制内核，负责阶段顺序、状态转换、循环、完成规则和 gate。
+- Skill 是执行策略，负责某类任务的做法、工具建议、artifact schema、常见失败恢复路径。
+- Policy 是硬约束，负责权限、预算、风险升级和审批边界。
+- Agent 只执行某个 phase，不拥有跳过 gate 或改变全局状态的权力。
+- Artifact / Evidence / Checkpoint 是责任链，不是 agent final answer 的附属物。
+
+不能只用 Skill 取代 Runbook，原因是 Skill 不天然负责全局状态、审计链、跨 agent 协同、权限边界和最终验收。否则系统会退回到“agent 说它做完了”的模式。
+
+也不能只保留一个固定 Runbook，原因是不同任务类型需要不同流程。代码修改、文档更新、研究任务、依赖升级、前端视觉修改、基础设施变更不应被强行套进同一个 phase 列表。
+
+推荐结论：
+
+> Runbook 管流程，Skill 管方法，Policy 管边界，Agent 管执行，Artifact / Checkpoint 管证据和责任。
+
 ## 3. Task 执行闭环
 
 默认代码任务不应是“agent 一次性做完并报告”，而应是可回放的阶段循环：
@@ -136,6 +172,21 @@ Skill 不应描述：
 
 一个 Skill 可以有多个 Runbook。
 
+Skill 不直接调度任务，也不直接推进状态。Skill 应作为 Runbook 的配置来源和执行说明来源。
+
+也就是说：
+
+```text
+Task.selected_skill
+-> Skill Registry
+-> default_runbook / allowed_runbooks
+-> Runbook phases
+-> PhaseAttempt
+-> Artifact / Review / Checkpoint
+```
+
+这样可以保持 RoamBench agent-neutral：所有 agent 使用同一套 task、runbook、artifact、checkpoint 文件体系；不同 agent 的差异只体现在 runtime adapter、tool capability 和执行质量上。
+
 示例：
 
 ```yaml
@@ -150,6 +201,62 @@ skill:
     - review_result
   recommended_reviewer: code_reviewer
 ```
+
+更完整的 Skill 配置应表达：
+
+```yaml
+id: code_change
+name: Code Change
+version: "0.1"
+
+default_runbook: code_change_default
+allowed_runbooks:
+  - code_change_default
+  - code_change_fast_path
+  - code_change_high_risk
+
+permissions:
+  plan: read_only
+  implement: scoped_write
+  test: read_only
+  review: read_only
+  fix_or_replan: scoped_write
+  final_validation: read_only
+
+artifacts:
+  plan:
+    required: true
+    outcome: recorded
+  diff_summary:
+    required: true
+    outcome: recorded
+  test_result:
+    required: true
+    outcome: pass
+  review_result:
+    required: true
+    outcome: pass
+  completion_check:
+    required: true
+    outcome: pass
+
+rules:
+  - implementation_requires_plan
+  - final_acceptance_requires_all_artifacts
+  - failed_test_routes_to_fix_or_replan
+  - failed_review_routes_to_fix_or_replan
+```
+
+不同 Skill 可以选择不同 Runbook：
+
+| Skill | 典型 Runbook |
+|---|---|
+| `code_change` | plan → implement → test → review → final_validation |
+| `docs_update` | plan → write → review → final_validation |
+| `research` | scope → collect → synthesize → review |
+| `dependency_upgrade` | plan → upgrade → compatibility_test → rollback_plan → review |
+| `frontend_change` | design_check → implement → visual_check → test → review |
+| `infra_change` | plan → implement → smoke_test → rollback_plan → review → final_validation |
 
 ## 5. Runbook
 
@@ -496,13 +603,32 @@ runbook:
     - checkpoint
 ```
 
-## 14. 最终判断
+## 14. 推荐落地顺序
+
+当前实现方向应继续保留 runbook / evidence / checkpoint 作为主干，不应推倒重做成纯 skills。
+
+推荐推进顺序：
+
+1. 保持当前 `current_phase`、`runbook_state`、`phase_attempts`、`artifacts`、`missing_evidence`、`checkpoint` 作为控制内核。
+2. 新增 `Skill Registry` 和 `Runbook Registry`。
+3. 把当前硬编码的 `code_change_default` runbook 挪成 skill-backed runbook。
+4. 允许创建 Task 时选择 `selected_skill`，默认使用 `code_change`。
+5. 让 `required_artifacts`、phase 权限和 completion rules 从 Skill / Runbook 定义读取。
+6. 增加 `docs_update`、`research`、`frontend_change`、`dependency_upgrade` 等 Skill。
+7. 再把 MCP、runtime tools、本地测试、浏览器、CI、issue tracker 接入 Tool Gateway，作为 Skill 可声明的 capability，而不是让它们成为任务状态系统。
+
+这条路径可以避免两个极端：
+
+- 只靠固定 Runbook：流程过硬，无法适配不同任务类型。
+- 只靠 Skill：状态、证据、权限和验收不可控。
+
+## 15. 最终判断
 
 RoamBench 不应做 agent 群聊平台，也不应把 skills 变成 agent 私有 prompt 集。
 
 更合理的定位是：
 
-> Skills 负责怎么干，Policy 负责能不能干，Tool Gateway 负责用什么工具干，Checkpoint 负责什么时候必须问人。
+> Runbook 负责按什么流程干，Skills 负责怎么干，Policy 负责能不能干，Tool Gateway 负责用什么工具干，Checkpoint 负责什么时候必须问人。
 
 这样才能保持 agent-neutral，同时让不同 agent 共用一套文件体系、证据体系、权限体系和历史体系。
 
