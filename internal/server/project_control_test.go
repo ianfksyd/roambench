@@ -56,6 +56,62 @@ func patchProjectControlTask(t *testing.T, srv *Server, token, taskID, body stri
 	return decodeProjectControlSnapshot(t, rec)
 }
 
+func projectControlTaskFromSnapshotByID(t *testing.T, snapshot projectControlSnapshot, taskID string) projectControlTask {
+	t.Helper()
+	for _, task := range snapshot.Tasks {
+		if task.ID == taskID {
+			return task
+		}
+	}
+	t.Fatalf("task %q not found in snapshot", taskID)
+	return projectControlTask{}
+}
+
+func projectControlTaskFromSnapshotByTitle(t *testing.T, snapshot projectControlSnapshot, title string) projectControlTask {
+	t.Helper()
+	for _, task := range snapshot.Tasks {
+		if task.Title == title {
+			return task
+		}
+	}
+	t.Fatalf("task %q not found in snapshot", title)
+	return projectControlTask{}
+}
+
+func createProjectControlDocsUpdateTask(t *testing.T, srv *Server, token, title string) projectControlTask {
+	t.Helper()
+	taskBody := fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":%q,"goal":"verify docs lifecycle","priority":"medium","riskLevel":"low","selectedSkill":"docs_update","runbookId":"docs_update_default"}`,
+		projectControlProjectID, projectControlWorkstreamUXID, title)
+	taskReq := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(taskBody))
+	taskReq.Header.Set("Content-Type", "application/json")
+	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	taskRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(taskRec, taskReq)
+	if taskRec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/project-control/tasks status = %d, want %d: %s", taskRec.Code, http.StatusCreated, taskRec.Body.String())
+	}
+	return projectControlTaskFromSnapshotByTitle(t, decodeProjectControlSnapshot(t, taskRec), title)
+}
+
+func patchProjectControlTaskAndFind(t *testing.T, srv *Server, token string, task projectControlTask, body string) projectControlTask {
+	t.Helper()
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	return projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+}
+
+func startProjectControlTaskPhaseViaAPI(t *testing.T, srv *Server, token string, task projectControlTask, phaseID string) projectControlTask {
+	t.Helper()
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"start_phase","phaseId":%q}`, task.RowVersion, phaseID)
+	return patchProjectControlTaskAndFind(t, srv, token, task, body)
+}
+
+func completeProjectControlTaskPhaseViaAPI(t *testing.T, srv *Server, token string, task projectControlTask, phaseID, artifactKind, outcome, value string) projectControlTask {
+	t.Helper()
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":%q,"artifactKind":%q,"artifactOutcome":%q,"artifactLabel":%q,"artifactValue":%q}`,
+		task.RowVersion, phaseID, artifactKind, outcome, artifactKind, value)
+	return patchProjectControlTaskAndFind(t, srv, token, task, body)
+}
+
 func completeProjectControlTaskRunbook(t *testing.T, srv *Server, token, taskID string, rowVersion int) (projectControlSnapshot, int) {
 	t.Helper()
 	steps := []string{
@@ -1033,6 +1089,102 @@ func TestProjectControlCreateTaskAcceptsDocsUpdateSkillRunbook(t *testing.T) {
 		return
 	}
 	t.Fatal("created docs task not found")
+}
+
+func TestProjectControlDocsUpdateHTTPRunbookLifecycle(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	task := createProjectControlDocsUpdateTask(t, srv, token, "Docs Update HTTP Lifecycle")
+	if task.SelectedSkill != projectControlDocsUpdateSkillID || task.RunbookID != projectControlDocsUpdateRunbookID {
+		t.Fatalf("created docs task skill/runbook = %q/%q, want %q/%q", task.SelectedSkill, task.RunbookID, projectControlDocsUpdateSkillID, projectControlDocsUpdateRunbookID)
+	}
+	if task.CurrentPhase != "plan" || task.RunbookState != "not_started" {
+		t.Fatalf("created docs task phase/runbook state = %q/%q, want plan/not_started", task.CurrentPhase, task.RunbookState)
+	}
+	if got := strings.Join(task.MissingEvidence, ","); got != "plan,doc_summary,review_result:pass,completion_check:pass" {
+		t.Fatalf("created docs MissingEvidence = %q, want full docs requirements", got)
+	}
+
+	steps := []struct {
+		phase       string
+		kind        string
+		outcome     string
+		value       string
+		wantPhase   string
+		wantState   string
+		wantMissing string
+	}{
+		{phase: "plan", kind: "plan", outcome: "recorded", value: "Docs lifecycle plan", wantPhase: "write", wantState: "running", wantMissing: "doc_summary,review_result:pass,completion_check:pass"},
+		{phase: "write", kind: "doc_summary", outcome: "recorded", value: "Docs lifecycle summary", wantPhase: "review", wantState: "waiting_review", wantMissing: "review_result:pass,completion_check:pass"},
+		{phase: "review", kind: "review_result", outcome: "pass", value: "Docs lifecycle review passed", wantPhase: "final_validation", wantState: "running", wantMissing: "completion_check:pass"},
+		{phase: "final_validation", kind: "completion_check", outcome: "pass", value: "Docs lifecycle completion passed", wantPhase: "ready_for_acceptance", wantState: "execution_complete", wantMissing: ""},
+	}
+	for _, step := range steps {
+		task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, step.phase)
+		if task.CurrentPhase != step.phase {
+			t.Fatalf("after start %s CurrentPhase = %q, want %q", step.phase, task.CurrentPhase, step.phase)
+		}
+		task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, step.phase, step.kind, step.outcome, step.value)
+		if task.CurrentPhase != step.wantPhase {
+			t.Fatalf("after complete %s CurrentPhase = %q, want %q", step.phase, task.CurrentPhase, step.wantPhase)
+		}
+		if task.State != step.wantState {
+			t.Fatalf("after complete %s State = %q, want %q", step.phase, task.State, step.wantState)
+		}
+		if got := strings.Join(task.MissingEvidence, ","); got != step.wantMissing {
+			t.Fatalf("after complete %s MissingEvidence = %q, want %q", step.phase, got, step.wantMissing)
+		}
+	}
+	if task.AcceptanceStatus != "ready_for_acceptance" {
+		t.Fatalf("final AcceptanceStatus = %q, want ready_for_acceptance", task.AcceptanceStatus)
+	}
+}
+
+func TestProjectControlDocsUpdateHTTPFailureRecoveryReturnsToReview(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	task := createProjectControlDocsUpdateTask(t, srv, token, "Docs Update HTTP Recovery")
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan")
+	task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan", "plan", "recorded", "Docs recovery plan")
+	if task.CurrentPhase != "write" {
+		t.Fatalf("after complete plan CurrentPhase = %q, want write", task.CurrentPhase)
+	}
+
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "write")
+	failBody := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"fail_phase","phaseId":"write","failureReason":"Docs change needs rework"}`, task.RowVersion)
+	task = patchProjectControlTaskAndFind(t, srv, token, task, failBody)
+	if task.CurrentPhase != "fix_or_replan" {
+		t.Fatalf("after fail CurrentPhase = %q, want fix_or_replan", task.CurrentPhase)
+	}
+	if task.State != "failed" || task.RunbookState != "needs_fix" {
+		t.Fatalf("after fail state/runbook = %q/%q, want failed/needs_fix", task.State, task.RunbookState)
+	}
+	if task.NextStep != "Start fix_or_replan, then rerun review evidence." {
+		t.Fatalf("after fail NextStep = %q, want docs recovery review guidance", task.NextStep)
+	}
+	if got := strings.Join(task.MissingEvidence, ","); got != "doc_summary,review_result:pass,completion_check:pass" {
+		t.Fatalf("after fail MissingEvidence = %q, want docs recovery requirements", got)
+	}
+
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "fix_or_replan")
+	if task.State != "running" {
+		t.Fatalf("after start fix_or_replan State = %q, want running", task.State)
+	}
+	task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, "fix_or_replan", "doc_summary", "recorded", "Docs recovery summary")
+	if task.CurrentPhase != "review" {
+		t.Fatalf("after complete fix_or_replan CurrentPhase = %q, want review", task.CurrentPhase)
+	}
+	if task.State != "waiting_review" {
+		t.Fatalf("after complete fix_or_replan State = %q, want waiting_review", task.State)
+	}
+	if task.NextStep != "Start review and record its required evidence." {
+		t.Fatalf("after complete fix_or_replan NextStep = %q, want review evidence guidance", task.NextStep)
+	}
+	if got := strings.Join(task.MissingEvidence, ","); got != "review_result:pass,completion_check:pass" {
+		t.Fatalf("after complete fix_or_replan MissingEvidence = %q, want review and completion", got)
+	}
 }
 
 func TestProjectControlCreateTaskRejectsUnknownSkillRunbook(t *testing.T) {
