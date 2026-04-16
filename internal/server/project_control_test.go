@@ -112,6 +112,17 @@ func completeProjectControlTaskPhaseViaAPI(t *testing.T, srv *Server, token stri
 	return patchProjectControlTaskAndFind(t, srv, token, task, body)
 }
 
+func prepareProjectControlCodeChangeTaskAtTestPhase(t *testing.T, srv *Server, token string) projectControlTask {
+	t.Helper()
+	task := projectControlTask{ID: projectControlTaskPanelID, RowVersion: 1}
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan")
+	task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan", "plan", "recorded", "Implementation plan recorded")
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "implement")
+	task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, "implement", "diff_summary", "recorded", "Project control implementation changed")
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "test")
+	return task
+}
+
 func completeProjectControlTaskRunbook(t *testing.T, srv *Server, token, taskID string, rowVersion int) (projectControlSnapshot, int) {
 	t.Helper()
 	steps := []string{
@@ -386,7 +397,7 @@ func TestProjectControlRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
 		{phase: "review", kind: "review_result", outcome: "pass", value: "No high severity objections", next: "final_validation"},
 	}
 	for _, step := range steps {
-		if err := startProjectControlTaskPhase(&state, &task, step.phase, now); err != nil {
+		if err := startProjectControlTaskPhase(&state, &task, step.phase, now, "", nil); err != nil {
 			t.Fatalf("start %s error: %v", step.phase, err)
 		}
 		req := projectControlTaskUpdateRequest{
@@ -410,7 +421,7 @@ func TestProjectControlRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
 	if task.DiffSummary != "Changed project control runbook code" {
 		t.Fatalf("DiffSummary = %q, want implement artifact value", task.DiffSummary)
 	}
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -467,7 +478,7 @@ func TestProjectControlDocsUpdateRunbookPhaseLifecycleRecordsArtifacts(t *testin
 		{phase: "review", kind: "review_result", outcome: "pass", value: "Docs review passed", next: "final_validation"},
 	}
 	for _, step := range steps {
-		if err := startProjectControlTaskPhase(&state, &task, step.phase, now); err != nil {
+		if err := startProjectControlTaskPhase(&state, &task, step.phase, now, "", nil); err != nil {
 			t.Fatalf("start %s error: %v", step.phase, err)
 		}
 		req := projectControlTaskUpdateRequest{
@@ -485,7 +496,7 @@ func TestProjectControlDocsUpdateRunbookPhaseLifecycleRecordsArtifacts(t *testin
 		}
 	}
 
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -524,7 +535,7 @@ func TestProjectControlDocsUpdateFailureRecoveryReturnsToReview(t *testing.T) {
 	projectControlNormalizeState(&state)
 	now := "2026-04-15T00:00:00Z"
 
-	if err := startProjectControlTaskPhase(&state, &task, "plan", now); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "plan", now, "", nil); err != nil {
 		t.Fatalf("start plan error: %v", err)
 	}
 	if err := completeProjectControlTaskPhase(&state, &task, projectControlTaskUpdateRequest{
@@ -536,7 +547,7 @@ func TestProjectControlDocsUpdateFailureRecoveryReturnsToReview(t *testing.T) {
 	}, now); err != nil {
 		t.Fatalf("complete plan error: %v", err)
 	}
-	if err := startProjectControlTaskPhase(&state, &task, "write", now); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "write", now, "", nil); err != nil {
 		t.Fatalf("start write error: %v", err)
 	}
 	if err := failProjectControlTaskPhase(&state, &task, "write", "Docs change needs rework", now); err != nil {
@@ -548,7 +559,7 @@ func TestProjectControlDocsUpdateFailureRecoveryReturnsToReview(t *testing.T) {
 	if task.NextStep != "Start fix_or_replan, then rerun review evidence." {
 		t.Fatalf("NextStep after fail = %q, want docs recovery review guidance", task.NextStep)
 	}
-	if err := startProjectControlTaskPhase(&state, &task, "fix_or_replan", now); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "fix_or_replan", now, "", nil); err != nil {
 		t.Fatalf("start fix_or_replan error: %v", err)
 	}
 	if err := completeProjectControlTaskPhase(&state, &task, projectControlTaskUpdateRequest{
@@ -586,7 +597,7 @@ func TestProjectControlFinalValidationRequiresCompletionEvidence(t *testing.T) {
 		RunbookState:     "in_progress",
 	}
 	now := "2026-04-15T00:00:00Z"
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -634,7 +645,7 @@ func TestProjectControlCompletionEvidenceRequiresPassingOutcomes(t *testing.T) {
 		RunbookState:     "in_progress",
 	}
 	now := "2026-04-15T00:00:00Z"
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -677,7 +688,7 @@ func TestProjectControlDocsUpdateFinalValidationRequiresDocSummary(t *testing.T)
 		RunbookState:     "in_progress",
 	}
 	now := "2026-04-15T00:00:00Z"
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -823,6 +834,27 @@ func TestProjectControlTaskPhaseActionsPersistThroughAPI(t *testing.T) {
 	if len(startSnapshot.PhaseAttempts) != 1 || startSnapshot.PhaseAttempts[0].Status != "running" {
 		t.Fatalf("PhaseAttempts after start = %#v, want one running attempt", startSnapshot.PhaseAttempts)
 	}
+	phaseSessionID := startSnapshot.PhaseAttempts[0].SessionID
+	if phaseSessionID == "" {
+		t.Fatalf("PhaseAttempt SessionID = empty, want bound session")
+	}
+	foundPhaseSession := false
+	for _, session := range startSnapshot.Sessions {
+		if session.ID == phaseSessionID && session.TaskID == projectControlTaskPanelID && session.PhaseAttemptID == startSnapshot.PhaseAttempts[0].ID {
+			foundPhaseSession = true
+			if session.State != "active" {
+				t.Fatalf("phase session State = %q, want active", session.State)
+			}
+			break
+		}
+	}
+	if !foundPhaseSession {
+		t.Fatalf("Sessions after start = %#v, want phase-bound session %q", startSnapshot.Sessions, phaseSessionID)
+	}
+	startTask := projectControlTaskFromSnapshotByID(t, startSnapshot, projectControlTaskPanelID)
+	if len(startTask.SessionIDs) != 1 || startTask.SessionIDs[0] != phaseSessionID {
+		t.Fatalf("Task SessionIDs after start = %#v, want %q", startTask.SessionIDs, phaseSessionID)
+	}
 
 	completeReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":2,"action":"complete_phase","phaseId":"plan","artifactKind":"plan","artifactLabel":"Plan","artifactValue":"Implementation plan recorded"}`))
 	completeReq.Header.Set("Content-Type", "application/json")
@@ -858,6 +890,165 @@ func TestProjectControlTaskPhaseActionsPersistThroughAPI(t *testing.T) {
 	}
 	if !foundTask {
 		t.Fatalf("task %q not found", projectControlTaskPanelID)
+	}
+}
+
+func TestProjectControlStartPhaseCreatesAttachableTerminalSession(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+	cfg.Auth.SingleUser = "ian"
+	cfg.Terminal.PersistDir = t.TempDir()
+
+	sessions, err := auth.NewSessionManager(&cfg.Auth)
+	if err != nil {
+		t.Fatalf("NewSessionManager error: %v", err)
+	}
+	defer sessions.Stop()
+
+	token, err := sessions.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	termMgr := terminal.NewManager(&cfg.Terminal)
+	defer termMgr.Stop()
+	srv := NewServer(cfg, nil, sessions, termMgr, nil)
+
+	startReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_phase","phaseId":"plan"}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	startRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("PATCH start_phase status = %d, want %d: %s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+	snapshot := decodeProjectControlSnapshot(t, startRec)
+	if len(snapshot.PhaseAttempts) != 1 {
+		t.Fatalf("len(PhaseAttempts) = %d, want 1", len(snapshot.PhaseAttempts))
+	}
+	terminalSessions := termMgr.ListSessions("ian")
+	if len(terminalSessions) != 1 {
+		t.Fatalf("len(terminal sessions) = %d, want 1", len(terminalSessions))
+	}
+	wantSessionID := projectControlSessionIDForTerminal(terminalSessions[0].ID)
+	attempt := snapshot.PhaseAttempts[0]
+	if attempt.SessionID != wantSessionID {
+		t.Fatalf("PhaseAttempt SessionID = %q, want %q", attempt.SessionID, wantSessionID)
+	}
+	taskSessionCount := 0
+	for _, session := range snapshot.Sessions {
+		if session.TaskID != projectControlTaskPanelID {
+			continue
+		}
+		taskSessionCount += 1
+		if session.ID != wantSessionID {
+			t.Fatalf("phase session ID = %q, want %q", session.ID, wantSessionID)
+		}
+		if session.TerminalID != terminalSessions[0].ID || !session.SupportsAttach {
+			t.Fatalf("phase session terminal binding = %#v, want attachable terminal %q", session, terminalSessions[0].ID)
+		}
+		if session.PhaseAttemptID != attempt.ID {
+			t.Fatalf("phase session PhaseAttemptID = %q, want %q", session.PhaseAttemptID, attempt.ID)
+		}
+	}
+	if taskSessionCount != 1 {
+		t.Fatalf("task session count = %d, want exactly one phase-linked session", taskSessionCount)
+	}
+}
+
+func TestProjectControlRunToolCompletesTestPhaseOnPassingResult(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
+		if toolID != "go_test" {
+			t.Fatalf("toolID = %q, want go_test", toolID)
+		}
+		return projectControlToolResult{
+			ToolID:          "go_test",
+			ArtifactKind:    "test_result",
+			ArtifactOutcome: "pass",
+			ArtifactLabel:   "Go test",
+			ArtifactValue:   "Command: go test ./...\nStatus: passed\nOutput:\nok ./...",
+		}, nil
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	updated := projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+	if updated.CurrentPhase != "review" {
+		t.Fatalf("CurrentPhase = %q, want review", updated.CurrentPhase)
+	}
+	foundArtifact := false
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.TaskID == task.ID && artifact.Kind == "test_result" && artifact.Outcome == "pass" && strings.Contains(artifact.Value, "go test") {
+			foundArtifact = true
+			break
+		}
+	}
+	if !foundArtifact {
+		t.Fatalf("Artifacts = %#v, want passing test_result from tool", snapshot.Artifacts)
+	}
+	foundCompletedAttempt := false
+	for _, attempt := range snapshot.PhaseAttempts {
+		if attempt.TaskID == task.ID && attempt.PhaseID == "test" && attempt.Status == "completed" {
+			foundCompletedAttempt = true
+			break
+		}
+	}
+	if !foundCompletedAttempt {
+		t.Fatalf("PhaseAttempts = %#v, want completed test attempt", snapshot.PhaseAttempts)
+	}
+}
+
+func TestProjectControlRunToolRoutesFailingTestToRecovery(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
+		return projectControlToolResult{
+			ToolID:          "go_test",
+			ArtifactKind:    "test_result",
+			ArtifactOutcome: "fail",
+			ArtifactLabel:   "Go test",
+			ArtifactValue:   "Command: go test ./...\nStatus: failed\nOutput:\nFAIL ./internal/server",
+		}, nil
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	updated := projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+	if updated.CurrentPhase != "fix_or_replan" {
+		t.Fatalf("CurrentPhase = %q, want fix_or_replan", updated.CurrentPhase)
+	}
+	if updated.RunbookState != "needs_fix" {
+		t.Fatalf("RunbookState = %q, want needs_fix", updated.RunbookState)
+	}
+	foundFailedArtifact := false
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.TaskID == task.ID && artifact.Kind == "test_result" && artifact.Outcome == "fail" {
+			foundFailedArtifact = true
+			break
+		}
+	}
+	if !foundFailedArtifact {
+		t.Fatalf("Artifacts = %#v, want failed test_result from tool", snapshot.Artifacts)
+	}
+	foundFailedAttempt := false
+	for _, attempt := range snapshot.PhaseAttempts {
+		if attempt.TaskID == task.ID && attempt.PhaseID == "test" && attempt.Status == "failed" && strings.Contains(attempt.FailureReason, "go_test") {
+			foundFailedAttempt = true
+			break
+		}
+	}
+	if !foundFailedAttempt {
+		t.Fatalf("PhaseAttempts = %#v, want failed test attempt", snapshot.PhaseAttempts)
 	}
 }
 

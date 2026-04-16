@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -106,6 +108,7 @@ type projectControlTask struct {
 type projectControlSession struct {
 	ID             string   `json:"id"`
 	TaskID         string   `json:"taskId"`
+	PhaseAttemptID string   `json:"phaseAttemptId,omitempty"`
 	TerminalID     string   `json:"terminalId,omitempty"`
 	Name           string   `json:"name"`
 	AgentType      string   `json:"agentType"`
@@ -113,6 +116,7 @@ type projectControlSession struct {
 	State          string   `json:"state"`
 	ExecutionRole  string   `json:"executionRole"`
 	SystemRole     string   `json:"systemRole"`
+	WorkspaceRef   string   `json:"workspaceRef,omitempty"`
 	DurationLabel  string   `json:"durationLabel"`
 	StartedAt      string   `json:"startedAt"`
 	Summary        string   `json:"summary"`
@@ -318,6 +322,7 @@ type projectControlTaskUpdateRequest struct {
 	ArtifactLabel      string `json:"artifactLabel"`
 	ArtifactValue      string `json:"artifactValue"`
 	FailureReason      string `json:"failureReason"`
+	ToolID             string `json:"toolId"`
 }
 
 type projectControlEventsResponse struct {
@@ -432,7 +437,7 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 		if task == nil || task.AcceptanceStatus != "accepted" {
 			req.AcceptanceStatus = "not_ready"
 		}
-	case "start_phase", "complete_phase", "fail_phase":
+	case "start_phase", "complete_phase", "fail_phase", "run_tool":
 		// Phase actions are handled by the runbook helpers because they need
 		// access to PhaseAttempt and Artifact state.
 	default:
@@ -451,7 +456,7 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 
 func isProjectControlPhaseAction(action string) bool {
 	switch strings.TrimSpace(strings.ToLower(action)) {
-	case "start_phase", "complete_phase", "fail_phase":
+	case "start_phase", "complete_phase", "fail_phase", "run_tool":
 		return true
 	default:
 		return false
@@ -890,6 +895,62 @@ func projectControlPhaseWorkspaceRef(phase projectControlRunbookPhase) string {
 	}
 }
 
+func projectControlSessionIDForTerminal(terminalID string) string {
+	terminalID = strings.TrimSpace(terminalID)
+	if terminalID == "" {
+		return ""
+	}
+	return "session-live-" + terminalID
+}
+
+func projectControlTerminalIDFromSessionID(sessionID string) string {
+	const prefix = "session-live-"
+	sessionID = strings.TrimSpace(sessionID)
+	if strings.HasPrefix(sessionID, prefix) {
+		return strings.TrimSpace(strings.TrimPrefix(sessionID, prefix))
+	}
+	return ""
+}
+
+func truncateProjectControlLabel(value string, maxBytes int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if maxBytes < 1 || len(value) <= maxBytes {
+		return value
+	}
+	runes := []rune(value)
+	for len(runes) > 0 && len(string(runes)) > maxBytes {
+		runes = runes[:len(runes)-1]
+	}
+	return strings.TrimSpace(string(runes))
+}
+
+func projectControlPhaseSessionName(task projectControlTask, phaseID string) string {
+	phaseName := strings.ReplaceAll(normalizeProjectControlPhaseID(phaseID), "_", " ")
+	if phaseName == "" {
+		phaseName = "phase"
+	}
+	name := strings.TrimSpace(phaseName + " - " + strings.TrimSpace(task.Title))
+	if name == "" {
+		name = "Runbook phase"
+	}
+	return truncateProjectControlLabel(name, 80)
+}
+
+func createProjectControlPhaseSession(username string, task projectControlTask, phaseID string, terminals *terminal.Manager) (string, error) {
+	if terminals == nil {
+		return projectControlID("session", task.ID+"-"+phaseID), nil
+	}
+	session, err := terminals.CreateSession(username)
+	if err != nil {
+		return "", fmt.Errorf("create phase session: %w", err)
+	}
+	if err := terminals.RenameSession(username, session.ID, projectControlPhaseSessionName(task, phaseID)); err != nil {
+		_ = terminals.KillSessionForUser(username, session.ID)
+		return "", fmt.Errorf("rename phase session: %w", err)
+	}
+	return projectControlSessionIDForTerminal(session.ID), nil
+}
+
 func projectControlTaskStateForPhase(phaseID string) string {
 	switch normalizeProjectControlPhaseID(phaseID) {
 	case "review":
@@ -937,7 +998,7 @@ func findRunningProjectControlPhaseAttemptIndex(attempts []projectControlPhaseAt
 	return -1
 }
 
-func startProjectControlTaskPhase(state *projectControlState, task *projectControlTask, phaseID, now string) error {
+func startProjectControlTaskPhase(state *projectControlState, task *projectControlTask, phaseID, now, username string, terminals *terminal.Manager) error {
 	if state == nil || task == nil {
 		return errors.New("missing project control state")
 	}
@@ -954,11 +1015,16 @@ func startProjectControlTaskPhase(state *projectControlState, task *projectContr
 		return fmt.Errorf("phase %s is already running", phaseID)
 	}
 	phase, _ := findProjectControlRunbookPhase(runbook, phaseID)
+	sessionID, err := createProjectControlPhaseSession(username, *task, phaseID, terminals)
+	if err != nil {
+		return err
+	}
 	attempt := projectControlPhaseAttempt{
 		ID:           projectControlID("phase-attempt", task.ID+"-"+phaseID),
 		TaskID:       task.ID,
 		RunbookID:    task.RunbookID,
 		PhaseID:      phaseID,
+		SessionID:    sessionID,
 		AgentType:    projectControlPhaseAgentType(phase),
 		RuntimeID:    task.RuntimeID,
 		WorkspaceRef: projectControlPhaseWorkspaceRef(phase),
@@ -971,14 +1037,15 @@ func startProjectControlTaskPhase(state *projectControlState, task *projectContr
 	task.AcceptanceStatus = "not_ready"
 	task.CurrentPhase = phaseID
 	task.RunbookState = "in_progress"
+	task.SessionIDs = appendUniqueString(task.SessionIDs, sessionID)
 	task.RecentSummary = "Runbook phase " + phaseID + " started."
-	task.NextStep = "Complete " + phaseID + " with required evidence."
+	task.NextStep = "Use session " + sessionID + " to complete " + phaseID + " with required evidence."
 	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 		ID:           projectControlID("event", "phase-started"),
 		Timestamp:    now,
 		Actor:        "runbook_engine",
 		Action:       "phase_started",
-		Detail:       "Started runbook phase " + phaseID + ".",
+		Detail:       "Started runbook phase " + phaseID + " in session " + sessionID + ".",
 		ProjectID:    task.ProjectID,
 		WorkstreamID: task.WorkstreamID,
 		TaskID:       task.ID,
@@ -1056,6 +1123,227 @@ func projectControlMissingCompletionEvidence(task projectControlTask, artifacts 
 	return missing
 }
 
+func recordProjectControlPhaseArtifact(state *projectControlState, task *projectControlTask, attempt *projectControlPhaseAttempt, phaseID, artifactKind, artifactOutcome, artifactLabel, artifactValue, actor, now string) projectControlArtifact {
+	label := strings.TrimSpace(artifactLabel)
+	if label == "" {
+		label = artifactKind
+	}
+	value := strings.TrimSpace(artifactValue)
+	if value == "" {
+		value = "Recorded " + artifactKind + " for phase " + phaseID + "."
+	}
+	if strings.TrimSpace(actor) == "" {
+		actor = "runbook_engine"
+	}
+	artifact := projectControlArtifact{
+		ID:             projectControlID("artifact", task.ID+"-"+artifactKind),
+		TaskID:         task.ID,
+		PhaseAttemptID: attempt.ID,
+		Kind:           artifactKind,
+		Outcome:        artifactOutcome,
+		Label:          label,
+		Value:          value,
+		CreatedAt:      now,
+	}
+	state.Artifacts = append(state.Artifacts, artifact)
+	attempt.ArtifactIDs = append(attempt.ArtifactIDs, artifact.ID)
+	task.Evidence = append(task.Evidence, projectControlEvidence{Label: label, Value: value})
+	if artifactKind == "diff_summary" {
+		task.DiffSummary = value
+	}
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "artifact-recorded"),
+		Timestamp:    now,
+		Actor:        actor,
+		Action:       "artifact_recorded",
+		Detail:       "Recorded " + artifactKind + " artifact for phase " + phaseID + ".",
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+	})
+	return artifact
+}
+
+type projectControlToolResult struct {
+	ToolID          string
+	ArtifactKind    string
+	ArtifactOutcome string
+	ArtifactLabel   string
+	ArtifactValue   string
+}
+
+var projectControlExecuteTool = executeLocalProjectControlTool
+
+func normalizeProjectControlToolID(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "repo_status", "diff_capture", "go_test":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return ""
+	}
+}
+
+func projectControlToolAllowedInPhase(toolID, phaseID string) bool {
+	toolID = normalizeProjectControlToolID(toolID)
+	phaseID = normalizeProjectControlPhaseID(phaseID)
+	switch toolID {
+	case "repo_status":
+		return phaseID != "" && phaseID != "ready_for_acceptance"
+	case "diff_capture":
+		switch phaseID {
+		case "implement", "write", "fix_or_replan", "review", "final_validation":
+			return true
+		default:
+			return false
+		}
+	case "go_test":
+		return phaseID == "test" || phaseID == "final_validation"
+	default:
+		return false
+	}
+}
+
+func projectControlPhaseRequiresArtifact(phase projectControlRunbookPhase, artifactKind string) bool {
+	artifactKind = normalizeProjectControlArtifactKind(artifactKind)
+	for _, required := range phase.RequiredArtifacts {
+		if normalizeProjectControlArtifactKind(required) == artifactKind {
+			return true
+		}
+	}
+	return false
+}
+
+func projectControlToolCommand(toolID string) ([]string, string, string, error) {
+	switch normalizeProjectControlToolID(toolID) {
+	case "repo_status":
+		return []string{"git", "status", "--short"}, "repo_status", "Repo status", nil
+	case "diff_capture":
+		return []string{"git", "diff", "--stat", "--find-renames"}, "diff_summary", "Diff summary", nil
+	case "go_test":
+		return []string{"go", "test", "./..."}, "test_result", "Go test", nil
+	default:
+		return nil, "", "", fmt.Errorf("unknown tool: %s", strings.TrimSpace(toolID))
+	}
+}
+
+func compactProjectControlToolOutput(value string, maxBytes int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || maxBytes < 1 || len(value) <= maxBytes {
+		return value
+	}
+	runes := []rune(value)
+	for len(runes) > 0 && len(string(runes)) > maxBytes {
+		runes = runes[:len(runes)-1]
+	}
+	return strings.TrimSpace(string(runes)) + "\n[output truncated]"
+}
+
+func executeLocalProjectControlTool(toolID string) (projectControlToolResult, error) {
+	command, artifactKind, label, err := projectControlToolCommand(toolID)
+	if err != nil {
+		return projectControlToolResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	output, runErr := cmd.CombinedOutput()
+	outcome := "pass"
+	status := "passed"
+	if runErr != nil {
+		outcome = "fail"
+		status = "failed: " + runErr.Error()
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		outcome = "fail"
+		status = "timed out"
+	}
+	outputText := compactProjectControlToolOutput(string(output), 3200)
+	if outputText == "" {
+		outputText = "No output."
+	}
+	value := "Command: " + strings.Join(command, " ") + "\nStatus: " + status + "\nOutput:\n" + outputText
+	if normalizeProjectControlToolID(toolID) == "repo_status" && strings.TrimSpace(string(output)) == "" {
+		value = "Command: " + strings.Join(command, " ") + "\nStatus: clean\nOutput:\nWorking tree clean."
+	}
+	return projectControlToolResult{
+		ToolID:          normalizeProjectControlToolID(toolID),
+		ArtifactKind:    artifactKind,
+		ArtifactOutcome: outcome,
+		ArtifactLabel:   label,
+		ArtifactValue:   value,
+	}, nil
+}
+
+func recordProjectControlToolEvent(state *projectControlState, task projectControlTask, phaseID string, result projectControlToolResult, now string) {
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "tool-executed"),
+		Timestamp:    now,
+		Actor:        "tool_gateway",
+		Action:       "tool_executed",
+		Detail:       "Ran " + result.ToolID + " for phase " + phaseID + " with outcome " + normalizeProjectControlArtifactOutcome(result.ArtifactOutcome) + ".",
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+	})
+}
+
+func runProjectControlTaskPhaseTool(state *projectControlState, task *projectControlTask, req projectControlTaskUpdateRequest, now string) error {
+	if state == nil || task == nil {
+		return errors.New("missing project control state")
+	}
+	refreshProjectControlTaskRunbookFields(task, state.Artifacts)
+	runbook := projectControlRunbookForTask(*task)
+	phaseID := normalizeProjectControlPhaseID(req.PhaseID)
+	if phaseID == "" {
+		phaseID = task.CurrentPhase
+	}
+	phase, ok := findProjectControlRunbookPhase(runbook, phaseID)
+	if !ok {
+		return fmt.Errorf("unknown runbook phase: %s", phaseID)
+	}
+	attemptIndex := findRunningProjectControlPhaseAttemptIndex(state.PhaseAttempts, task.ID, phaseID)
+	if attemptIndex == -1 {
+		return fmt.Errorf("phase %s has no running attempt", phaseID)
+	}
+	toolID := normalizeProjectControlToolID(req.ToolID)
+	if toolID == "" {
+		return errors.New("valid toolId is required")
+	}
+	if !projectControlToolAllowedInPhase(toolID, phaseID) {
+		return fmt.Errorf("tool %s is not allowed in phase %s", toolID, phaseID)
+	}
+	result, err := projectControlExecuteTool(toolID)
+	if err != nil {
+		return err
+	}
+	result.ToolID = toolID
+	result.ArtifactKind = normalizeProjectControlArtifactKind(result.ArtifactKind)
+	result.ArtifactOutcome = normalizeProjectControlArtifactOutcome(result.ArtifactOutcome)
+	if result.ArtifactKind == "" {
+		return fmt.Errorf("tool %s did not produce an artifact kind", toolID)
+	}
+	recordProjectControlToolEvent(state, *task, phaseID, result, now)
+	if projectControlPhaseRequiresArtifact(phase, result.ArtifactKind) && projectControlArtifactOutcomePasses(result.ArtifactKind, result.ArtifactOutcome) {
+		return completeProjectControlTaskPhase(state, task, projectControlTaskUpdateRequest{
+			PhaseID:         phaseID,
+			ArtifactKind:    result.ArtifactKind,
+			ArtifactOutcome: result.ArtifactOutcome,
+			ArtifactLabel:   result.ArtifactLabel,
+			ArtifactValue:   result.ArtifactValue,
+		}, now)
+	}
+	attempt := state.PhaseAttempts[attemptIndex]
+	recordProjectControlPhaseArtifact(state, task, &attempt, phaseID, result.ArtifactKind, result.ArtifactOutcome, result.ArtifactLabel, result.ArtifactValue, "tool_gateway", now)
+	state.PhaseAttempts[attemptIndex] = attempt
+	if projectControlPhaseRequiresArtifact(phase, result.ArtifactKind) && !projectControlArtifactOutcomePasses(result.ArtifactKind, result.ArtifactOutcome) {
+		return failProjectControlTaskPhase(state, task, phaseID, "Tool "+toolID+" failed.", now)
+	}
+	task.RecentSummary = "Tool " + toolID + " recorded " + result.ArtifactKind + " evidence."
+	task.NextStep = "Continue " + phaseID + " or complete the phase with required evidence."
+	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, runbook, "", "")
+	return nil
+}
+
 func completeProjectControlTaskPhase(state *projectControlState, task *projectControlTask, req projectControlTaskUpdateRequest, now string) error {
 	if state == nil || task == nil {
 		return errors.New("missing project control state")
@@ -1098,40 +1386,7 @@ func completeProjectControlTaskPhase(state *projectControlState, task *projectCo
 	}
 	attempt := state.PhaseAttempts[attemptIndex]
 	if artifactKind != "" {
-		label := strings.TrimSpace(req.ArtifactLabel)
-		if label == "" {
-			label = artifactKind
-		}
-		value := strings.TrimSpace(req.ArtifactValue)
-		if value == "" {
-			value = "Recorded " + artifactKind + " for phase " + phaseID + "."
-		}
-		artifact := projectControlArtifact{
-			ID:             projectControlID("artifact", task.ID+"-"+artifactKind),
-			TaskID:         task.ID,
-			PhaseAttemptID: attempt.ID,
-			Kind:           artifactKind,
-			Outcome:        artifactOutcome,
-			Label:          label,
-			Value:          value,
-			CreatedAt:      now,
-		}
-		state.Artifacts = append(state.Artifacts, artifact)
-		attempt.ArtifactIDs = append(attempt.ArtifactIDs, artifact.ID)
-		task.Evidence = append(task.Evidence, projectControlEvidence{Label: label, Value: value})
-		if artifactKind == "diff_summary" {
-			task.DiffSummary = value
-		}
-		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
-			ID:           projectControlID("event", "artifact-recorded"),
-			Timestamp:    now,
-			Actor:        "runbook_engine",
-			Action:       "artifact_recorded",
-			Detail:       "Recorded " + artifactKind + " artifact for phase " + phaseID + ".",
-			ProjectID:    task.ProjectID,
-			WorkstreamID: task.WorkstreamID,
-			TaskID:       task.ID,
-		})
+		recordProjectControlPhaseArtifact(state, task, &attempt, phaseID, artifactKind, artifactOutcome, req.ArtifactLabel, req.ArtifactValue, "runbook_engine", now)
 	}
 	attempt.Status = "completed"
 	attempt.CompletedAt = now
@@ -1646,7 +1901,7 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			now := time.Now().UTC().Format(time.RFC3339)
 			switch action {
 			case "start_phase":
-				if err := startProjectControlTaskPhase(state, &task, req.PhaseID, now); err != nil {
+				if err := startProjectControlTaskPhase(state, &task, req.PhaseID, now, username, terminals); err != nil {
 					return err
 				}
 			case "complete_phase":
@@ -1655,6 +1910,10 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 				}
 			case "fail_phase":
 				if err := failProjectControlTaskPhase(state, &task, req.PhaseID, req.FailureReason, now); err != nil {
+					return err
+				}
+			case "run_tool":
+				if err := runProjectControlTaskPhaseTool(state, &task, req, now); err != nil {
 					return err
 				}
 			}
@@ -2535,6 +2794,167 @@ func defaultProjectControlState() projectControlState {
 	return state
 }
 
+func parseProjectControlTimestamp(value string) time.Time {
+	timestamp, err := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}
+	}
+	return timestamp
+}
+
+func projectControlPhaseAttemptSessionID(attempt projectControlPhaseAttempt) string {
+	if sessionID := strings.TrimSpace(attempt.SessionID); sessionID != "" {
+		return sessionID
+	}
+	if attempt.ID != "" {
+		return "session-" + attempt.ID
+	}
+	return projectControlID("session", attempt.TaskID+"-"+attempt.PhaseID)
+}
+
+func projectControlPhaseAttemptSessionState(attempt projectControlPhaseAttempt) string {
+	switch normalizeProjectControlPhaseAttemptStatus(attempt.Status) {
+	case "completed":
+		return "completed"
+	case "failed":
+		return "failed"
+	case "cancelled":
+		return "cancelled"
+	default:
+		return "active"
+	}
+}
+
+func projectControlPhaseAttemptDurationLabel(attempt projectControlPhaseAttempt, now time.Time) string {
+	startedAt := parseProjectControlTimestamp(attempt.StartedAt)
+	if completedAt := parseProjectControlTimestamp(attempt.CompletedAt); !completedAt.IsZero() {
+		return humanizeSince(startedAt, completedAt)
+	}
+	return humanizeSince(startedAt, now)
+}
+
+func projectControlArtifactSessionText(artifact projectControlArtifact) string {
+	label := strings.TrimSpace(artifact.Label)
+	value := strings.TrimSpace(artifact.Value)
+	if label != "" && value != "" {
+		return label + ": " + value
+	}
+	if value != "" {
+		return value
+	}
+	if label != "" {
+		return label
+	}
+	return normalizeProjectControlArtifactKind(artifact.Kind)
+}
+
+func projectControlPhaseAttemptArtifactTexts(attempt projectControlPhaseAttempt, artifacts []projectControlArtifact) []string {
+	result := []string{}
+	seen := map[string]bool{}
+	for _, artifactID := range attempt.ArtifactIDs {
+		artifactID = strings.TrimSpace(artifactID)
+		if artifactID == "" || seen[artifactID] {
+			continue
+		}
+		for _, artifact := range artifacts {
+			if artifact.ID == artifactID {
+				result = append(result, projectControlArtifactSessionText(artifact))
+				seen[artifactID] = true
+				break
+			}
+		}
+	}
+	for _, artifact := range artifacts {
+		if artifact.PhaseAttemptID != attempt.ID || seen[artifact.ID] {
+			continue
+		}
+		result = append(result, projectControlArtifactSessionText(artifact))
+		seen[artifact.ID] = true
+	}
+	if result == nil {
+		return []string{}
+	}
+	return result
+}
+
+func projectControlPhaseAttemptSummary(attempt projectControlPhaseAttempt) string {
+	phaseName := strings.ReplaceAll(normalizeProjectControlPhaseID(attempt.PhaseID), "_", " ")
+	if phaseName == "" {
+		phaseName = "phase"
+	}
+	switch normalizeProjectControlPhaseAttemptStatus(attempt.Status) {
+	case "completed":
+		return "Runbook phase " + phaseName + " completed with recorded artifacts."
+	case "failed":
+		reason := strings.TrimSpace(attempt.FailureReason)
+		if reason == "" {
+			reason = "No failure reason recorded."
+		}
+		return "Runbook phase " + phaseName + " failed: " + reason
+	case "cancelled":
+		return "Runbook phase " + phaseName + " was cancelled."
+	default:
+		workspaceRef := strings.TrimSpace(attempt.WorkspaceRef)
+		if workspaceRef == "" {
+			workspaceRef = "the configured workspace"
+		}
+		return "Runbook phase " + phaseName + " is running in " + workspaceRef + "."
+	}
+}
+
+func projectControlPhaseAttemptClaims(attempt projectControlPhaseAttempt) []string {
+	switch normalizeProjectControlPhaseAttemptStatus(attempt.Status) {
+	case "completed":
+		return []string{"Phase completed.", "Artifacts were recorded against the runbook attempt."}
+	case "failed":
+		return []string{"Phase failed.", "Recovery should continue through the runbook."}
+	case "cancelled":
+		return []string{"Phase was cancelled before completion."}
+	default:
+		return []string{"Interactive phase execution is in progress."}
+	}
+}
+
+func projectControlSessionForPhaseAttempt(attempt projectControlPhaseAttempt, task projectControlTask, runbook projectControlRunbook, artifacts []projectControlArtifact, live terminal.SessionInfo, hasLive bool, terminalsConnected bool, now time.Time) projectControlSession {
+	phase, ok := findProjectControlRunbookPhase(runbook, attempt.PhaseID)
+	executionRole := strings.TrimSpace(phase.ExecutionRole)
+	if !ok || executionRole == "" {
+		executionRole = normalizeProjectControlPhaseID(attempt.PhaseID)
+	}
+	sessionID := projectControlPhaseAttemptSessionID(attempt)
+	terminalID := ""
+	name := projectControlPhaseSessionName(task, attempt.PhaseID)
+	startedAt := attempt.StartedAt
+	if hasLive {
+		terminalID = live.ID
+		if strings.TrimSpace(live.Name) != "" {
+			name = live.Name
+		}
+		if strings.TrimSpace(startedAt) == "" {
+			startedAt = live.CreatedAt.UTC().Format(time.RFC3339)
+		}
+	}
+	return projectControlSession{
+		ID:             sessionID,
+		TaskID:         attempt.TaskID,
+		PhaseAttemptID: attempt.ID,
+		TerminalID:     terminalID,
+		Name:           name,
+		AgentType:      attempt.AgentType,
+		RuntimeID:      attempt.RuntimeID,
+		State:          projectControlPhaseAttemptSessionState(attempt),
+		ExecutionRole:  executionRole,
+		SystemRole:     "worker",
+		WorkspaceRef:   attempt.WorkspaceRef,
+		DurationLabel:  projectControlPhaseAttemptDurationLabel(attempt, now),
+		StartedAt:      startedAt,
+		Summary:        projectControlPhaseAttemptSummary(attempt),
+		Claims:         projectControlPhaseAttemptClaims(attempt),
+		Artifacts:      projectControlPhaseAttemptArtifactTexts(attempt, artifacts),
+		SupportsAttach: terminalsConnected && hasLive,
+	}
+}
+
 func buildProjectControlSnapshot(state projectControlState, username string, terminals *terminal.Manager) projectControlSnapshot {
 	now := time.Now().UTC()
 	hasTmux := false
@@ -2568,6 +2988,10 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	for i := range tasks {
 		refreshProjectControlTaskRunbookFields(&tasks[i], artifacts)
 	}
+	taskIndexByID := map[string]int{}
+	for i := range tasks {
+		taskIndexByID[tasks[i].ID] = i
+	}
 	runtimes := []projectControlRuntime{{ID: projectControlRuntimeID, Name: runtimeName, Kind: runtimeKind, Status: "online", InteractiveAttach: terminals != nil, HealthSummary: healthSummary}}
 	sessions := []projectControlSession{{
 		ID:             "session-review-ia",
@@ -2595,9 +3019,35 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 			})
 		}
 	}
-	for index, live := range liveTerminalSessions {
+	liveTerminalByID := map[string]terminal.SessionInfo{}
+	for _, live := range liveTerminalSessions {
+		liveTerminalByID[live.ID] = live
+	}
+	linkedTerminalIDs := map[string]bool{}
+	for _, attempt := range phaseAttempts {
+		taskIndex, ok := taskIndexByID[attempt.TaskID]
+		if !ok {
+			continue
+		}
+		sessionID := projectControlPhaseAttemptSessionID(attempt)
+		terminalID := projectControlTerminalIDFromSessionID(sessionID)
+		live, hasLive := liveTerminalByID[terminalID]
+		if hasLive {
+			linkedTerminalIDs[terminalID] = true
+		}
+		task := tasks[taskIndex]
+		runbook := projectControlRunbookForTask(task)
+		phaseSession := projectControlSessionForPhaseAttempt(attempt, task, runbook, artifacts, live, hasLive, terminals != nil, now)
+		tasks[taskIndex].SessionIDs = appendUniqueString(tasks[taskIndex].SessionIDs, phaseSession.ID)
+		sessions = append(sessions, phaseSession)
+	}
+	unlinkedLiveIndex := 0
+	for _, live := range liveTerminalSessions {
+		if linkedTerminalIDs[live.ID] {
+			continue
+		}
 		pcSession := projectControlSession{
-			ID:             "session-live-" + live.ID,
+			ID:             projectControlSessionIDForTerminal(live.ID),
 			TerminalID:     live.ID,
 			Name:           live.Name,
 			AgentType:      "worker",
@@ -2613,12 +3063,13 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 			SupportsAttach: terminals != nil,
 		}
 		targetTaskIndex := 1
-		if index == 1 {
+		if unlinkedLiveIndex == 1 {
 			targetTaskIndex = 2
-		} else if index >= 2 {
+		} else if unlinkedLiveIndex >= 2 {
 			targetTaskIndex = 3
 			pcSession.ExecutionRole = "verify"
 		}
+		unlinkedLiveIndex += 1
 		if targetTaskIndex < len(tasks) {
 			pcSession.TaskID = tasks[targetTaskIndex].ID
 			tasks[targetTaskIndex].SessionIDs = appendUniqueString(tasks[targetTaskIndex].SessionIDs, pcSession.ID)

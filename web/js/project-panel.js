@@ -707,6 +707,10 @@
         return latestPhaseAttempt(task && task.id, currentPhaseForTask(task));
     }
 
+    function sessionForPhaseAttempt(attempt) {
+        return attempt && attempt.sessionId ? findById(sessions(), attempt.sessionId) : null;
+    }
+
     function phaseStatusForTask(task, phase) {
         var current = currentPhaseForTask(task);
         if (!phase) {
@@ -3225,6 +3229,7 @@
         var updating = state.phaseUpdatingTaskId === task.id || state.updatingTaskId === task.id;
         var disabled = updating ? ' disabled' : '';
         var currentAttempt = currentPhaseAttemptForTask(task);
+        var currentSession = sessionForPhaseAttempt(currentAttempt);
         var isRunning = currentAttempt && currentAttempt.status === 'running';
         var artifactKind = artifactKindForPhase(currentPhaseDef);
         var defaultOutcome = defaultOutcomeForArtifact(artifactKind);
@@ -3254,6 +3259,16 @@
             ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.requiredEvidence', 'Required evidence')) + '</div>'
                 + '<div class="project-missing-evidence compact">' + renderPhaseArtifactPills(task, currentPhaseDef, currentAttempt) + '</div></div>'
             : '';
+        var toolHTML = canComplete && currentPhase === 'test'
+            ? '<div class="project-action-group"><button type="button" class="project-inline-btn primary" data-run-phase-tool-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-tool-id="go_test"' + disabled + '>' + escapeHTML(tr('project.runTests', 'Run tests')) + '</button></div>'
+            : '';
+        var sessionHTML = currentSession
+            ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.phaseSession', 'Phase session')) + '</div>'
+                + '<div class="project-action-group">'
+                + '<button type="button" class="project-inline-btn" data-session-id="' + escapeHTML(currentSession.id) + '">' + escapeHTML(tr('project.sessionDetails', 'Session details')) + '</button>'
+                + (currentSession.supportsAttach && currentSession.terminalId ? '<button type="button" class="project-inline-btn primary" data-attach-terminal="' + escapeHTML(currentSession.terminalId) + '">' + escapeHTML(tr('project.attachTerminal', 'Attach Terminal')) + '</button>' : '')
+                + '</div></div>'
+            : '';
         var controlsHTML = '';
 
         if (canStart) {
@@ -3262,6 +3277,7 @@
                 + '</div>';
         } else if (canComplete) {
             controlsHTML = '<div class="project-phase-control-grid">'
+                + toolHTML
                 + '<form class="project-phase-form" data-phase-complete-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-artifact-kind="' + escapeHTML(artifactKind) + '">'
                 + '<div class="project-phase-fields project-phase-fields-expanded">'
                 + '<label class="project-phase-field project-phase-field-wide"><span>' + escapeHTML(humanizeArtifactKind(artifactKind)) + '</span><textarea name="artifactValue" maxlength="640" rows="4" placeholder="' + escapeHTML(phaseArtifactPlaceholder(artifactKind)) + '"></textarea></label>'
@@ -3286,6 +3302,7 @@
             + '<div class="project-phase-workbench-title">' + escapeHTML(humanizePhase(currentPhase)) + '</div></div>'
             + '<span class="project-pill tone-' + escapeHTML(currentTone) + '">' + escapeHTML(phaseStatusLabel(currentStatus)) + '</span></div>'
             + currentMetaHTML
+            + sessionHTML
             + requiredHTML
             + '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.completionGate', 'Completion gate')) + '</div>' + missingHTML + '</div>'
             + controlsHTML
@@ -3397,6 +3414,8 @@
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.runtime', 'Runtime')) + ':</strong> ' + escapeHTML(session.runtimeId) + '</div>'
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.executionRole', 'Execution role')) + ':</strong> ' + escapeHTML(humanizeExecutionRole(session.executionRole)) + '</div>'
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.systemRole', 'System role')) + ':</strong> ' + escapeHTML(humanizeSystemRole(session.systemRole || 'worker')) + '</div>'
+            + (session.phaseAttemptId ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.phaseAttempt', 'Phase attempt')) + ':</strong> ' + escapeHTML(session.phaseAttemptId) + '</div>' : '')
+            + (session.workspaceRef ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.workspace', 'Workspace')) + ':</strong> ' + escapeHTML(humanizeToken(session.workspaceRef)) + '</div>' : '')
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.startedAt', 'Started')) + ':</strong> ' + escapeHTML(formatTime(session.startedAt)) + '</div>'
             + '</div>'
             + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.claims', 'Claims')) + '</h3>'
@@ -3745,6 +3764,13 @@
         });
     }
 
+    function runPhaseTool(taskId, phaseId, toolId) {
+        updateTaskInline(taskId, 'run_tool', {
+            phaseId: phaseId || currentPhaseForTask(findById(tasks(), taskId)),
+            toolId: toolId || ''
+        });
+    }
+
     function submitPhaseCompleteForm(form) {
         var taskId = form.getAttribute('data-phase-complete-task') || '';
         var phaseId = form.getAttribute('data-phase-id') || '';
@@ -3822,6 +3848,11 @@
         panel.querySelectorAll('[data-start-phase-task]').forEach(function(node) {
             node.addEventListener('click', function() {
                 startTaskPhase(node.getAttribute('data-start-phase-task'), node.getAttribute('data-phase-id') || '');
+            });
+        });
+        panel.querySelectorAll('[data-run-phase-tool-task]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                runPhaseTool(node.getAttribute('data-run-phase-tool-task'), node.getAttribute('data-phase-id') || '', node.getAttribute('data-tool-id') || '');
             });
         });
         panel.querySelectorAll('[data-phase-complete-task]').forEach(function(form) {
