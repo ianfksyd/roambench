@@ -36,6 +36,13 @@ const (
 	projectControlDocsUpdateRunbookID    = "docs_update_default"
 )
 
+const (
+	projectControlToolRunTimeout       = 2 * time.Minute
+	projectControlToolRunRecoveryGrace = 30 * time.Second
+)
+
+var projectControlProcessStartedAt = time.Now().UTC().Truncate(time.Second)
+
 type projectControlSnapshot struct {
 	GeneratedAt     string                       `json:"generatedAt"`
 	ActiveProjectID string                       `json:"activeProjectId"`
@@ -1286,7 +1293,7 @@ func executeLocalProjectControlTool(toolID string) (projectControlToolResult, er
 	if err != nil {
 		return projectControlToolResult{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), projectControlToolRunTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	output, runErr := cmd.CombinedOutput()
@@ -1539,6 +1546,67 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 		return nil
 	})
 	return err
+}
+
+func projectControlInterruptedToolRunReason(run projectControlToolRun, now time.Time) string {
+	startedAt := parseProjectControlTimestamp(run.StartedAt)
+	if startedAt.IsZero() {
+		return "missing or invalid start timestamp"
+	}
+	if startedAt.Before(projectControlProcessStartedAt.Add(-time.Second)) {
+		return "server restarted before the tool completed"
+	}
+	if now.After(startedAt.Add(projectControlToolRunTimeout + projectControlToolRunRecoveryGrace)) {
+		return "tool exceeded the recorded execution window"
+	}
+	return ""
+}
+
+func projectControlRecoverInterruptedToolRuns(state *projectControlState, now time.Time) bool {
+	if state == nil {
+		return false
+	}
+	changed := false
+	nowText := now.UTC().Format(time.RFC3339)
+	for runIndex := range state.ToolRuns {
+		run := &state.ToolRuns[runIndex]
+		if run.Status != "running" {
+			continue
+		}
+		reason := projectControlInterruptedToolRunReason(*run, now.UTC())
+		if reason == "" {
+			continue
+		}
+		run.Status = "failed"
+		run.CompletedAt = nowText
+		run.Outcome = "fail"
+		run.Error = reason
+		run.Summary = "Tool " + run.ToolID + " did not complete: " + reason + "."
+		taskIndex := -1
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == run.TaskID {
+				taskIndex = i
+				break
+			}
+		}
+		if taskIndex != -1 {
+			state.Tasks[taskIndex].RecentSummary = "Tool " + run.ToolID + " did not complete."
+			state.Tasks[taskIndex].NextStep = "Retry the tool or continue the phase manually."
+			state.Tasks[taskIndex].RowVersion += 1
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:           projectControlID("event", "tool-run-recovered"),
+				Timestamp:    nowText,
+				Actor:        "tool_gateway",
+				Action:       "tool_run_failed",
+				Detail:       "Tool " + run.ToolID + " failed: " + reason + ".",
+				ProjectID:    state.Tasks[taskIndex].ProjectID,
+				WorkstreamID: state.Tasks[taskIndex].WorkstreamID,
+				TaskID:       state.Tasks[taskIndex].ID,
+			})
+		}
+		changed = true
+	}
+	return changed
 }
 
 func completeProjectControlTaskPhase(state *projectControlState, task *projectControlTask, req projectControlTaskUpdateRequest, now string) error {
@@ -2804,6 +2872,9 @@ func (s *projectControlStore) loadLocked(username string) (projectControlState, 
 			return projectControlState{}, false, err
 		}
 		projectControlNormalizeState(&legacyState)
+		if projectControlRecoverInterruptedToolRuns(&legacyState, time.Now().UTC()) {
+			legacyState.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
 		if saveErr := s.saveLocked(username, legacyState); saveErr != nil {
 			return projectControlState{}, false, saveErr
 		}
@@ -2817,6 +2888,12 @@ func (s *projectControlStore) loadLocked(username string) (projectControlState, 
 		return projectControlState{}, false, err
 	}
 	projectControlNormalizeState(&state)
+	if projectControlRecoverInterruptedToolRuns(&state, time.Now().UTC()) {
+		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		if saveErr := s.saveLocked(username, state); saveErr != nil {
+			return projectControlState{}, false, saveErr
+		}
+	}
 	return state, true, nil
 }
 

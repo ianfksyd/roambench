@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ianf339/roambench/internal/auth"
 	"github.com/ianf339/roambench/internal/config"
@@ -62,6 +63,15 @@ func setProjectControlRunToolAsyncForTest(t *testing.T, fn func(func())) {
 	projectControlRunToolAsync = fn
 	t.Cleanup(func() {
 		projectControlRunToolAsync = previous
+	})
+}
+
+func setProjectControlProcessStartedAtForTest(t *testing.T, startedAt time.Time) {
+	t.Helper()
+	previous := projectControlProcessStartedAt
+	projectControlProcessStartedAt = startedAt
+	t.Cleanup(func() {
+		projectControlProcessStartedAt = previous
 	})
 }
 
@@ -1133,6 +1143,54 @@ func TestProjectControlRunToolReturnsRunningToolRunBeforeAsyncCompletion(t *test
 	}
 	if !strings.Contains(secondRec.Body.String(), "already running") {
 		t.Fatalf("second run_tool error = %q, want already running", secondRec.Body.String())
+	}
+}
+
+func TestProjectControlRecoversInterruptedRunningToolRun(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) {})
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	runningSnapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	runningTask := projectControlTaskFromSnapshotByID(t, runningSnapshot, task.ID)
+	foundRunningToolRun := false
+	for _, run := range runningSnapshot.ToolRuns {
+		if run.TaskID == task.ID && run.ToolID == "go_test" && run.Status == "running" {
+			foundRunningToolRun = true
+			break
+		}
+	}
+	if !foundRunningToolRun {
+		t.Fatalf("ToolRuns = %#v, want running go_test before recovery", runningSnapshot.ToolRuns)
+	}
+
+	setProjectControlProcessStartedAtForTest(t, time.Now().UTC().Add(time.Minute))
+	req := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/project-control status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	recoveredSnapshot := decodeProjectControlSnapshot(t, rec)
+	recoveredTask := projectControlTaskFromSnapshotByID(t, recoveredSnapshot, task.ID)
+	if recoveredTask.RowVersion <= runningTask.RowVersion {
+		t.Fatalf("RowVersion = %d, want > %d after interrupted tool recovery", recoveredTask.RowVersion, runningTask.RowVersion)
+	}
+	if recoveredTask.CurrentPhase != "test" {
+		t.Fatalf("CurrentPhase = %q, want test after interrupted tool recovery", recoveredTask.CurrentPhase)
+	}
+	foundRecoveredToolRun := false
+	for _, run := range recoveredSnapshot.ToolRuns {
+		if run.TaskID == task.ID && run.ToolID == "go_test" && run.Status == "failed" && strings.Contains(run.Error, "server restarted") {
+			foundRecoveredToolRun = true
+			break
+		}
+	}
+	if !foundRecoveredToolRun {
+		t.Fatalf("ToolRuns = %#v, want recovered failed go_test run", recoveredSnapshot.ToolRuns)
 	}
 }
 

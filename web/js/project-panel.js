@@ -38,6 +38,9 @@
         toolRunRefreshTimer: null
     };
 
+    var TOOL_RUN_REFRESH_INTERVAL_MS = 1200;
+    var TOOL_RUN_REFRESH_ATTEMPTS = 130;
+
     function app() {
         return window.RoamBenchApp || null;
     }
@@ -1343,7 +1346,7 @@
             window.clearTimeout(state.toolRunRefreshTimer);
             state.toolRunRefreshTimer = null;
         }
-        remaining = remaining == null ? 10 : remaining;
+        remaining = remaining == null ? TOOL_RUN_REFRESH_ATTEMPTS : remaining;
         if (remaining < 1 || !taskId) {
             return;
         }
@@ -1354,7 +1357,7 @@
                     scheduleToolRunRefresh(taskId, remaining - 1);
                 }
             });
-        }, 1200);
+        }, TOOL_RUN_REFRESH_INTERVAL_MS);
     }
 
     function updateWorkstreamInline(workstreamId, action) {
@@ -1418,7 +1421,7 @@
             updateBadge();
             render();
             if (action === 'run_tool' && hasRunningToolRunsForTask(taskId)) {
-                scheduleToolRunRefresh(taskId, 10);
+                scheduleToolRunRefresh(taskId, TOOL_RUN_REFRESH_ATTEMPTS);
             }
         }).catch(function(err) {
             state.updatingTaskId = '';
