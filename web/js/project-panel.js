@@ -684,6 +684,59 @@
             && run.status !== 'running';
     }
 
+    function toolRunSupportsPhaseCompletion(phase, run) {
+        var requiredKind = artifactKindForPhase(phase);
+        var requiredOutcome = defaultOutcomeForArtifact(requiredKind);
+        var artifact = artifactForToolRun(run);
+        var detailText = toolRunDetailText(run);
+        var lines = [];
+        if (!phase || !run || run.status !== 'completed' || !requiredKind || !detailText) {
+            return null;
+        }
+        if (artifact
+                && String(artifact.kind || '').trim().toLowerCase() === requiredKind
+                && (!phaseRequiresPassingOutcome(requiredKind) || String(artifact.outcome || '').trim().toLowerCase() === 'pass')) {
+            return {
+                artifactKind: requiredKind,
+                artifactOutcome: artifact.outcome || requiredOutcome,
+                artifactLabel: humanizeArtifactKind(requiredKind),
+                artifactValue: artifact.value || detailText,
+                sourceToolRunId: run.id,
+                sourceToolId: run.toolId
+            };
+        }
+        if (phase.id !== 'review' && phase.id !== 'final_validation') {
+            return null;
+        }
+        lines.push('Source tool: ' + humanizeTool(run.toolId));
+        if (run.summary) {
+            lines.push('Summary: ' + run.summary);
+        }
+        lines.push('');
+        lines.push(detailText);
+        return {
+            artifactKind: requiredKind,
+            artifactOutcome: requiredOutcome,
+            artifactLabel: humanizeArtifactKind(requiredKind),
+            artifactValue: lines.join('\n').trim(),
+            sourceToolRunId: run.id,
+            sourceToolId: run.toolId
+        };
+    }
+
+    function latestCompletionAssistForPhaseAttempt(attempt, phase) {
+        var runs = sortedToolRunsNewestFirst(toolRunsForPhaseAttempt(attempt));
+        var i;
+        var payload;
+        for (i = 0; i < runs.length; i += 1) {
+            payload = toolRunSupportsPhaseCompletion(phase, runs[i]);
+            if (payload) {
+                return payload;
+            }
+        }
+        return null;
+    }
+
     function taskMissingEvidence(task) {
         return task && Array.isArray(task.missingEvidence) ? task.missingEvidence : [];
     }
@@ -3458,6 +3511,7 @@
         var defaultOutcome = defaultOutcomeForArtifact(artifactKind);
         var canStart = currentPhaseDef && currentPhase !== 'ready_for_acceptance' && !isRunning && task.acceptanceStatus !== 'accepted' && task.state !== 'archived';
         var canComplete = currentPhaseDef && currentPhase !== 'ready_for_acceptance' && isRunning;
+        var completionAssist = latestCompletionAssistForPhaseAttempt(currentAttempt, currentPhaseDef);
         var currentStatus = phaseStatusForTask(task, currentPhaseDef);
         var currentTone = phaseStatusTone(currentStatus);
         var phaseRows = phases.map(function(phase, index) {
@@ -3486,6 +3540,14 @@
         var toolRunHTML = currentToolRun
             ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.latestToolRun', 'Latest tool run')) + '</div>'
                 + renderToolRunHistory(task, [currentToolRun], currentAttempt, canComplete, toolRunning, currentPhase, true)
+                + '</div>'
+            : '';
+        var completionAssistHTML = completionAssist && canComplete && !toolRunning
+            ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.toolCompletionAssist', 'Tool result ready')) + '</div>'
+                + '<div class="project-action-group">'
+                + '<button type="button" class="project-inline-btn primary" data-complete-from-tool-run-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-tool-run-id="' + escapeHTML(completionAssist.sourceToolRunId) + '"' + disabled + '>' + escapeHTML(tr('project.completeFromToolRun', 'Complete from latest tool result')) + '</button>'
+                + '</div>'
+                + '<div class="project-list-meta">' + escapeHTML(humanizeTool(completionAssist.sourceToolId) + ' -> ' + humanizeArtifactKind(completionAssist.artifactKind)) + '</div>'
                 + '</div>'
             : '';
         if (canComplete && currentPhaseDef) {
@@ -3546,6 +3608,7 @@
             + sessionHTML
             + requiredHTML
             + toolRunHTML
+            + completionAssistHTML
             + toolHistoryHTML
             + '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.completionGate', 'Completion gate')) + '</div>' + missingHTML + '</div>'
             + controlsHTML
@@ -4021,6 +4084,31 @@
         });
     }
 
+    function completePhaseFromToolRun(taskId, phaseId, toolRunId) {
+        var task = findById(tasks(), taskId);
+        var phase;
+        var run;
+        var payload;
+        if (!task) {
+            return;
+        }
+        phase = phasesForTask(task).filter(function(item) {
+            return item.id === (phaseId || currentPhaseForTask(task));
+        })[0] || null;
+        run = findById(toolRuns(), toolRunId);
+        payload = toolRunSupportsPhaseCompletion(phase, run);
+        if (!payload) {
+            return;
+        }
+        updateTaskInline(taskId, 'complete_phase', {
+            phaseId: phaseId || currentPhaseForTask(task),
+            artifactKind: payload.artifactKind,
+            artifactOutcome: payload.artifactOutcome,
+            artifactLabel: payload.artifactLabel,
+            artifactValue: payload.artifactValue
+        });
+    }
+
     function submitPhaseCompleteForm(form) {
         var taskId = form.getAttribute('data-phase-complete-task') || '';
         var phaseId = form.getAttribute('data-phase-id') || '';
@@ -4103,6 +4191,15 @@
         panel.querySelectorAll('[data-run-phase-tool-task]').forEach(function(node) {
             node.addEventListener('click', function() {
                 runPhaseTool(node.getAttribute('data-run-phase-tool-task'), node.getAttribute('data-phase-id') || '', node.getAttribute('data-tool-id') || '');
+            });
+        });
+        panel.querySelectorAll('[data-complete-from-tool-run-task]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                completePhaseFromToolRun(
+                    node.getAttribute('data-complete-from-tool-run-task'),
+                    node.getAttribute('data-phase-id') || '',
+                    node.getAttribute('data-tool-run-id') || ''
+                );
             });
         });
         panel.querySelectorAll('[data-phase-complete-task]').forEach(function(form) {
