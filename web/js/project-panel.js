@@ -34,7 +34,8 @@
         creatingTaskSelectedSkill: '',
         creatingTaskRunbookId: '',
         creatingTaskSaving: false,
-        phaseUpdatingTaskId: ''
+        phaseUpdatingTaskId: '',
+        toolRunRefreshTimer: null
     };
 
     function app() {
@@ -308,6 +309,19 @@
         }
     }
 
+    function humanizeTool(toolId) {
+        switch (String(toolId || '').trim().toLowerCase()) {
+        case 'go_test':
+            return tr('project.toolGoTest', 'Go test');
+        case 'diff_capture':
+            return tr('project.toolDiffCapture', 'Diff capture');
+        case 'repo_status':
+            return tr('project.toolRepoStatus', 'Repo status');
+        default:
+            return humanizeToken(toolId);
+        }
+    }
+
     function humanizeSkill(skillOrId) {
         var skill = typeof skillOrId === 'object' && skillOrId ? skillOrId : findById(skills(), skillOrId);
         if (skill && skill.name) {
@@ -495,6 +509,10 @@
         return state.snapshot && Array.isArray(state.snapshot.phaseAttempts) ? state.snapshot.phaseAttempts : [];
     }
 
+    function toolRuns() {
+        return state.snapshot && Array.isArray(state.snapshot.toolRuns) ? state.snapshot.toolRuns : [];
+    }
+
     function artifacts() {
         return state.snapshot && Array.isArray(state.snapshot.artifacts) ? state.snapshot.artifacts : [];
     }
@@ -558,6 +576,61 @@
             return bt.localeCompare(at);
         });
         return items[0];
+    }
+
+    function taskToolRuns(taskId) {
+        return toolRuns().filter(function(item) {
+            return item.taskId === taskId;
+        });
+    }
+
+    function toolRunsForPhaseAttempt(attempt) {
+        if (!attempt || !attempt.id) {
+            return [];
+        }
+        return toolRuns().filter(function(item) {
+            return item.phaseAttemptId === attempt.id;
+        });
+    }
+
+    function latestToolRunForAttempt(attempt) {
+        var items = toolRunsForPhaseAttempt(attempt).slice();
+        if (!items.length) {
+            return null;
+        }
+        items.sort(function(a, b) {
+            var at = String(a.startedAt || a.completedAt || '');
+            var bt = String(b.startedAt || b.completedAt || '');
+            if (at === bt) {
+                return String(b.id || '').localeCompare(String(a.id || ''));
+            }
+            return bt.localeCompare(at);
+        });
+        return items[0];
+    }
+
+    function latestRunningToolRunForAttempt(attempt) {
+        var items = toolRunsForPhaseAttempt(attempt).filter(function(item) {
+            return item.status === 'running';
+        });
+        if (!items.length) {
+            return null;
+        }
+        items.sort(function(a, b) {
+            var at = String(a.startedAt || '');
+            var bt = String(b.startedAt || '');
+            if (at === bt) {
+                return String(b.id || '').localeCompare(String(a.id || ''));
+            }
+            return bt.localeCompare(at);
+        });
+        return items[0];
+    }
+
+    function hasRunningToolRunsForTask(taskId) {
+        return taskToolRuns(taskId).some(function(item) {
+            return item.status === 'running';
+        });
     }
 
     function taskMissingEvidence(task) {
@@ -760,6 +833,36 @@
             return tr('project.phaseStatusCurrent', 'Current');
         default:
             return tr('project.phaseStatusPending', 'Pending');
+        }
+    }
+
+    function toolRunStatusTone(status) {
+        switch (String(status || '').trim().toLowerCase()) {
+        case 'completed':
+            return 'success';
+        case 'running':
+            return 'info';
+        case 'failed':
+            return 'danger';
+        case 'cancelled':
+            return 'neutral';
+        default:
+            return 'neutral';
+        }
+    }
+
+    function toolRunStatusLabel(status) {
+        switch (String(status || '').trim().toLowerCase()) {
+        case 'completed':
+            return tr('project.toolRunCompleted', 'Completed');
+        case 'running':
+            return tr('project.toolRunRunning', 'Running');
+        case 'failed':
+            return tr('project.toolRunFailed', 'Failed');
+        case 'cancelled':
+            return tr('project.toolRunCancelled', 'Cancelled');
+        default:
+            return humanizeToken(status);
         }
     }
 
@@ -1221,6 +1324,39 @@
         });
     }
 
+    function refreshSnapshotSilently() {
+        return fetchJSON('/api/project-control').then(function(snapshot) {
+            state.snapshot = snapshot;
+            ensureSelection();
+            updateBadge();
+            render();
+            return snapshot;
+        }).catch(function(err) {
+            state.error = err.message || tr('project.refreshFailed', 'Failed to refresh project panel');
+            render();
+            return null;
+        });
+    }
+
+    function scheduleToolRunRefresh(taskId, remaining) {
+        if (state.toolRunRefreshTimer) {
+            window.clearTimeout(state.toolRunRefreshTimer);
+            state.toolRunRefreshTimer = null;
+        }
+        remaining = remaining == null ? 10 : remaining;
+        if (remaining < 1 || !taskId) {
+            return;
+        }
+        state.toolRunRefreshTimer = window.setTimeout(function() {
+            state.toolRunRefreshTimer = null;
+            refreshSnapshotSilently().then(function() {
+                if (hasRunningToolRunsForTask(taskId)) {
+                    scheduleToolRunRefresh(taskId, remaining - 1);
+                }
+            });
+        }, 1200);
+    }
+
     function updateWorkstreamInline(workstreamId, action) {
         var workstream = findById(workstreams(), workstreamId);
         if (!workstream) {
@@ -1281,6 +1417,9 @@
             openTask(taskId);
             updateBadge();
             render();
+            if (action === 'run_tool' && hasRunningToolRunsForTask(taskId)) {
+                scheduleToolRunRefresh(taskId, 10);
+            }
         }).catch(function(err) {
             state.updatingTaskId = '';
             state.phaseUpdatingTaskId = '';
@@ -3227,9 +3366,12 @@
         var currentPhaseDef = currentRunbookPhase(task);
         var missing = taskMissingEvidence(task);
         var updating = state.phaseUpdatingTaskId === task.id || state.updatingTaskId === task.id;
-        var disabled = updating ? ' disabled' : '';
         var currentAttempt = currentPhaseAttemptForTask(task);
         var currentSession = sessionForPhaseAttempt(currentAttempt);
+        var runningToolRun = latestRunningToolRunForAttempt(currentAttempt);
+        var currentToolRun = runningToolRun || latestToolRunForAttempt(currentAttempt);
+        var toolRunning = !!runningToolRun;
+        var disabled = updating || toolRunning ? ' disabled' : '';
         var isRunning = currentAttempt && currentAttempt.status === 'running';
         var artifactKind = artifactKindForPhase(currentPhaseDef);
         var defaultOutcome = defaultOutcomeForArtifact(artifactKind);
@@ -3259,9 +3401,23 @@
             ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.requiredEvidence', 'Required evidence')) + '</div>'
                 + '<div class="project-missing-evidence compact">' + renderPhaseArtifactPills(task, currentPhaseDef, currentAttempt) + '</div></div>'
             : '';
-        var toolHTML = canComplete && currentPhase === 'test'
-            ? '<div class="project-action-group"><button type="button" class="project-inline-btn primary" data-run-phase-tool-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-tool-id="go_test"' + disabled + '>' + escapeHTML(tr('project.runTests', 'Run tests')) + '</button></div>'
+        var toolButtons = [];
+        var toolRunHTML = currentToolRun
+            ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.toolRun', 'Tool run')) + '</div>'
+                + '<div class="project-phase-workbench-meta">'
+                + '<span>' + escapeHTML(humanizeTool(currentToolRun.toolId)) + '</span>'
+                + '<span class="project-pill tone-' + escapeHTML(toolRunStatusTone(currentToolRun.status)) + '">' + escapeHTML(toolRunStatusLabel(currentToolRun.status)) + '</span>'
+                + (currentToolRun.summary ? '<span>' + escapeHTML(compactText(currentToolRun.summary, '', 120)) + '</span>' : '')
+                + (currentToolRun.error ? '<span>' + escapeHTML(compactText(currentToolRun.error, '', 120)) + '</span>' : '')
+                + '</div></div>'
             : '';
+        if (canComplete && (currentPhase === 'implement' || currentPhase === 'fix_or_replan')) {
+            toolButtons.push('<button type="button" class="project-inline-btn primary" data-run-phase-tool-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-tool-id="diff_capture"' + disabled + '>' + escapeHTML(tr('project.captureDiff', 'Capture diff')) + '</button>');
+        }
+        if (canComplete && currentPhase === 'test') {
+            toolButtons.push('<button type="button" class="project-inline-btn primary" data-run-phase-tool-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-tool-id="go_test"' + disabled + '>' + escapeHTML(tr('project.runTests', 'Run tests')) + '</button>');
+        }
+        var toolHTML = toolButtons.length ? '<div class="project-action-group">' + toolButtons.join('') + '</div>' : '';
         var sessionHTML = currentSession
             ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.phaseSession', 'Phase session')) + '</div>'
                 + '<div class="project-action-group">'
@@ -3304,6 +3460,7 @@
             + currentMetaHTML
             + sessionHTML
             + requiredHTML
+            + toolRunHTML
             + '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.completionGate', 'Completion gate')) + '</div>' + missingHTML + '</div>'
             + controlsHTML
             + (updating ? '<div class="project-list-meta">' + escapeHTML(tr('project.saving', 'Saving…')) + '</div>' : '')

@@ -56,6 +56,15 @@ func patchProjectControlTask(t *testing.T, srv *Server, token, taskID, body stri
 	return decodeProjectControlSnapshot(t, rec)
 }
 
+func setProjectControlRunToolAsyncForTest(t *testing.T, fn func(func())) {
+	t.Helper()
+	previous := projectControlRunToolAsync
+	projectControlRunToolAsync = fn
+	t.Cleanup(func() {
+		projectControlRunToolAsync = previous
+	})
+}
+
 func projectControlTaskFromSnapshotByID(t *testing.T, snapshot projectControlSnapshot, taskID string) projectControlTask {
 	t.Helper()
 	for _, task := range snapshot.Tasks {
@@ -959,6 +968,7 @@ func TestProjectControlStartPhaseCreatesAttachableTerminalSession(t *testing.T) 
 func TestProjectControlRunToolCompletesTestPhaseOnPassingResult(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
 
 	previous := projectControlExecuteTool
 	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
@@ -1002,11 +1012,22 @@ func TestProjectControlRunToolCompletesTestPhaseOnPassingResult(t *testing.T) {
 	if !foundCompletedAttempt {
 		t.Fatalf("PhaseAttempts = %#v, want completed test attempt", snapshot.PhaseAttempts)
 	}
+	foundCompletedToolRun := false
+	for _, run := range snapshot.ToolRuns {
+		if run.TaskID == task.ID && run.PhaseID == "test" && run.ToolID == "go_test" && run.Status == "completed" && run.Outcome == "pass" && run.ArtifactID != "" {
+			foundCompletedToolRun = true
+			break
+		}
+	}
+	if !foundCompletedToolRun {
+		t.Fatalf("ToolRuns = %#v, want completed go_test run with artifact", snapshot.ToolRuns)
+	}
 }
 
 func TestProjectControlRunToolRoutesFailingTestToRecovery(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
 
 	previous := projectControlExecuteTool
 	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
@@ -1049,6 +1070,69 @@ func TestProjectControlRunToolRoutesFailingTestToRecovery(t *testing.T) {
 	}
 	if !foundFailedAttempt {
 		t.Fatalf("PhaseAttempts = %#v, want failed test attempt", snapshot.PhaseAttempts)
+	}
+	foundFailedToolRun := false
+	for _, run := range snapshot.ToolRuns {
+		if run.TaskID == task.ID && run.PhaseID == "test" && run.ToolID == "go_test" && run.Status == "failed" && run.Outcome == "fail" && run.ArtifactID != "" {
+			foundFailedToolRun = true
+			break
+		}
+	}
+	if !foundFailedToolRun {
+		t.Fatalf("ToolRuns = %#v, want failed go_test run with artifact", snapshot.ToolRuns)
+	}
+}
+
+func TestProjectControlRunToolReturnsRunningToolRunBeforeAsyncCompletion(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	var queued func()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) {
+		queued = fn
+	})
+	previous := projectControlExecuteTool
+	executed := false
+	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
+		executed = true
+		return projectControlToolResult{}, nil
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	if queued == nil {
+		t.Fatal("run_tool did not enqueue async completion")
+	}
+	if executed {
+		t.Fatal("tool executed before async completion hook was released")
+	}
+	updated := projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+	if updated.CurrentPhase != "test" {
+		t.Fatalf("CurrentPhase = %q, want test while tool is running", updated.CurrentPhase)
+	}
+	foundRunningToolRun := false
+	for _, run := range snapshot.ToolRuns {
+		if run.TaskID == task.ID && run.PhaseID == "test" && run.ToolID == "go_test" && run.Status == "running" && run.ArtifactID == "" {
+			foundRunningToolRun = true
+			break
+		}
+	}
+	if !foundRunningToolRun {
+		t.Fatalf("ToolRuns = %#v, want running go_test run without artifact", snapshot.ToolRuns)
+	}
+	secondBody := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"repo_status"}`, updated.RowVersion)
+	secondReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+task.ID, strings.NewReader(secondBody))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	secondRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(secondRec, secondReq)
+	if secondRec.Code != http.StatusBadRequest {
+		t.Fatalf("second run_tool status = %d, want %d: %s", secondRec.Code, http.StatusBadRequest, secondRec.Body.String())
+	}
+	if !strings.Contains(secondRec.Body.String(), "already running") {
+		t.Fatalf("second run_tool error = %q, want already running", secondRec.Body.String())
 	}
 }
 

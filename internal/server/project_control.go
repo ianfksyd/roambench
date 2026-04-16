@@ -48,6 +48,7 @@ type projectControlSnapshot struct {
 	Skills          []projectControlSkill        `json:"skills"`
 	Runbooks        []projectControlRunbook      `json:"runbooks"`
 	PhaseAttempts   []projectControlPhaseAttempt `json:"phaseAttempts"`
+	ToolRuns        []projectControlToolRun      `json:"toolRuns,omitempty"`
 	Artifacts       []projectControlArtifact     `json:"artifacts"`
 	Checkpoints     []projectControlCheckpoint   `json:"checkpoints"`
 	Decisions       []projectControlDecision     `json:"decisions,omitempty"`
@@ -177,6 +178,21 @@ type projectControlArtifact struct {
 	CreatedAt      string `json:"createdAt"`
 }
 
+type projectControlToolRun struct {
+	ID             string `json:"id"`
+	TaskID         string `json:"taskId"`
+	PhaseAttemptID string `json:"phaseAttemptId"`
+	PhaseID        string `json:"phaseId"`
+	ToolID         string `json:"toolId"`
+	Status         string `json:"status"`
+	StartedAt      string `json:"startedAt"`
+	CompletedAt    string `json:"completedAt,omitempty"`
+	ArtifactID     string `json:"artifactId,omitempty"`
+	Outcome        string `json:"outcome,omitempty"`
+	Summary        string `json:"summary,omitempty"`
+	Error          string `json:"error,omitempty"`
+}
+
 type projectControlRuntime struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
@@ -260,6 +276,7 @@ type projectControlState struct {
 	Workstreams     []projectControlWorkstream    `json:"workstreams"`
 	Tasks           []projectControlTask          `json:"tasks"`
 	PhaseAttempts   []projectControlPhaseAttempt  `json:"phaseAttempts,omitempty"`
+	ToolRuns        []projectControlToolRun       `json:"toolRuns,omitempty"`
 	Artifacts       []projectControlArtifact      `json:"artifacts,omitempty"`
 	Checkpoints     []projectControlCheckpoint    `json:"checkpoints"`
 	Decisions       []projectControlDecision      `json:"decisions,omitempty"`
@@ -1173,6 +1190,9 @@ type projectControlToolResult struct {
 }
 
 var projectControlExecuteTool = executeLocalProjectControlTool
+var projectControlRunToolAsync = func(fn func()) {
+	go fn()
+}
 
 func normalizeProjectControlToolID(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
@@ -1201,6 +1221,29 @@ func projectControlToolAllowedInPhase(toolID, phaseID string) bool {
 	default:
 		return false
 	}
+}
+
+func validateProjectControlToolForPhase(toolID string, phase projectControlRunbookPhase, attempt projectControlPhaseAttempt) error {
+	toolID = normalizeProjectControlToolID(toolID)
+	phaseID := normalizeProjectControlPhaseID(phase.ID)
+	if !projectControlToolAllowedInPhase(toolID, phaseID) {
+		return fmt.Errorf("tool %s is not allowed in phase %s", toolID, phaseID)
+	}
+	expectedWorkspace := projectControlPhaseWorkspaceRef(phase)
+	if attempt.WorkspaceRef != "" && expectedWorkspace != "" && attempt.WorkspaceRef != expectedWorkspace {
+		return fmt.Errorf("tool %s cannot run in workspace %s for phase %s", toolID, attempt.WorkspaceRef, phaseID)
+	}
+	switch toolID {
+	case "diff_capture":
+		if phase.WriteAccess != "scoped_write" {
+			return fmt.Errorf("tool %s requires scoped write phase context", toolID)
+		}
+	case "go_test", "repo_status":
+		if attempt.WorkspaceRef == "" {
+			return fmt.Errorf("tool %s requires a workspace reference", toolID)
+		}
+	}
+	return nil
 }
 
 func projectControlPhaseRequiresArtifact(phase projectControlRunbookPhase, artifactKind string) bool {
@@ -1287,9 +1330,19 @@ func recordProjectControlToolEvent(state *projectControlState, task projectContr
 	})
 }
 
-func runProjectControlTaskPhaseTool(state *projectControlState, task *projectControlTask, req projectControlTaskUpdateRequest, now string) error {
+func findRunningProjectControlToolRunIndex(runs []projectControlToolRun, taskID, phaseAttemptID, toolID string) int {
+	toolID = normalizeProjectControlToolID(toolID)
+	for index, run := range runs {
+		if run.TaskID == taskID && run.PhaseAttemptID == phaseAttemptID && (toolID == "" || run.ToolID == toolID) && run.Status == "running" {
+			return index
+		}
+	}
+	return -1
+}
+
+func startProjectControlTaskPhaseTool(state *projectControlState, task *projectControlTask, req projectControlTaskUpdateRequest, now string) (string, error) {
 	if state == nil || task == nil {
-		return errors.New("missing project control state")
+		return "", errors.New("missing project control state")
 	}
 	refreshProjectControlTaskRunbookFields(task, state.Artifacts)
 	runbook := projectControlRunbookForTask(*task)
@@ -1299,49 +1352,193 @@ func runProjectControlTaskPhaseTool(state *projectControlState, task *projectCon
 	}
 	phase, ok := findProjectControlRunbookPhase(runbook, phaseID)
 	if !ok {
+		return "", fmt.Errorf("unknown runbook phase: %s", phaseID)
+	}
+	attemptIndex := findRunningProjectControlPhaseAttemptIndex(state.PhaseAttempts, task.ID, phaseID)
+	if attemptIndex == -1 {
+		return "", fmt.Errorf("phase %s has no running attempt", phaseID)
+	}
+	toolID := normalizeProjectControlToolID(req.ToolID)
+	if toolID == "" {
+		return "", errors.New("valid toolId is required")
+	}
+	attempt := state.PhaseAttempts[attemptIndex]
+	if err := validateProjectControlToolForPhase(toolID, phase, attempt); err != nil {
+		return "", err
+	}
+	if runningIndex := findRunningProjectControlToolRunIndex(state.ToolRuns, task.ID, attempt.ID, ""); runningIndex != -1 {
+		return "", fmt.Errorf("tool %s is already running for phase %s", state.ToolRuns[runningIndex].ToolID, phaseID)
+	}
+	toolRun := projectControlToolRun{
+		ID:             projectControlID("tool-run", task.ID+"-"+phaseID+"-"+toolID),
+		TaskID:         task.ID,
+		PhaseAttemptID: attempt.ID,
+		PhaseID:        phaseID,
+		ToolID:         toolID,
+		Status:         "running",
+		StartedAt:      now,
+		Summary:        "Running " + toolID + " for " + phaseID + ".",
+	}
+	state.ToolRuns = append(state.ToolRuns, toolRun)
+	task.RecentSummary = "Tool " + toolID + " started for " + phaseID + "."
+	task.NextStep = "Wait for " + toolID + " to finish, then review the recorded evidence."
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "tool-run-started"),
+		Timestamp:    now,
+		Actor:        "tool_gateway",
+		Action:       "tool_run_started",
+		Detail:       "Started " + toolID + " for phase " + phaseID + ".",
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+	})
+	return toolRun.ID, nil
+}
+
+func applyProjectControlToolResult(state *projectControlState, task *projectControlTask, toolRun *projectControlToolRun, result projectControlToolResult, now string) error {
+	runbook := projectControlRunbookForTask(*task)
+	phaseID := normalizeProjectControlPhaseID(toolRun.PhaseID)
+	phase, ok := findProjectControlRunbookPhase(runbook, phaseID)
+	if !ok {
 		return fmt.Errorf("unknown runbook phase: %s", phaseID)
 	}
 	attemptIndex := findRunningProjectControlPhaseAttemptIndex(state.PhaseAttempts, task.ID, phaseID)
 	if attemptIndex == -1 {
 		return fmt.Errorf("phase %s has no running attempt", phaseID)
 	}
-	toolID := normalizeProjectControlToolID(req.ToolID)
-	if toolID == "" {
-		return errors.New("valid toolId is required")
+	attempt := state.PhaseAttempts[attemptIndex]
+	result.ToolID = normalizeProjectControlToolID(result.ToolID)
+	if result.ToolID == "" {
+		result.ToolID = toolRun.ToolID
 	}
-	if !projectControlToolAllowedInPhase(toolID, phaseID) {
-		return fmt.Errorf("tool %s is not allowed in phase %s", toolID, phaseID)
-	}
-	result, err := projectControlExecuteTool(toolID)
-	if err != nil {
-		return err
-	}
-	result.ToolID = toolID
 	result.ArtifactKind = normalizeProjectControlArtifactKind(result.ArtifactKind)
 	result.ArtifactOutcome = normalizeProjectControlArtifactOutcome(result.ArtifactOutcome)
 	if result.ArtifactKind == "" {
-		return fmt.Errorf("tool %s did not produce an artifact kind", toolID)
+		return fmt.Errorf("tool %s did not produce an artifact kind", toolRun.ToolID)
 	}
 	recordProjectControlToolEvent(state, *task, phaseID, result, now)
 	if projectControlPhaseRequiresArtifact(phase, result.ArtifactKind) && projectControlArtifactOutcomePasses(result.ArtifactKind, result.ArtifactOutcome) {
-		return completeProjectControlTaskPhase(state, task, projectControlTaskUpdateRequest{
+		beforeArtifacts := len(state.Artifacts)
+		if err := completeProjectControlTaskPhase(state, task, projectControlTaskUpdateRequest{
 			PhaseID:         phaseID,
 			ArtifactKind:    result.ArtifactKind,
 			ArtifactOutcome: result.ArtifactOutcome,
 			ArtifactLabel:   result.ArtifactLabel,
 			ArtifactValue:   result.ArtifactValue,
-		}, now)
+		}, now); err != nil {
+			return err
+		}
+		if len(state.Artifacts) > beforeArtifacts {
+			toolRun.ArtifactID = state.Artifacts[len(state.Artifacts)-1].ID
+		}
+		toolRun.Status = "completed"
+		toolRun.Outcome = result.ArtifactOutcome
+		toolRun.CompletedAt = now
+		toolRun.Summary = "Tool " + toolRun.ToolID + " completed and advanced phase " + phaseID + "."
+		return nil
 	}
-	attempt := state.PhaseAttempts[attemptIndex]
-	recordProjectControlPhaseArtifact(state, task, &attempt, phaseID, result.ArtifactKind, result.ArtifactOutcome, result.ArtifactLabel, result.ArtifactValue, "tool_gateway", now)
+	artifact := recordProjectControlPhaseArtifact(state, task, &attempt, phaseID, result.ArtifactKind, result.ArtifactOutcome, result.ArtifactLabel, result.ArtifactValue, "tool_gateway", now)
 	state.PhaseAttempts[attemptIndex] = attempt
+	toolRun.ArtifactID = artifact.ID
+	toolRun.Outcome = result.ArtifactOutcome
+	toolRun.CompletedAt = now
 	if projectControlPhaseRequiresArtifact(phase, result.ArtifactKind) && !projectControlArtifactOutcomePasses(result.ArtifactKind, result.ArtifactOutcome) {
-		return failProjectControlTaskPhase(state, task, phaseID, "Tool "+toolID+" failed.", now)
+		toolRun.Status = "failed"
+		toolRun.Summary = "Tool " + toolRun.ToolID + " failed and routed the phase to recovery."
+		return failProjectControlTaskPhase(state, task, phaseID, "Tool "+toolRun.ToolID+" failed.", now)
 	}
-	task.RecentSummary = "Tool " + toolID + " recorded " + result.ArtifactKind + " evidence."
+	toolRun.Status = "completed"
+	toolRun.Summary = "Tool " + toolRun.ToolID + " recorded " + result.ArtifactKind + " evidence."
+	task.RecentSummary = "Tool " + toolRun.ToolID + " recorded " + result.ArtifactKind + " evidence."
 	task.NextStep = "Continue " + phaseID + " or complete the phase with required evidence."
 	task.MissingEvidence = projectControlMissingCompletionEvidence(*task, state.Artifacts, runbook, "", "")
 	return nil
+}
+
+func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID string) error {
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return err
+	}
+	var toolRun projectControlToolRun
+	found := false
+	for _, candidate := range state.ToolRuns {
+		if candidate.ID == toolRunID {
+			toolRun = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("tool run not found: %s", toolRunID)
+	}
+	if toolRun.Status != "running" {
+		return nil
+	}
+	result, runErr := projectControlExecuteTool(toolRun.ToolID)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.withStateLocked(username, func(state *projectControlState) error {
+		runIndex := -1
+		for i := range state.ToolRuns {
+			if state.ToolRuns[i].ID == toolRunID {
+				runIndex = i
+				break
+			}
+		}
+		if runIndex == -1 {
+			return fmt.Errorf("tool run not found: %s", toolRunID)
+		}
+		if state.ToolRuns[runIndex].Status != "running" {
+			return nil
+		}
+		taskIndex := -1
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == state.ToolRuns[runIndex].TaskID {
+				taskIndex = i
+				break
+			}
+		}
+		if taskIndex == -1 {
+			return fmt.Errorf("tool run task not found: %s", state.ToolRuns[runIndex].TaskID)
+		}
+		if runErr != nil {
+			state.ToolRuns[runIndex].Status = "failed"
+			state.ToolRuns[runIndex].CompletedAt = now
+			state.ToolRuns[runIndex].Outcome = "fail"
+			state.ToolRuns[runIndex].Error = runErr.Error()
+			state.ToolRuns[runIndex].Summary = "Tool " + state.ToolRuns[runIndex].ToolID + " failed before producing evidence."
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:           projectControlID("event", "tool-run-failed"),
+				Timestamp:    now,
+				Actor:        "tool_gateway",
+				Action:       "tool_run_failed",
+				Detail:       "Tool " + state.ToolRuns[runIndex].ToolID + " failed: " + runErr.Error(),
+				ProjectID:    state.Tasks[taskIndex].ProjectID,
+				WorkstreamID: state.Tasks[taskIndex].WorkstreamID,
+				TaskID:       state.Tasks[taskIndex].ID,
+			})
+			state.Tasks[taskIndex].RecentSummary = "Tool " + state.ToolRuns[runIndex].ToolID + " failed before producing evidence."
+			state.Tasks[taskIndex].NextStep = "Review the tool failure and retry or continue manually."
+			state.Tasks[taskIndex].RowVersion += 1
+			return nil
+		}
+		if err := applyProjectControlToolResult(state, &state.Tasks[taskIndex], &state.ToolRuns[runIndex], result, now); err != nil {
+			state.ToolRuns[runIndex].Status = "failed"
+			state.ToolRuns[runIndex].CompletedAt = now
+			state.ToolRuns[runIndex].Outcome = "fail"
+			state.ToolRuns[runIndex].Error = err.Error()
+			state.ToolRuns[runIndex].Summary = "Tool " + state.ToolRuns[runIndex].ToolID + " result could not be applied."
+			state.Tasks[taskIndex].RecentSummary = "Tool " + state.ToolRuns[runIndex].ToolID + " result could not be applied."
+			state.Tasks[taskIndex].NextStep = "Review the tool failure and continue manually."
+			state.Tasks[taskIndex].RowVersion += 1
+			return nil
+		}
+		state.Tasks[taskIndex].RowVersion += 1
+		syncProjectControlAcceptanceCheckpoint(state, state.Tasks[taskIndex], now)
+		syncProjectControlArchiveOverrideCheckpoint(state, state.Tasks[taskIndex], now)
+		return nil
+	})
+	return err
 }
 
 func completeProjectControlTaskPhase(state *projectControlState, task *projectControlTask, req projectControlTaskUpdateRequest, now string) error {
@@ -1881,7 +2078,8 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 	if req.ExpectedRowVersion < 1 {
 		return projectControlSnapshot{}, errors.New("expectedRowVersion must be provided")
 	}
-	state, err := s.withStateLocked(username, func(state *projectControlState) error {
+	toolRunID := ""
+	_, err := s.withStateLocked(username, func(state *projectControlState) error {
 		for i, task := range state.Tasks {
 			if task.ID != taskID {
 				continue
@@ -1913,9 +2111,11 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 					return err
 				}
 			case "run_tool":
-				if err := runProjectControlTaskPhaseTool(state, &task, req, now); err != nil {
+				startedToolRunID, err := startProjectControlTaskPhaseTool(state, &task, req, now)
+				if err != nil {
 					return err
 				}
+				toolRunID = startedToolRunID
 			}
 			if value := strings.TrimSpace(req.Title); value != "" {
 				task.Title = value
@@ -2018,7 +2218,12 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 	if err != nil {
 		return projectControlSnapshot{}, err
 	}
-	return buildProjectControlSnapshot(state, username, terminals), nil
+	if toolRunID != "" {
+		projectControlRunToolAsync(func() {
+			_ = s.completeProjectControlToolRun(username, toolRunID)
+		})
+	}
+	return s.snapshotForUser(username, terminals)
 }
 
 func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, action string, terminals *terminal.Manager) (projectControlSnapshot, error) {
@@ -2980,6 +3185,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	skills := cloneProjectControlSkills(defaultProjectControlSkills())
 	runbooks := defaultProjectControlRunbooks()
 	phaseAttempts := cloneProjectControlPhaseAttempts(state.PhaseAttempts)
+	toolRuns := cloneProjectControlToolRuns(state.ToolRuns)
 	artifacts := cloneProjectControlArtifacts(state.Artifacts)
 	checkpoints := cloneProjectControlCheckpoints(state.Checkpoints)
 	decisions := cloneProjectControlDecisions(state.Decisions)
@@ -3106,6 +3312,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		Skills:          skills,
 		Runbooks:        runbooks,
 		PhaseAttempts:   phaseAttempts,
+		ToolRuns:        toolRuns,
 		Artifacts:       artifacts,
 		Checkpoints:     checkpoints,
 		Decisions:       decisions,
@@ -3288,6 +3495,15 @@ func normalizeProjectControlPhaseAttemptStatus(value string) string {
 	}
 }
 
+func normalizeProjectControlToolRunStatus(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "running", "completed", "failed", "cancelled":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return "running"
+	}
+}
+
 func normalizeProjectControlArtifactKind(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case "plan", "diff_summary", "doc_summary", "test_result", "review_result", "completion_check":
@@ -3330,6 +3546,9 @@ func projectControlNormalizeState(state *projectControlState) {
 	}
 	if state.PhaseAttempts == nil {
 		state.PhaseAttempts = []projectControlPhaseAttempt{}
+	}
+	if state.ToolRuns == nil {
+		state.ToolRuns = []projectControlToolRun{}
 	}
 	if state.Artifacts == nil {
 		state.Artifacts = []projectControlArtifact{}
@@ -3412,6 +3631,22 @@ func projectControlNormalizeState(state *projectControlState) {
 		if state.PhaseAttempts[i].ArtifactIDs == nil {
 			state.PhaseAttempts[i].ArtifactIDs = []string{}
 		}
+	}
+	for i := range state.ToolRuns {
+		state.ToolRuns[i].ID = strings.TrimSpace(state.ToolRuns[i].ID)
+		state.ToolRuns[i].TaskID = strings.TrimSpace(state.ToolRuns[i].TaskID)
+		state.ToolRuns[i].PhaseAttemptID = strings.TrimSpace(state.ToolRuns[i].PhaseAttemptID)
+		state.ToolRuns[i].PhaseID = normalizeProjectControlPhaseID(state.ToolRuns[i].PhaseID)
+		state.ToolRuns[i].ToolID = normalizeProjectControlToolID(state.ToolRuns[i].ToolID)
+		state.ToolRuns[i].Status = normalizeProjectControlToolRunStatus(state.ToolRuns[i].Status)
+		state.ToolRuns[i].StartedAt = strings.TrimSpace(state.ToolRuns[i].StartedAt)
+		state.ToolRuns[i].CompletedAt = strings.TrimSpace(state.ToolRuns[i].CompletedAt)
+		state.ToolRuns[i].ArtifactID = strings.TrimSpace(state.ToolRuns[i].ArtifactID)
+		if strings.TrimSpace(state.ToolRuns[i].Outcome) != "" {
+			state.ToolRuns[i].Outcome = normalizeProjectControlArtifactOutcome(state.ToolRuns[i].Outcome)
+		}
+		state.ToolRuns[i].Summary = strings.TrimSpace(state.ToolRuns[i].Summary)
+		state.ToolRuns[i].Error = strings.TrimSpace(state.ToolRuns[i].Error)
 	}
 	for i := range state.Artifacts {
 		state.Artifacts[i].ID = strings.TrimSpace(state.Artifacts[i].ID)
@@ -3584,6 +3819,12 @@ func cloneProjectControlPhaseAttempts(items []projectControlPhaseAttempt) []proj
 		out[i] = item
 		out[i].ArtifactIDs = append([]string{}, item.ArtifactIDs...)
 	}
+	return out
+}
+
+func cloneProjectControlToolRuns(items []projectControlToolRun) []projectControlToolRun {
+	out := make([]projectControlToolRun, len(items))
+	copy(out, items)
 	return out
 }
 
