@@ -630,10 +630,58 @@
         return items[0];
     }
 
+    function sortedToolRunsNewestFirst(items) {
+        return (items || []).slice().sort(function(a, b) {
+            var at = String(a.startedAt || a.completedAt || '');
+            var bt = String(b.startedAt || b.completedAt || '');
+            if (at === bt) {
+                return String(b.id || '').localeCompare(String(a.id || ''));
+            }
+            return bt.localeCompare(at);
+        });
+    }
+
     function hasRunningToolRunsForTask(taskId) {
         return taskToolRuns(taskId).some(function(item) {
             return item.status === 'running';
         });
+    }
+
+    function artifactForToolRun(run) {
+        if (!run) {
+            return null;
+        }
+        if (run.artifactId) {
+            return findById(artifacts(), run.artifactId);
+        }
+        return null;
+    }
+
+    function renderMultilineHTML(value) {
+        return escapeHTML(value || '').replace(/\n/g, '<br>');
+    }
+
+    function toolRunDetailText(run) {
+        var artifact = artifactForToolRun(run);
+        if (artifact && artifact.value) {
+            return String(artifact.value || '').trim();
+        }
+        if (run && run.error) {
+            return String(run.error || '').trim();
+        }
+        if (run && run.summary) {
+            return String(run.summary || '').trim();
+        }
+        return '';
+    }
+
+    function canRetryToolRun(currentAttempt, run, canComplete, toolRunning) {
+        return !!run
+            && !!currentAttempt
+            && !!canComplete
+            && !toolRunning
+            && run.phaseAttemptId === currentAttempt.id
+            && run.status !== 'running';
     }
 
     function taskMissingEvidence(task) {
@@ -867,6 +915,35 @@
         default:
             return humanizeToken(status);
         }
+    }
+
+    function renderToolRunDisclosure(task, run, currentAttempt, canComplete, toolRunning, currentPhase, expanded) {
+        var artifact = artifactForToolRun(run);
+        var detailText = toolRunDetailText(run);
+        var canRetry = canRetryToolRun(currentAttempt, run, canComplete, toolRunning);
+        var completedAt = run && run.completedAt ? formatTime(run.completedAt) : '';
+        var startedAt = run && run.startedAt ? formatTime(run.startedAt) : '';
+        var timestampLabel = completedAt ? startedAt + ' -> ' + completedAt : startedAt;
+        return '<details class="project-disclosure project-disclosure-compact"' + (expanded ? ' open' : '') + '>'
+            + '<summary><span>' + escapeHTML(humanizeTool(run.toolId) + ' / ' + toolRunStatusLabel(run.status)) + '</span>'
+            + '<small>' + escapeHTML(timestampLabel || humanizePhase(run.phaseId)) + '</small></summary>'
+            + (run.summary ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.summary', 'Summary')) + ':</strong> ' + escapeHTML(run.summary) + '</div>' : '')
+            + (artifact ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.artifact', 'Artifact')) + ':</strong> ' + escapeHTML(humanizeArtifactKind(artifact.kind) + ' / ' + humanizeArtifactOutcome(artifact.outcome)) + '</div>' : '')
+            + (detailText ? '<div class="project-list-item"><div class="project-artifact-value">' + renderMultilineHTML(detailText) + '</div></div>' : '')
+            + (canRetry
+                ? '<div class="project-disclosure-actions"><button type="button" class="project-inline-btn" data-run-phase-tool-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase || run.phaseId || '') + '" data-tool-id="' + escapeHTML(run.toolId) + '">' + escapeHTML(tr('project.retryTool', 'Retry')) + '</button></div>'
+                : '')
+            + '</details>';
+    }
+
+    function renderToolRunHistory(task, runs, currentAttempt, canComplete, toolRunning, currentPhase, expandedLatestOnly) {
+        var items = sortedToolRunsNewestFirst(runs || []);
+        if (!items.length) {
+            return '<div class="project-list-item muted">' + escapeHTML(tr('project.noToolRuns', 'No tool runs recorded yet.')) + '</div>';
+        }
+        return items.map(function(run, index) {
+            return renderToolRunDisclosure(task, run, currentAttempt, canComplete, toolRunning, currentPhase, !!expandedLatestOnly && index === 0 && run.status !== 'completed');
+        }).join('');
     }
 
     function hasRunningCurrentPhase(task) {
@@ -3373,6 +3450,7 @@
         var currentSession = sessionForPhaseAttempt(currentAttempt);
         var runningToolRun = latestRunningToolRunForAttempt(currentAttempt);
         var currentToolRun = runningToolRun || latestToolRunForAttempt(currentAttempt);
+        var currentAttemptToolRuns = sortedToolRunsNewestFirst(toolRunsForPhaseAttempt(currentAttempt));
         var toolRunning = !!runningToolRun;
         var disabled = updating || toolRunning ? ' disabled' : '';
         var isRunning = currentAttempt && currentAttempt.status === 'running';
@@ -3406,21 +3484,25 @@
             : '';
         var toolButtons = [];
         var toolRunHTML = currentToolRun
-            ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.toolRun', 'Tool run')) + '</div>'
-                + '<div class="project-phase-workbench-meta">'
-                + '<span>' + escapeHTML(humanizeTool(currentToolRun.toolId)) + '</span>'
-                + '<span class="project-pill tone-' + escapeHTML(toolRunStatusTone(currentToolRun.status)) + '">' + escapeHTML(toolRunStatusLabel(currentToolRun.status)) + '</span>'
-                + (currentToolRun.summary ? '<span>' + escapeHTML(compactText(currentToolRun.summary, '', 120)) + '</span>' : '')
-                + (currentToolRun.error ? '<span>' + escapeHTML(compactText(currentToolRun.error, '', 120)) + '</span>' : '')
-                + '</div></div>'
+            ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.latestToolRun', 'Latest tool run')) + '</div>'
+                + renderToolRunHistory(task, [currentToolRun], currentAttempt, canComplete, toolRunning, currentPhase, true)
+                + '</div>'
             : '';
-        if (canComplete && (currentPhase === 'implement' || currentPhase === 'fix_or_replan')) {
+        if (canComplete && currentPhaseDef) {
+            toolButtons.push('<button type="button" class="project-inline-btn" data-run-phase-tool-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-tool-id="repo_status"' + disabled + '>' + escapeHTML(tr('project.captureRepoStatus', 'Repo status')) + '</button>');
+        }
+        if (canComplete && currentPhaseDef && currentPhaseDef.writeAccess === 'scoped_write') {
             toolButtons.push('<button type="button" class="project-inline-btn primary" data-run-phase-tool-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-tool-id="diff_capture"' + disabled + '>' + escapeHTML(tr('project.captureDiff', 'Capture diff')) + '</button>');
         }
-        if (canComplete && currentPhase === 'test') {
+        if (canComplete && (currentPhase === 'test' || currentPhase === 'final_validation')) {
             toolButtons.push('<button type="button" class="project-inline-btn primary" data-run-phase-tool-task="' + escapeHTML(task.id) + '" data-phase-id="' + escapeHTML(currentPhase) + '" data-tool-id="go_test"' + disabled + '>' + escapeHTML(tr('project.runTests', 'Run tests')) + '</button>');
         }
         var toolHTML = toolButtons.length ? '<div class="project-action-group">' + toolButtons.join('') + '</div>' : '';
+        var toolHistoryHTML = currentAttemptToolRuns.length > 1
+            ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.phaseToolRuns', 'Phase tool runs')) + '</div>'
+                + renderToolRunHistory(task, currentAttemptToolRuns.slice(1), currentAttempt, canComplete, toolRunning, currentPhase, false)
+                + '</div>'
+            : '';
         var sessionHTML = currentSession
             ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.phaseSession', 'Phase session')) + '</div>'
                 + '<div class="project-action-group">'
@@ -3464,6 +3546,7 @@
             + sessionHTML
             + requiredHTML
             + toolRunHTML
+            + toolHistoryHTML
             + '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.completionGate', 'Completion gate')) + '</div>' + missingHTML + '</div>'
             + controlsHTML
             + (updating ? '<div class="project-list-meta">' + escapeHTML(tr('project.saving', 'Saving…')) + '</div>' : '')
@@ -3492,6 +3575,10 @@
     }
 
     function renderTaskEvidenceDisclosure(task, taskSessions, decisionCards) {
+        var currentAttempt = currentPhaseAttemptForTask(task);
+        var currentPhase = currentPhaseForTask(task);
+        var canComplete = !!currentAttempt && currentPhase !== 'ready_for_acceptance' && currentAttempt.status === 'running';
+        var toolRunning = !!latestRunningToolRunForAttempt(currentAttempt);
         return '<details class="project-disclosure project-evidence-disclosure"><summary><span>' + escapeHTML(tr('project.evidenceHistory', 'Evidence & history')) + '</span><small>' + escapeHTML(tr('project.evidenceHistorySubtitle', 'Timeline, files, sessions, audit')) + '</small></summary>'
             + '<div class="project-tab-sections">'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.timeline', 'Timeline')) + '</h3>'
@@ -3500,6 +3587,9 @@
             + (taskArtifacts(task.id).length ? taskArtifacts(task.id).map(function(item) {
                 return '<div class="project-list-item"><strong>' + escapeHTML(humanizeArtifactKind(item.kind)) + ':</strong> ' + escapeHTML(humanizeArtifactOutcome(item.outcome)) + ' • ' + escapeHTML(item.value || item.label || '') + '</div>';
             }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noArtifacts', 'No artifacts recorded yet.')) + '</div>') + '</div>'
+            + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.toolRuns', 'Tool runs')) + '</h3>'
+            + renderToolRunHistory(task, taskToolRuns(task.id), currentAttempt, canComplete, toolRunning, currentPhase, false)
+            + '</div>'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.evidence', 'Evidence')) + '</h3>'
             + renderFactList(task.evidence || [], tr('project.noEvidence', 'No evidence recorded yet.')) + '</div>'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.filesDiff', 'Files & Diff')) + '</h3>'

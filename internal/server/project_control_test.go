@@ -142,6 +142,14 @@ func prepareProjectControlCodeChangeTaskAtTestPhase(t *testing.T, srv *Server, t
 	return task
 }
 
+func prepareProjectControlCodeChangeTaskAtReviewPhase(t *testing.T, srv *Server, token string) projectControlTask {
+	t.Helper()
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, "test", "test_result", "pass", "go test ./... passed")
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "review")
+	return task
+}
+
 func completeProjectControlTaskRunbook(t *testing.T, srv *Server, token, taskID string, rowVersion int) (projectControlSnapshot, int) {
 	t.Helper()
 	steps := []string{
@@ -1090,6 +1098,65 @@ func TestProjectControlRunToolRoutesFailingTestToRecovery(t *testing.T) {
 	}
 	if !foundFailedToolRun {
 		t.Fatalf("ToolRuns = %#v, want failed go_test run with artifact", snapshot.ToolRuns)
+	}
+}
+
+func TestProjectControlRunToolRecordsRepoStatusWithoutAdvancingReviewPhase(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
+		if toolID != "repo_status" {
+			t.Fatalf("toolID = %q, want repo_status", toolID)
+		}
+		return projectControlToolResult{
+			ToolID:          "repo_status",
+			ArtifactKind:    "repo_status",
+			ArtifactOutcome: "pass",
+			ArtifactLabel:   "Repo status",
+			ArtifactValue:   "Command: git status --short\nStatus: clean\nOutput:\nWorking tree clean.",
+		}, nil
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	task := prepareProjectControlCodeChangeTaskAtReviewPhase(t, srv, token)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"review","toolId":"repo_status"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	updated := projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+	if updated.CurrentPhase != "review" {
+		t.Fatalf("CurrentPhase = %q, want review", updated.CurrentPhase)
+	}
+	foundArtifact := false
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.TaskID == task.ID && artifact.Kind == "repo_status" && artifact.Outcome == "pass" && strings.Contains(artifact.Value, "Working tree clean") {
+			foundArtifact = true
+			break
+		}
+	}
+	if !foundArtifact {
+		t.Fatalf("Artifacts = %#v, want repo_status artifact", snapshot.Artifacts)
+	}
+	foundRunningAttempt := false
+	for _, attempt := range snapshot.PhaseAttempts {
+		if attempt.TaskID == task.ID && attempt.PhaseID == "review" && attempt.Status == "running" {
+			foundRunningAttempt = true
+			break
+		}
+	}
+	if !foundRunningAttempt {
+		t.Fatalf("PhaseAttempts = %#v, want running review attempt", snapshot.PhaseAttempts)
+	}
+	foundCompletedToolRun := false
+	for _, run := range snapshot.ToolRuns {
+		if run.TaskID == task.ID && run.PhaseID == "review" && run.ToolID == "repo_status" && run.Status == "completed" && run.Outcome == "pass" && run.ArtifactID != "" {
+			foundCompletedToolRun = true
+			break
+		}
+	}
+	if !foundCompletedToolRun {
+		t.Fatalf("ToolRuns = %#v, want completed repo_status run with artifact", snapshot.ToolRuns)
 	}
 }
 
