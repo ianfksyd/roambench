@@ -4864,3 +4864,34 @@ func TestProjectControlAgentAsToolWaitsForCallback(t *testing.T) {
 		t.Fatal("expected agent tool run to be completed after artifact submission")
 	}
 }
+
+func TestProjectControlScheduledToolRunsMatchingToolForRunningPhase(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	previous := projectControlExecuteTool
+	toolCalls := []string{}
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
+		toolCalls = append(toolCalls, normalizeProjectControlToolID(toolID))
+		return projectControlToolResult{
+			ToolID: toolID, ArtifactKind: "test_result", ArtifactOutcome: "pass",
+			ArtifactLabel: "Test", ArtifactValue: "ok",
+		}, nil
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	// Prepare task at test phase with a running attempt
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	_ = task
+
+	// Run scheduled tools — should find go_test matches test phase
+	srv.projectControl.runScheduledTools("ian")
+
+	if len(toolCalls) == 0 {
+		t.Fatal("expected scheduled tool run, got none")
+	}
+	if toolCalls[0] != "go_test" {
+		t.Fatalf("toolCalls[0] = %q, want go_test", toolCalls[0])
+	}
+}

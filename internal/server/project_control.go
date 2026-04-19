@@ -5529,6 +5529,81 @@ func (s *projectControlStore) runHealthMonitor(username string, hub *notificatio
 	defer ticker.Stop()
 	for range ticker.C {
 		s.checkHealth(username, hub)
+		s.runScheduledTools(username)
+	}
+}
+
+func (s *projectControlStore) runScheduledTools(username string) {
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return
+	}
+	tools := projectControlToolsForState(&state)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	for _, task := range state.Tasks {
+		st := normalizeProjectControlTaskState(task.State)
+		if st != "running" && st != "waiting_review" {
+			continue
+		}
+		phaseID := normalizeProjectControlPhaseID(task.CurrentPhase)
+		if phaseID == "" || phaseID == "ready_for_acceptance" {
+			continue
+		}
+		// Skip if there's already a running or waiting tool run for this task
+		hasActive := false
+		for _, run := range state.ToolRuns {
+			if run.TaskID == task.ID && (run.Status == "running" || run.Status == "waiting") {
+				hasActive = true
+				break
+			}
+		}
+		if hasActive {
+			continue
+		}
+		// Skip if no running phase attempt
+		hasRunningAttempt := false
+		for _, attempt := range state.PhaseAttempts {
+			if attempt.TaskID == task.ID && attempt.PhaseID == phaseID && attempt.Status == "running" {
+				hasRunningAttempt = true
+				break
+			}
+		}
+		if !hasRunningAttempt {
+			continue
+		}
+		runbook := projectControlRunbookForTask(task)
+		phase, ok := findProjectControlRunbookPhase(runbook, phaseID)
+		if !ok {
+			continue
+		}
+		toolDef, hasMatch := projectControlToolForPhase(tools, phase)
+		if !hasMatch || toolDef.isAgent() {
+			continue
+		}
+		// Start the tool run
+		var toolRunID string
+		s.withStateLocked(username, func(state *projectControlState) error {
+			for i := range state.Tasks {
+				if state.Tasks[i].ID == task.ID {
+					id, err := startProjectControlTaskPhaseTool(state, &state.Tasks[i], projectControlTaskUpdateRequest{
+						PhaseID: phaseID,
+						ToolID:  toolDef.ID,
+					}, now)
+					if err == nil {
+						toolRunID = id
+						state.Tasks[i].RowVersion++
+					}
+					break
+				}
+			}
+			return nil
+		})
+		if toolRunID != "" {
+			projectControlRunToolAsync(func() {
+				_ = s.completeProjectControlToolRun(username, toolRunID)
+			})
+		}
 	}
 }
 
