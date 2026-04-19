@@ -157,6 +157,43 @@ If time is limited, the highest-value sequence is:
 
 Everything else is valuable but can be prioritized based on user feedback.
 
+## Future Directions
+
+These are not planned for a specific iteration but are the natural next steps.
+
+### F1. fix_or_replan Auto-Resume
+
+When a tool fails and routes to `fix_or_replan`, the human or agent fixes the code and completes the phase. Currently the task stays at the next phase after `fix_or_replan` and waits for manual action. The improvement: after `fix_or_replan` completes, automatically restart the phase that originally failed.
+
+Implementation sketch:
+- Record the failed phase ID on the task when entering `fix_or_replan` (e.g. `FailedPhaseID` field)
+- In `completeProjectControlTaskPhase`, when the completed phase is `fix_or_replan`, check `FailedPhaseID` and auto-start that phase + matching tool
+- Clear `FailedPhaseID` after resuming
+
+Complexity: medium. Touches `projectControlTask` struct, `completeProjectControlTaskPhase`, and `failProjectControlTaskPhase`.
+
+### F2. Dashboard Real-Time Refresh
+
+The project panel dashboard currently requires manual navigation to refresh. Notification badges update in real time (via WebSocket), but the dashboard content (stats, agent activity, task list) does not.
+
+Implementation sketch:
+- In the notification WebSocket `onmessage` handler in `app.js`, trigger `refreshSnapshotSilently()` on the project panel when a notification arrives
+- Debounce to avoid excessive refreshes (e.g. at most once per 2 seconds)
+- Alternatively, add a dedicated project control WebSocket that pushes snapshot diffs
+
+Complexity: small for the debounced refresh approach. The dedicated WebSocket approach is medium.
+
+### F3. Git Commit Trigger
+
+Instead of only running tools on a fixed 60-second timer, detect new commits in the workspace and trigger `diff_capture` + test tools immediately.
+
+Implementation sketch:
+- In `runScheduledTools`, before checking for matching tools, run `git rev-parse HEAD` in the workspace and compare with a cached value per task
+- If the HEAD changed since last check, trigger `diff_capture` followed by the phase's matching tool
+- Store the last-seen HEAD per task in `projectControlState` or in memory
+
+Complexity: medium. Needs a per-task HEAD cache and a `git rev-parse` call in the scheduled loop.
+
 ## Architecture Notes
 
 ### Auto-Progression Chain
