@@ -246,6 +246,7 @@ APP_BIN=<path-to-binary> # e.g. ./roambench
 - [Configuration Guide](docs/configuration.md)
 - [Authentication Guide](docs/authentication.md)
 - [Deployment Hardening](docs/deployment-hardening.md)
+- [All Documentation](docs/README.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)

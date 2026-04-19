@@ -8,22 +8,22 @@ It is intentionally short and operational: use it to decide what is already read
 
 These pieces are already present in the repo:
 
-- English-first product README: [README.md](../README.md)
-- Simplified Chinese README: [README.zh-CN.md](../README.zh-CN.md)
-- Short Japanese README: [README.ja.md](../README.ja.md)
-- Release-note draft: [docs/github-release-v0.3.2.md](github-release-v0.3.2.md)
-- Release packaging guide: [docs/release-packaging.md](release-packaging.md)
-- GitHub publishing metadata: [docs/github-publishing.md](github-publishing.md)
-- Launch/distribution playbook: [docs/launch-playbook.md](launch-playbook.md)
+- English-first product README: [README.md](../../README.md)
+- Simplified Chinese README: [README.zh-CN.md](../../README.zh-CN.md)
+- Short Japanese README: [README.ja.md](../../README.ja.md)
+- Release-note draft: [docs/releases/v0.3.2.md](../releases/v0.3.2.md)
+- Release packaging guide: [docs/internal/release-packaging.md](release-packaging.md)
+- GitHub publishing metadata: [docs/internal/github-publishing.md](github-publishing.md)
+- Launch/distribution playbook: [docs/internal/launch-playbook.md](launch-playbook.md)
 - Branding assets, repo avatar candidate, and social preview: [docs/branding](branding)
-- Main screenshot: [docs/screenshot-main.png](screenshot-main.png)
+- Main screenshot: [docs/screenshot-main.png](../screenshot-main.png)
 - Lightweight runtime evidence: [docs/lightweight-evidence.md](lightweight-evidence.md)
-- Changelog: [CHANGELOG.md](../CHANGELOG.md)
-- License: [LICENSE](../LICENSE)
-- Contributing guide: [CONTRIBUTING.md](../CONTRIBUTING.md)
-- Security policy: [SECURITY.md](../SECURITY.md)
-- Issue templates and PR template: [.github](../.github)
-- Quickstart config for trusted local/LAN trials: [configs/roambench.quickstart.toml](../configs/roambench.quickstart.toml)
+- Changelog: [CHANGELOG.md](../../CHANGELOG.md)
+- License: [LICENSE](../../LICENSE)
+- Contributing guide: [CONTRIBUTING.md](../../CONTRIBUTING.md)
+- Security policy: [SECURITY.md](../../SECURITY.md)
+- Issue templates and PR template: [.github](../../.github)
+- Quickstart config for trusted local/LAN trials: [configs/roambench.quickstart.toml](../../configs/roambench.quickstart.toml)
 
 ## Blockers Before Public Push
 
@@ -55,9 +55,9 @@ Current repo state is ahead of the historical `0.1.0` baseline.
 
 Why this matters:
 
-- [CHANGELOG.md](../CHANGELOG.md) already has a substantial `Unreleased` section
-- [README.md](../README.md) describes features that were not part of the original `0.1.0`
-- [docs/github-release-v0.2.0.md](github-release-v0.2.0.md) already matches the current public-release target better than a `v0.1.0` draft
+- [CHANGELOG.md](../../CHANGELOG.md) already has a substantial `Unreleased` section
+- [README.md](../../README.md) describes features that were not part of the original `0.1.0`
+- [docs/releases/v0.2.0.md](../releases/v0.2.0.md) already matches the current public-release target better than a `v0.1.0` draft
 
 Recommendation:
 
@@ -99,7 +99,7 @@ Not a blocker for a small founder-led release, but worth adding if you want the 
 Set these in the GitHub repository settings:
 
 - Repository name: `roambench` if you are ready to rename, otherwise keep `roambench-web`
-- Description: use the recommended line from [docs/github-publishing.md](github-publishing.md)
+- Description: use the recommended line from [docs/internal/github-publishing.md](github-publishing.md)
 - Website: optional, only if you have a project homepage
 - Topics:
   - `web-terminal`
@@ -113,8 +113,8 @@ Set these in the GitHub repository settings:
 
 Branding assets to upload:
 
-- Repo avatar: [docs/branding/roambench-icon.svg](branding/roambench-icon.svg)
-- Social preview image: [docs/branding/roambench-social-preview.png](branding/roambench-social-preview.png)
+- Repo avatar: [docs/branding/roambench-icon.svg](../branding/roambench-icon.svg)
+- Social preview image: [docs/branding/roambench-social-preview.png](../branding/roambench-social-preview.png)
 
 ## First Push Checklist
 
@@ -136,8 +136,8 @@ Recommended sequence:
    - recommended: `v0.2.0` for the current repo state
 4. Update [CHANGELOG.md](../CHANGELOG.md) so the release section matches the chosen tag.
 5. Keep the draft release notes aligned with the final tag and changelog.
-6. Create the release on GitHub using the copy from [docs/github-release-v0.2.0.md](github-release-v0.2.0.md), adjusted if you make last-minute release-note edits.
-7. Follow the posting sequence in [docs/launch-playbook.md](launch-playbook.md).
+6. Create the release on GitHub using the copy from [docs/releases/v0.2.0.md](../releases/v0.2.0.md), adjusted if you make last-minute release-note edits.
+7. Follow the posting sequence in [docs/internal/launch-playbook.md](launch-playbook.md).
 
 ## Nice To Have, Not Blocking
 

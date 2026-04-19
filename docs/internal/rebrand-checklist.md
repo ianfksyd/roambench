@@ -11,9 +11,9 @@ This checklist separates the public-facing brand rename from the code-level rena
 ## Phase 1: Public Brand Surface
 
 - update `README.md`, `README.zh-CN.md`, and `README.ja.md`
-- update release copy in [docs/github-release-v0.2.0.md](github-release-v0.2.0.md)
-- update GitHub metadata notes in [docs/github-publishing.md](github-publishing.md)
-- update launch copy in [docs/launch-playbook.md](launch-playbook.md)
+- update release copy in [docs/releases/v0.2.0.md](../releases/v0.2.0.md)
+- update GitHub metadata notes in [docs/internal/github-publishing.md](github-publishing.md)
+- update launch copy in [docs/internal/launch-playbook.md](launch-playbook.md)
 - switch screenshot alt text, social preview text, and release titles to `RoamBench`
 
 ## Phase 2: GitHub And Release Assets

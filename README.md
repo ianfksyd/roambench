@@ -262,6 +262,7 @@ The browser UI supports workspace tabs with `1 / 2 / 4` terminal panes.
 - [Configuration Guide](docs/configuration.md)
 - [Authentication Guide](docs/authentication.md)
 - [Deployment Hardening](docs/deployment-hardening.md)
+- [All Documentation](docs/README.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)

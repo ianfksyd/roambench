@@ -112,7 +112,7 @@ Suggested release subtitle:
 
 Suggested release note source:
 
-- [GitHub Release Copy](github-release-v0.2.0.md)
+- [GitHub Release Copy](../releases/v0.2.0.md)
 
 ## Future Release Title Pattern
 
@@ -137,7 +137,7 @@ Suggested checklist:
 - add the recommended topics
 - pin the screenshot-rich `README.md`
 - create the first release from tag `v0.2.0`
-- copy release notes from [GitHub Release Copy](github-release-v0.2.0.md)
+- copy release notes from [GitHub Release Copy](../releases/v0.2.0.md)
 - follow the launch checklist in [Launch Playbook](launch-playbook.md)
 - keep `CHANGELOG.md` updated for future releases
 

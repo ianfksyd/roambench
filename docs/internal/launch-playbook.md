@@ -193,14 +193,14 @@ Recommended order:
 
 Current fast-path file:
 
-- [configs/roambench.quickstart.toml](../configs/roambench.quickstart.toml)
+- [configs/roambench.quickstart.toml](../../configs/roambench.quickstart.toml)
 
 Current primary docs:
 
-- [README.md](../README.md)
-- [docs/lightweight-evidence.md](lightweight-evidence.md)
-- [docs/configuration.md](configuration.md)
-- [docs/github-publishing.md](github-publishing.md)
+- [README.md](../../README.md)
+- [docs/lightweight-evidence.md](../lightweight-evidence.md)
+- [docs/configuration.md](../configuration.md)
+- [docs/internal/github-publishing.md](github-publishing.md)
 
 ## Final Pre-Launch Checklist
 

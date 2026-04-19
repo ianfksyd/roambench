@@ -91,7 +91,7 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 - File browser breadcrumb navigation and current-directory filtering
 - A quickstart configuration for faster trusted local/LAN trials, plus a launch playbook for GitHub, Hacker News, Reddit, and community posts
 - A lightweight evidence page with a real runtime snapshot from a live multi-terminal session
-- A formal [RoamBench rebrand checklist](docs/rebrand-checklist.md) covering the public rename and later code-level migration
+- A formal [RoamBench rebrand checklist](docs/internal/rebrand-checklist.md) covering the public rename and later code-level migration
 
 ### Changed
 
