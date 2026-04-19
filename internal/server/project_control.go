@@ -117,6 +117,7 @@ type projectControlTask struct {
 	RunbookID            string                    `json:"runbookId"`
 	CurrentPhase         string                    `json:"currentPhase"`
 	RunbookState         string                    `json:"runbookState"`
+	AutoProgress         *bool                     `json:"autoProgress,omitempty"`
 	MissingEvidence      []string                  `json:"missingEvidence"`
 	RecentSummary        string                    `json:"recentSummary"`
 	NextStep             string                    `json:"nextStep"`
@@ -1693,6 +1694,7 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 	}
 	result, runErr := projectControlExecuteTool(toolRun.ToolID, workspaceDir)
 	now := time.Now().UTC().Format(time.RFC3339)
+	var nextToolRunID string
 	_, err = s.withStateLocked(username, func(state *projectControlState) error {
 		runIndex := -1
 		for i := range state.ToolRuns {
@@ -1752,9 +1754,27 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 		state.Tasks[taskIndex].RowVersion += 1
 		syncProjectControlAcceptanceCheckpoint(state, state.Tasks[taskIndex], now)
 		syncProjectControlArchiveOverrideCheckpoint(state, state.Tasks[taskIndex], now)
+		if state.ToolRuns[runIndex].Status == "completed" && state.ToolRuns[runIndex].Outcome == "pass" {
+			resolveWorkspace := func(_ projectControlTask, _ projectControlRunbookPhase, _ string) (string, error) {
+				return s.runtimeWorkspaceDir()
+			}
+			chainedID, _ := autoProgressAfterPhaseComplete(state, &state.Tasks[taskIndex], username, now, resolveWorkspace, nil)
+			if chainedID != "" {
+				nextToolRunID = chainedID
+				state.Tasks[taskIndex].RowVersion += 1
+			}
+		}
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if nextToolRunID != "" {
+		projectControlRunToolAsync(func() {
+			_ = s.completeProjectControlToolRun(username, nextToolRunID)
+		})
+	}
+	return nil
 }
 
 func projectControlInterruptedToolRunReason(run projectControlToolRun, now time.Time) string {
@@ -1892,6 +1912,68 @@ func completeProjectControlTaskPhase(state *projectControlState, task *projectCo
 		TaskID:       task.ID,
 	})
 	return nil
+}
+
+func projectControlTaskAutoProgressEnabled(task projectControlTask) bool {
+	return task.AutoProgress == nil || *task.AutoProgress
+}
+
+func projectControlToolForPhase(tools []projectControlToolDef, phase projectControlRunbookPhase) (projectControlToolDef, bool) {
+	if len(phase.RequiredArtifacts) == 0 {
+		return projectControlToolDef{}, false
+	}
+	target := normalizeProjectControlArtifactKind(phase.RequiredArtifacts[0])
+	for _, def := range tools {
+		if normalizeProjectControlArtifactKind(def.ArtifactKind) == target {
+			for _, allowed := range def.AllowedPhases {
+				if normalizeProjectControlPhaseID(allowed) == normalizeProjectControlPhaseID(phase.ID) {
+					return def, true
+				}
+			}
+		}
+	}
+	return projectControlToolDef{}, false
+}
+
+func autoProgressAfterPhaseComplete(state *projectControlState, task *projectControlTask, username, now string, resolveWorkspace func(projectControlTask, projectControlRunbookPhase, string) (string, error), terminals *terminal.Manager) (string, error) {
+	if !projectControlTaskAutoProgressEnabled(*task) {
+		return "", nil
+	}
+	nextPhase := normalizeProjectControlPhaseID(task.CurrentPhase)
+	if nextPhase == "" || nextPhase == "ready_for_acceptance" {
+		return "", nil
+	}
+	runbook := projectControlRunbookForTask(*task)
+	phase, ok := findProjectControlRunbookPhase(runbook, nextPhase)
+	if !ok {
+		return "", nil
+	}
+	tools := projectControlToolsForState(state)
+	toolDef, hasToolMatch := projectControlToolForPhase(tools, phase)
+	if !hasToolMatch {
+		return "", nil
+	}
+	if err := startProjectControlTaskPhase(state, task, nextPhase, now, username, resolveWorkspace, terminals); err != nil {
+		return "", nil
+	}
+	toolRunID, err := startProjectControlTaskPhaseTool(state, task, projectControlTaskUpdateRequest{
+		PhaseID: nextPhase,
+		ToolID:  toolDef.ID,
+	}, now)
+	if err != nil {
+		return "", nil
+	}
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "auto-progress"),
+		Timestamp:    now,
+		Actor:        "auto_progress",
+		Action:       "auto_progress",
+		Detail:       "Auto-progressed to phase " + nextPhase + " and started tool " + toolDef.ID + ".",
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+	})
+	return toolRunID, nil
 }
 
 func failProjectControlTaskPhase(state *projectControlState, task *projectControlTask, phaseID, reason, now string) error {

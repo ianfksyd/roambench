@@ -4010,3 +4010,190 @@ func TestProjectControlSnapshotIncludesTools(t *testing.T) {
 		t.Fatal("snapshot.Tools missing go_test")
 	}
 }
+
+func TestProjectControlAutoProgressAdvancesFromTestToReviewAfterToolPass(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	callCount := 0
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
+		callCount++
+		switch normalizeProjectControlToolID(toolID) {
+		case "go_test":
+			return projectControlToolResult{
+				ToolID: "go_test", ArtifactKind: "test_result", ArtifactOutcome: "pass",
+				ArtifactLabel: "Go test", ArtifactValue: "ok",
+			}, nil
+		case "repo_status":
+			return projectControlToolResult{
+				ToolID: "repo_status", ArtifactKind: "repo_status", ArtifactOutcome: "pass",
+				ArtifactLabel: "Repo status", ArtifactValue: "clean",
+			}, nil
+		default:
+			return projectControlToolResult{
+				ToolID: toolID, ArtifactKind: "review_result", ArtifactOutcome: "pass",
+				ArtifactLabel: "Review", ArtifactValue: "ok",
+			}, nil
+		}
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	updated := projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+
+	// After test phase passes, completeProjectControlTaskPhase advances to review.
+	// The review phase requires review_result — no default tool produces that,
+	// so auto-progression stops at review (no auto_progress event).
+	if updated.CurrentPhase != "review" {
+		t.Fatalf("CurrentPhase = %q, want review (advanced from test)", updated.CurrentPhase)
+	}
+	if callCount < 1 {
+		t.Fatalf("tool callCount = %d, want >= 1", callCount)
+	}
+
+	// Verify phase_completed event was recorded for test phase
+	foundPhaseCompleted := false
+	req := httptest.NewRequest(http.MethodGet, "/api/project-control/events?limit=20", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	var eventsResp projectControlEventsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&eventsResp); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	for _, ev := range eventsResp.Events {
+		if ev.Action == "phase_completed" && strings.Contains(ev.Detail, "test") {
+			foundPhaseCompleted = true
+			break
+		}
+	}
+	if !foundPhaseCompleted {
+		t.Fatal("expected phase_completed event for test phase")
+	}
+}
+
+func TestProjectControlAutoProgressDisabledStopsAtCurrentPhase(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
+		return projectControlToolResult{
+			ToolID: "go_test", ArtifactKind: "test_result", ArtifactOutcome: "pass",
+			ArtifactLabel: "Go test", ArtifactValue: "ok",
+		}, nil
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+
+	// Disable auto-progress on this task
+	disableBody := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	// First, we need to set AutoProgress=false. We do this by directly manipulating state.
+	srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == task.ID {
+				f := false
+				state.Tasks[i].AutoProgress = &f
+				task.RowVersion = state.Tasks[i].RowVersion
+				break
+			}
+		}
+		return nil
+	})
+
+	disableBody = fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, disableBody)
+	updated := projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+
+	// With auto-progress disabled, should stay at review (the next phase after test)
+	// but NOT auto-start the review phase tool
+	if updated.CurrentPhase != "review" {
+		t.Fatalf("CurrentPhase = %q, want review", updated.CurrentPhase)
+	}
+	// No auto_progress event should exist
+	req := httptest.NewRequest(http.MethodGet, "/api/project-control/events?limit=20", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	var eventsResp projectControlEventsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&eventsResp); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	for _, ev := range eventsResp.Events {
+		if ev.Action == "auto_progress" {
+			t.Fatal("auto_progress event found but AutoProgress was disabled")
+		}
+	}
+}
+
+func TestProjectControlToolForPhaseMatchesArtifactKind(t *testing.T) {
+	tools := defaultProjectControlTools()
+	testPhase := projectControlRunbookPhase{ID: "test", RequiredArtifacts: []string{"test_result"}}
+	def, ok := projectControlToolForPhase(tools, testPhase)
+	if !ok {
+		t.Fatal("expected tool match for test phase")
+	}
+	if def.ID != "go_test" {
+		t.Fatalf("matched tool = %q, want go_test", def.ID)
+	}
+
+	planPhase := projectControlRunbookPhase{ID: "plan", RequiredArtifacts: []string{"plan"}}
+	_, ok = projectControlToolForPhase(tools, planPhase)
+	if ok {
+		t.Fatal("expected no tool match for plan phase (no tool produces plan artifact)")
+	}
+}
+
+func TestProjectControlAutoProgressChainsFromImplementThroughTestToReview(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	toolCalls := []string{}
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
+		toolCalls = append(toolCalls, normalizeProjectControlToolID(toolID))
+		switch normalizeProjectControlToolID(toolID) {
+		case "diff_capture":
+			return projectControlToolResult{
+				ToolID: "diff_capture", ArtifactKind: "diff_summary", ArtifactOutcome: "pass",
+				ArtifactLabel: "Diff summary", ArtifactValue: "1 file changed",
+			}, nil
+		case "go_test":
+			return projectControlToolResult{
+				ToolID: "go_test", ArtifactKind: "test_result", ArtifactOutcome: "pass",
+				ArtifactLabel: "Go test", ArtifactValue: "ok",
+			}, nil
+		default:
+			return projectControlToolResult{}, fmt.Errorf("unexpected tool: %s", toolID)
+		}
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	// Prepare task at implement phase (plan already done)
+	task := projectControlTask{ID: projectControlTaskPanelID, RowVersion: 1}
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan")
+	task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan", "plan", "recorded", "Plan done")
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "implement")
+
+	// Run diff_capture tool on implement phase — should auto-chain: implement→test(go_test)→review(stop)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"implement","toolId":"diff_capture"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	updated := projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+
+	if updated.CurrentPhase != "review" {
+		t.Fatalf("CurrentPhase = %q, want review (auto-chained from implement through test)", updated.CurrentPhase)
+	}
+	if len(toolCalls) < 2 {
+		t.Fatalf("toolCalls = %v, want at least [diff_capture, go_test]", toolCalls)
+	}
+	if toolCalls[0] != "diff_capture" || toolCalls[1] != "go_test" {
+		t.Fatalf("toolCalls = %v, want [diff_capture, go_test, ...]", toolCalls)
+	}
+}
