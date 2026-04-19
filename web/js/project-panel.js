@@ -20,6 +20,7 @@
         selectedProjectId: '',
         selectedWorkstreamId: '',
         selectedTaskId: '',
+        selectedTaskTab: 'overview',
         selectedSessionId: '',
         currentView: 'dashboard',
         updatingWorkstreamId: '',
@@ -33,6 +34,7 @@
         creatingTaskGoal: '',
         creatingTaskSelectedSkill: '',
         creatingTaskRunbookId: '',
+        creatingTaskStep: 1,
         creatingTaskSaving: false,
         phaseUpdatingTaskId: '',
         toolRunRefreshTimer: null
@@ -40,6 +42,8 @@
 
     var TOOL_RUN_REFRESH_INTERVAL_MS = 1200;
     var TOOL_RUN_REFRESH_ATTEMPTS = 130;
+    var TASK_WIZARD_TOTAL_STEPS = 3;
+    var TASK_DETAIL_TABS = ['overview', 'timeline', 'evidence', 'files_diff', 'sessions', 'audit'];
 
     function app() {
         return window.RoamBenchApp || null;
@@ -164,6 +168,30 @@
 
     function humanizeToken(value) {
         return titleCaseWords(String(value || '').trim().replace(/[_-]+/g, ' ')) || '—';
+    }
+
+    function parseWorkspaceRef(value) {
+        var text = String(value || '').trim();
+        var separator = text.indexOf(':');
+        if (!text) {
+            return { kind: '', path: '' };
+        }
+        if (separator > 0) {
+            return {
+                kind: text.slice(0, separator).trim(),
+                path: text.slice(separator + 1).trim()
+            };
+        }
+        return { kind: text, path: '' };
+    }
+
+    function humanizeWorkspaceRef(value) {
+        var parsed = parseWorkspaceRef(value);
+        var kind = parsed.kind ? humanizeToken(parsed.kind) : '';
+        if (!parsed.path) {
+            return kind || '—';
+        }
+        return (kind ? kind + ' - ' : '') + parsed.path;
     }
 
     function workstreamLabel(plural) {
@@ -686,10 +714,8 @@
 
     function toolRunSupportsPhaseCompletion(phase, run) {
         var requiredKind = artifactKindForPhase(phase);
-        var requiredOutcome = defaultOutcomeForArtifact(requiredKind);
         var artifact = artifactForToolRun(run);
         var detailText = toolRunDetailText(run);
-        var lines = [];
         if (!phase || !run || run.status !== 'completed' || !requiredKind || !detailText) {
             return null;
         }
@@ -705,23 +731,7 @@
                 sourceToolId: run.toolId
             };
         }
-        if (phase.id !== 'review' && phase.id !== 'final_validation') {
-            return null;
-        }
-        lines.push('Source tool: ' + humanizeTool(run.toolId));
-        if (run.summary) {
-            lines.push('Summary: ' + run.summary);
-        }
-        lines.push('');
-        lines.push(detailText);
-        return {
-            artifactKind: requiredKind,
-            artifactOutcome: requiredOutcome,
-            artifactLabel: humanizeArtifactKind(requiredKind),
-            artifactValue: lines.join('\n').trim(),
-            sourceToolRunId: run.id,
-            sourceToolId: run.toolId
-        };
+        return null;
     }
 
     function latestCompletionAssistForPhaseAttempt(attempt, phase) {
@@ -981,6 +991,7 @@
             + '<summary><span>' + escapeHTML(humanizeTool(run.toolId) + ' / ' + toolRunStatusLabel(run.status)) + '</span>'
             + '<small>' + escapeHTML(timestampLabel || humanizePhase(run.phaseId)) + '</small></summary>'
             + (run.summary ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.summary', 'Summary')) + ':</strong> ' + escapeHTML(run.summary) + '</div>' : '')
+            + (run.workspaceRef ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.workspace', 'Workspace')) + ':</strong> ' + escapeHTML(humanizeWorkspaceRef(run.workspaceRef)) + '</div>' : '')
             + (artifact ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.artifact', 'Artifact')) + ':</strong> ' + escapeHTML(humanizeArtifactKind(artifact.kind) + ' / ' + humanizeArtifactOutcome(artifact.outcome)) + '</div>' : '')
             + (detailText ? '<div class="project-list-item"><div class="project-artifact-value">' + renderMultilineHTML(detailText) + '</div></div>' : '')
             + (canRetry
@@ -1181,6 +1192,7 @@
         state.creatingTaskGoal = '';
         state.creatingTaskSelectedSkill = '';
         state.creatingTaskRunbookId = '';
+        state.creatingTaskStep = 1;
         state.creatingTaskSaving = false;
     }
 
@@ -1195,11 +1207,94 @@
 
     function focusTaskWizard() {
         window.setTimeout(function() {
-            var input = document.querySelector('[data-task-title-input]');
+            var selector = '[data-task-title-input]';
+            var input;
+            if (currentTaskWizardStep() === 2) {
+                selector = '[data-task-skill-select]';
+            } else if (currentTaskWizardStep() >= TASK_WIZARD_TOTAL_STEPS) {
+                selector = '[data-task-wizard-submit]';
+            }
+            input = document.querySelector(selector) || document.querySelector('[data-task-title-input]');
             if (input) {
                 input.focus();
             }
         }, 0);
+    }
+
+    function clampTaskWizardStep(step) {
+        step = Number(step);
+        if (!isFinite(step)) {
+            return 1;
+        }
+        return Math.min(TASK_WIZARD_TOTAL_STEPS, Math.max(1, Math.round(step)));
+    }
+
+    function currentTaskWizardStep() {
+        return clampTaskWizardStep(state.creatingTaskStep || 1);
+    }
+
+    function normalizeTaskDetailTab(tabId) {
+        tabId = String(tabId || '').trim().toLowerCase();
+        return TASK_DETAIL_TABS.indexOf(tabId) !== -1 ? tabId : 'overview';
+    }
+
+    function currentTaskDetailTab() {
+        return normalizeTaskDetailTab(state.selectedTaskTab || 'overview');
+    }
+
+    function syncTaskWizardDraft(form) {
+        var titleInput = form ? form.querySelector('[name="title"]') : null;
+        var goalInput = form ? form.querySelector('[name="goal"]') : null;
+        var skillInput = form ? form.querySelector('[name="selectedSkill"]') : null;
+        var title = titleInput && titleInput.value ? titleInput.value.trim() : String(state.creatingTaskTitle || '').trim();
+        var goal = goalInput && goalInput.value ? goalInput.value.trim() : String(state.creatingTaskGoal || '').trim();
+        var selectedSkill = skillInput && skillInput.value ? skillInput.value.trim() : (state.creatingTaskSelectedSkill || defaultSkill().id || 'code_change');
+        var runbook = runbookForSkill(selectedSkill, state.creatingTaskRunbookId);
+
+        state.creatingTaskTitle = title;
+        state.creatingTaskGoal = goal;
+        state.creatingTaskSelectedSkill = selectedSkill;
+        state.creatingTaskRunbookId = runbook.id || '';
+        return {
+            title: title,
+            goal: goal,
+            selectedSkill: selectedSkill,
+            runbook: runbook
+        };
+    }
+
+    function validateTaskWizardStep(step, workstream, draft) {
+        if (!workstream) {
+            state.error = tr('project.createTaskFailed', 'Create task failed');
+            return false;
+        }
+        if (clampTaskWizardStep(step) >= 1 && !draft.title) {
+            state.error = tr('project.taskTitleRequired', 'Task title required.');
+            return false;
+        }
+        state.error = '';
+        return true;
+    }
+
+    function previousTaskWizardStep() {
+        state.creatingTaskStep = clampTaskWizardStep(currentTaskWizardStep() - 1);
+        state.error = '';
+        render();
+        focusTaskWizard();
+    }
+
+    function nextTaskWizardStep(form) {
+        var workstreamId = form ? (form.getAttribute('data-task-wizard') || state.creatingTaskWorkstreamId) : state.creatingTaskWorkstreamId;
+        var workstream = findById(workstreams(), workstreamId);
+        var draft = syncTaskWizardDraft(form);
+        if (!validateTaskWizardStep(currentTaskWizardStep(), workstream, draft)) {
+            render();
+            focusTaskWizard();
+            return;
+        }
+        state.creatingTaskStep = clampTaskWizardStep(currentTaskWizardStep() + 1);
+        render();
+        focusTaskWizard();
     }
 
     function startWorkstreamWizard(projectId) {
@@ -1253,6 +1348,7 @@
         resetWorkstreamWizard();
         resetTaskWizard();
         state.selectedTaskId = taskId;
+        state.selectedTaskTab = 'overview';
         state.selectedSessionId = '';
         if (task) {
             state.selectedProjectId = task.projectId;
@@ -1270,6 +1366,7 @@
         if (session) {
             state.selectedTaskId = session.taskId;
             openTask(session.taskId);
+            state.selectedTaskTab = 'sessions';
             state.selectedSessionId = sessionId;
         }
         state.currentView = 'session';
@@ -2253,25 +2350,87 @@
         var selectedRunbook = runbookForSkill(selectedSkill.id, state.creatingTaskRunbookId);
         var disabled = state.creatingTaskSaving ? ' disabled' : '';
         var skillOptions = skills().length ? skills() : [defaultSkill()];
-        return '<form class="project-card-list project-workstream-wizard project-task-wizard" data-task-wizard="' + escapeHTML(workstreamId) + '">'
+        var currentStep = currentTaskWizardStep();
+        var stepModels = [
+            {
+                title: tr('project.taskWizardStep1', 'Define task'),
+                copy: tr('project.taskWizardStep1Copy', 'Name the task and describe the outcome.')
+            },
+            {
+                title: tr('project.taskWizardStep2', 'Execution setup'),
+                copy: tr('project.taskWizardStep2Copy', 'Choose the skill and runbook.')
+            },
+            {
+                title: tr('project.taskWizardStep3', 'Review'),
+                copy: tr('project.taskWizardStep3Copy', 'Confirm the summary before creating.')
+            }
+        ];
+        var contentHTML = '';
+
+        if (currentStep === 1) {
+            contentHTML = '<div class="project-task-wizard-stage">'
+                + '<div class="project-card-title">' + escapeHTML(stepModels[0].title) + '</div>'
+                + '<div class="project-card-copy">' + escapeHTML(stepModels[0].copy) + '</div>'
+                + '<div class="project-wizard-fields">'
+                + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.taskTitle', 'Title')) + '</span>'
+                + '<input type="text" name="title" maxlength="140" data-task-title-input value="' + escapeHTML(state.creatingTaskTitle || '') + '" placeholder="' + escapeHTML(tr('project.taskTitlePlaceholder', 'Task title')) + '"' + disabled + '></label>'
+                + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.taskGoal', 'Goal')) + '</span>'
+                + '<input type="text" name="goal" maxlength="260" data-task-goal-input value="' + escapeHTML(state.creatingTaskGoal || '') + '" placeholder="' + escapeHTML(tr('project.taskGoalPlaceholder', 'Goal (optional)')) + '"' + disabled + '></label>'
+                + '</div>'
+                + '</div>';
+        } else if (currentStep === 2) {
+            contentHTML = '<div class="project-task-wizard-stage">'
+                + '<div class="project-card-title">' + escapeHTML(stepModels[1].title) + '</div>'
+                + '<div class="project-card-copy">' + escapeHTML(stepModels[1].copy) + '</div>'
+                + '<div class="project-wizard-fields">'
+                + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.skill', 'Skill')) + '</span>'
+                + '<select name="selectedSkill" data-task-skill-select' + disabled + '>'
+                + skillOptions.map(function(skill) {
+                    var selected = skill.id === selectedSkill.id ? ' selected' : '';
+                    return '<option value="' + escapeHTML(skill.id) + '"' + selected + '>' + escapeHTML(humanizeSkill(skill)) + '</option>';
+                }).join('')
+                + '</select></label>'
+                + '<div class="project-wizard-meta"><span>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</span><strong>' + escapeHTML(selectedRunbook.id || tr('project.none', 'None')) + '</strong></div>'
+                + '</div>'
+                + '</div>';
+        } else {
+            contentHTML = '<div class="project-task-wizard-stage">'
+                + '<div class="project-card-title">' + escapeHTML(tr('project.taskWizardReviewTitle', 'Ready to create')) + '</div>'
+                + '<div class="project-card-copy">' + escapeHTML(tr('project.taskWizardReviewCopy', 'Review the summary below, then create the task.')) + '</div>'
+                + '<div class="project-task-review-grid">'
+                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.taskWizardWorkstream', 'Workstream')) + '</span><strong>' + escapeHTML(workstream && workstream.title ? workstream.title : tr('project.none', 'None')) + '</strong></div>'
+                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.taskTitle', 'Title')) + '</span><strong>' + escapeHTML(state.creatingTaskTitle || tr('project.none', 'None')) + '</strong></div>'
+                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.taskGoal', 'Goal')) + '</span><strong>' + escapeHTML(state.creatingTaskGoal || tr('project.none', 'None')) + '</strong></div>'
+                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.skill', 'Skill')) + '</span><strong>' + escapeHTML(humanizeSkill(selectedSkill)) + '</strong></div>'
+                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</span><strong>' + escapeHTML(selectedRunbook.id || tr('project.none', 'None')) + '</strong></div>'
+                + '</div>'
+                + '</div>';
+        }
+
+        return '<form class="project-card-list project-workstream-wizard project-task-wizard project-task-wizard-card" data-task-wizard="' + escapeHTML(workstreamId) + '">'
+            + '<div class="project-task-wizard-header">'
+            + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.taskWizardKicker', 'Task wizard')) + '</div>'
             + '<h3>' + escapeHTML(tr('project.newTask', 'New task')) + '</h3>'
-            + '<div class="project-wizard-fields">'
-            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.taskTitle', 'Title')) + '</span>'
-            + '<input type="text" name="title" maxlength="140" data-task-title-input value="' + escapeHTML(state.creatingTaskTitle || '') + '" placeholder="' + escapeHTML(tr('project.taskTitlePlaceholder', 'Task title')) + '"' + disabled + '></label>'
-            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.taskGoal', 'Goal')) + '</span>'
-            + '<input type="text" name="goal" maxlength="260" data-task-goal-input value="' + escapeHTML(state.creatingTaskGoal || '') + '" placeholder="' + escapeHTML(tr('project.taskGoalPlaceholder', 'Goal (optional)')) + '"' + disabled + '></label>'
-            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.skill', 'Skill')) + '</span>'
-            + '<select name="selectedSkill" data-task-skill-select' + disabled + '>'
-            + skillOptions.map(function(skill) {
-                var selected = skill.id === selectedSkill.id ? ' selected' : '';
-                return '<option value="' + escapeHTML(skill.id) + '"' + selected + '>' + escapeHTML(humanizeSkill(skill)) + '</option>';
-            }).join('')
-            + '</select></label>'
-            + '<div class="project-wizard-meta"><span>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</span><strong>' + escapeHTML(selectedRunbook.id || '') + '</strong></div>'
+            + '<div class="project-card-copy">' + escapeHTML(tr('project.taskWizardIntro', 'Set up one clear next step for this workstream.')) + '</div></div>'
+            + '<div class="project-task-wizard-context"><span>' + escapeHTML(tr('project.taskWizardWorkstream', 'Workstream')) + '</span><strong>' + escapeHTML(workstream && workstream.title ? workstream.title : '') + '</strong></div>'
             + '</div>'
-            + '<div class="project-action-group">'
+            + '<div class="project-task-wizard-steps">'
+            + stepModels.map(function(step, index) {
+                var stepNumber = index + 1;
+                var stepClass = stepNumber === currentStep ? ' is-active' : (stepNumber < currentStep ? ' is-complete' : '');
+                return '<div class="project-task-wizard-step' + stepClass + '">'
+                    + '<div class="project-task-wizard-step-index">' + escapeHTML(String(stepNumber)) + '</div>'
+                    + '<div class="project-task-wizard-step-body"><div class="project-card-title">' + escapeHTML(step.title) + '</div><div class="project-card-copy">' + escapeHTML(step.copy) + '</div></div>'
+                    + '</div>';
+            }).join('')
+            + '</div>'
+            + '<div class="project-task-wizard-panel">' + contentHTML + '</div>'
+            + '<div class="project-action-group project-task-wizard-actions">'
             + '<button type="button" class="project-inline-btn" data-cancel-task-wizard="1"' + disabled + '>' + escapeHTML(tr('project.cancel', 'Cancel')) + '</button>'
-            + '<button type="submit" class="project-inline-btn primary"' + disabled + '>' + escapeHTML(state.creatingTaskSaving ? tr('project.saving', 'Saving...') : tr('project.create', 'Create')) + '</button>'
+            + (currentStep > 1 ? '<button type="button" class="project-inline-btn" data-task-wizard-prev="1"' + disabled + '>' + escapeHTML(tr('project.taskWizardBack', 'Back')) + '</button>' : '')
+            + (currentStep < TASK_WIZARD_TOTAL_STEPS
+                ? '<button type="button" class="project-inline-btn primary" data-task-wizard-next="1"' + disabled + '>' + escapeHTML(tr('project.taskWizardNext', 'Next')) + '</button>'
+                : '<button type="submit" class="project-inline-btn primary" data-task-wizard-submit="1"' + disabled + '>' + escapeHTML(state.creatingTaskSaving ? tr('project.saving', 'Saving...') : tr('project.taskWizardCreate', 'Create task')) + '</button>')
             + '</div>'
             + '</form>';
     }
@@ -2358,7 +2517,7 @@
         ];
 
         if (!projectSnapshot.workstreams.length && !projectSnapshot.tasks.length && !projectSnapshot.pendingApprovals.length) {
-            return renderQuickStartCard(project);
+            return '';
         }
 
         if (pendingItem) {
@@ -2478,16 +2637,6 @@
         });
     }
 
-    function renderQuickStartCard(project) {
-        if (state.creatingWorkstreamProjectId === project.id) {
-            return renderWorkstreamWizard(project);
-        }
-        return '<div class="project-card-list project-empty-workstream-card">'
-            + '<h3>' + escapeHTML(tr('project.noWorkstreamsYet', 'No workstreams')) + '</h3>'
-            + '<button type="button" class="project-inline-btn primary" data-create-workstream="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.newWorkstreamShort', '+ Workstream')) + '</button>'
-            + '</div>';
-    }
-
     function renderWorkstreamGuide(workstream, taskList) {
         var waitingCount = taskList.filter(function(item) { return item.state === 'waiting_human' || item.state === 'waiting_review'; }).length;
         var blockedTask = pickPreferredTask(taskList.filter(function(item) {
@@ -2587,21 +2736,18 @@
             tone = task.acceptanceStatus === 'accepted' ? 'success' : 'warning';
         } else if (session && session.supportsAttach && session.terminalId) {
             header = tr('project.liveTerminalReady', 'Live terminal is ready');
-            copy = tr('project.continueInTerminal', 'Continue in Terminal.');
-            actions = '<button type="button" class="project-inline-btn primary" data-attach-terminal="' + escapeHTML(session.terminalId) + '">' + escapeHTML(tr('project.openLiveTerminal', 'Open live terminal')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-session-id="' + escapeHTML(session.id) + '">' + escapeHTML(tr('project.sessionDetails', 'Session details')) + '</button>';
+            copy = tr('project.sessionsAttachCopy', 'Open Sessions to inspect this run and attach the terminal.');
+            actions = '<button type="button" class="project-inline-btn primary" data-task-detail-tab="sessions">' + escapeHTML(tr('project.openSessions', 'Open sessions')) + '</button>';
             tone = 'info';
         } else if (session) {
             header = tr('project.sessionHistoryAttached', 'Session history is attached');
-            copy = tr('project.sessionHistoryCopy', 'Open the session or continue in Terminal.');
-            actions = '<button type="button" class="project-inline-btn" data-session-id="' + escapeHTML(session.id) + '">' + escapeHTML(tr('project.sessionDetails', 'Session details')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-open-terminal-mode="1">' + escapeHTML(tr('project.openTerminalWorkspace', 'Open Terminal workspace')) + '</button>';
+            copy = tr('project.sessionsTabCopy', 'Open Sessions to inspect this run and continue if needed.');
+            actions = '<button type="button" class="project-inline-btn" data-task-detail-tab="sessions">' + escapeHTML(tr('project.openSessions', 'Open sessions')) + '</button>';
             tone = 'neutral';
         } else {
             copy = task.state === 'running'
-                ? tr('project.runningNoTerminal', 'Running, but no live terminal is attached.')
-                : tr('project.startOrContinueTerminal', 'Start or continue in Terminal.');
-            actions = '<button type="button" class="project-inline-btn primary" data-open-terminal-mode="1">' + escapeHTML(tr('project.openTerminalWorkspace', 'Open Terminal workspace')) + '</button>';
+                ? tr('project.runningNoSessionCopy', 'Running, but no session is ready to attach yet.')
+                : tr('project.startPhaseCopy', 'Start the current phase below when you are ready.');
             tone = task.state === 'running' ? 'warning' : 'info';
         }
 
@@ -3377,7 +3523,7 @@
             + '</div>'
             + '</div>'
             + renderCommandStats(stats)
-            + (state.creatingWorkstreamProjectId === project.id ? renderWorkstreamWizard(project) : (!projectSnapshot.workstreams.length && !taskList.length ? renderQuickStartCard(project) : renderCommandHero(project, projectSnapshot)))
+            + (state.creatingWorkstreamProjectId === project.id ? renderWorkstreamWizard(project) : (!projectSnapshot.workstreams.length && !taskList.length ? '' : renderCommandHero(project, projectSnapshot)))
             + renderCommandLanes(projectSnapshot)
             + (taskList.length
                 ? '<details class="project-disclosure"><summary><span>' + escapeHTML(tr('project.taskList', 'Task list')) + '</span><small>' + escapeHTML(tr('project.countTotal', '{count} total', { count: taskList.length })) + '</small></summary>'
@@ -3637,41 +3783,97 @@
             + '</div></div>';
     }
 
-    function renderTaskEvidenceDisclosure(task, taskSessions, decisionCards) {
+    function renderTaskTimelinePanel(task) {
+        return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.timeline', 'Timeline')) + '</h3>'
+            + renderStructuredEventStream(task.timeline || [], tr('project.noTimeline', 'No timeline entries yet.'))
+            + '</div>';
+    }
+
+    function renderTaskEvidencePanel(task) {
         var currentAttempt = currentPhaseAttemptForTask(task);
         var currentPhase = currentPhaseForTask(task);
         var canComplete = !!currentAttempt && currentPhase !== 'ready_for_acceptance' && currentAttempt.status === 'running';
         var toolRunning = !!latestRunningToolRunForAttempt(currentAttempt);
-        return '<details class="project-disclosure project-evidence-disclosure"><summary><span>' + escapeHTML(tr('project.evidenceHistory', 'Evidence & history')) + '</span><small>' + escapeHTML(tr('project.evidenceHistorySubtitle', 'Timeline, files, sessions, audit')) + '</small></summary>'
-            + '<div class="project-tab-sections">'
-            + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.timeline', 'Timeline')) + '</h3>'
-            + renderStructuredEventStream(task.timeline || [], tr('project.noTimeline', 'No timeline entries yet.')) + '</div>'
-            + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.artifacts', 'Artifacts')) + '</h3>'
-            + (taskArtifacts(task.id).length ? taskArtifacts(task.id).map(function(item) {
-                return '<div class="project-list-item"><strong>' + escapeHTML(humanizeArtifactKind(item.kind)) + ':</strong> ' + escapeHTML(humanizeArtifactOutcome(item.outcome)) + ' • ' + escapeHTML(item.value || item.label || '') + '</div>';
-            }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noArtifacts', 'No artifacts recorded yet.')) + '</div>') + '</div>'
+        return '<div class="project-tab-sections project-task-detail-sections">'
+            + renderTaskArtifactsPanel(task)
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.toolRuns', 'Tool runs')) + '</h3>'
             + renderToolRunHistory(task, taskToolRuns(task.id), currentAttempt, canComplete, toolRunning, currentPhase, false)
             + '</div>'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.evidence', 'Evidence')) + '</h3>'
             + renderFactList(task.evidence || [], tr('project.noEvidence', 'No evidence recorded yet.')) + '</div>'
-            + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.filesDiff', 'Files & Diff')) + '</h3>'
-            + renderFileDiffPanel(task.filesChanged || [], task.diffSummary || '') + '</div>'
-            + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.sessions', 'Sessions')) + '</h3>'
+            + '</div>';
+    }
+
+    function renderTaskFilesDiffPanel(task) {
+        return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.filesDiff', 'Files & Diff')) + '</h3>'
+            + renderFileDiffPanel(task.filesChanged || [], task.diffSummary || '')
+            + '</div>';
+    }
+
+    function renderTaskSessionsPanel(taskSessions) {
+        return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.sessions', 'Sessions')) + '</h3>'
             + (taskSessions.length ? taskSessions.map(function(session) {
                 var tone = statusTone(session.state);
                 tone = tone === 'neutral' ? toneFromText(session.state || session.name || '') : tone;
                 return '<button type="button" class="project-list-button project-session-button tone-' + escapeHTML(tone) + '" data-session-id="' + escapeHTML(session.id) + '">'
                     + '<span class="project-nav-row"><span class="project-nav-main">' + renderSidebarSignal(tone) + '<span>' + escapeHTML(session.name) + '</span></span>'
                     + (session.supportsAttach && session.terminalId ? renderSidebarBadge('TTY', 'info', '') : '') + '</span><span class="project-list-meta">' + escapeHTML(session.state + ' • ' + session.durationLabel) + '</span></button>';
-            }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noSessions', 'No sessions recorded yet.')) + '</div>') + '</div>'
+            }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noSessions', 'No sessions recorded yet.')) + '</div>')
+            + '</div>';
+    }
+
+    function renderTaskAuditPanel(task, decisionCards) {
+        return '<div class="project-task-detail-stack">'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.audit', 'Audit')) + '</h3>'
             + renderStructuredEventStream(task.audit || [], tr('project.noAudit', 'No audit entries yet.'))
+            + '<div class="project-action-group project-task-audit-actions">'
             + '<button type="button" class="project-inline-btn" data-task-history="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.viewHistory', 'View history')) + '</button>'
             + '<button type="button" class="project-inline-btn" data-task-replay="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.openReplay', 'Open replay')) + '</button>'
             + '</div>'
+            + '</div>'
             + (decisionCards || '')
-            + '</div></details>';
+            + '</div>';
+    }
+
+    function renderTaskDetailTabs() {
+        var currentTab = currentTaskDetailTab();
+        var tabs = [
+            { id: 'overview', label: tr('project.overview', 'Overview') },
+            { id: 'timeline', label: tr('project.timeline', 'Timeline') },
+            { id: 'evidence', label: tr('project.evidence', 'Evidence') },
+            { id: 'files_diff', label: tr('project.filesDiff', 'Files & Diff') },
+            { id: 'sessions', label: tr('project.sessions', 'Sessions') },
+            { id: 'audit', label: tr('project.audit', 'Audit') }
+        ];
+        return '<div class="project-task-detail-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.taskDetail', 'Task Detail')) + '">'
+            + tabs.map(function(tab) {
+                var active = tab.id === currentTab;
+                return '<button type="button" class="project-inline-btn project-task-detail-tab' + (active ? ' active' : '') + '" data-task-detail-tab="' + escapeHTML(tab.id) + '" role="tab" aria-selected="' + (active ? 'true' : 'false') + '">'
+                    + escapeHTML(tab.label)
+                    + '</button>';
+            }).join('')
+            + '</div>';
+    }
+
+    function renderTaskDetailTabContent(task, taskSessions, decisionCards) {
+        switch (currentTaskDetailTab()) {
+        case 'timeline':
+            return renderTaskTimelinePanel(task);
+        case 'evidence':
+            return renderTaskEvidencePanel(task);
+        case 'files_diff':
+            return renderTaskFilesDiffPanel(task);
+        case 'sessions':
+            return renderTaskSessionsPanel(taskSessions);
+        case 'audit':
+            return renderTaskAuditPanel(task, decisionCards);
+        default:
+            return '<div class="project-task-detail-stack">'
+                + renderTaskExecutionGuide(task, taskSessions)
+                + renderTaskRunbookPanel(task)
+                + renderTaskApprovalStatusCard(task)
+                + '</div>';
+        }
     }
 
     function renderTaskDetail() {
@@ -3704,10 +3906,10 @@
                 { label: tr('project.risk', 'Risk'), value: shortRiskLabel(task.riskLevel), tone: riskTone(task.riskLevel) },
                 { label: tr('project.sessions', 'Sessions'), value: taskSessions.length, tone: taskSessions.length ? 'info' : 'neutral' }
             ])
-            + renderTaskExecutionGuide(task, taskSessions)
-            + '<div class="project-two-column project-task-control-grid">' + renderTaskRunbookPanel(task) + renderTaskArtifactsPanel(task) + '</div>'
-            + renderTaskApprovalStatusCard(task)
-            + renderTaskEvidenceDisclosure(task, taskSessions, decisionCards)
+            + renderTaskDetailTabs()
+            + '<div class="project-task-detail-panel">'
+            + renderTaskDetailTabContent(task, taskSessions, decisionCards)
+            + '</div>'
             + '</section>';
     }
 
@@ -3728,7 +3930,7 @@
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.executionRole', 'Execution role')) + ':</strong> ' + escapeHTML(humanizeExecutionRole(session.executionRole)) + '</div>'
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.systemRole', 'System role')) + ':</strong> ' + escapeHTML(humanizeSystemRole(session.systemRole || 'worker')) + '</div>'
             + (session.phaseAttemptId ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.phaseAttempt', 'Phase attempt')) + ':</strong> ' + escapeHTML(session.phaseAttemptId) + '</div>' : '')
-            + (session.workspaceRef ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.workspace', 'Workspace')) + ':</strong> ' + escapeHTML(humanizeToken(session.workspaceRef)) + '</div>' : '')
+            + (session.workspaceRef ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.workspace', 'Workspace')) + ':</strong> ' + escapeHTML(humanizeWorkspaceRef(session.workspaceRef)) + '</div>' : '')
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.startedAt', 'Started')) + ':</strong> ' + escapeHTML(formatTime(session.startedAt)) + '</div>'
             + '</div>'
             + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.claims', 'Claims')) + '</h3>'
@@ -4009,6 +4211,7 @@
         state.creatingTaskWorkstreamId = workstreamId;
         state.creatingTaskSelectedSkill = skill.id || 'code_change';
         state.creatingTaskRunbookId = runbook.id || 'code_change_default';
+        state.creatingTaskStep = 1;
         state.creatingTaskSaving = false;
         state.selectedProjectId = workstream.projectId;
         state.selectedWorkstreamId = workstream.id;
@@ -4023,20 +4226,17 @@
     function submitTaskWizard(form) {
         var workstreamId = form.getAttribute('data-task-wizard') || state.creatingTaskWorkstreamId;
         var workstream = findById(workstreams(), workstreamId);
-        var titleInput = form.querySelector('[name="title"]');
-        var goalInput = form.querySelector('[name="goal"]');
-        var skillInput = form.querySelector('[name="selectedSkill"]');
-        var title = titleInput && titleInput.value ? titleInput.value.trim() : '';
-        var goal = goalInput && goalInput.value ? goalInput.value.trim() : '';
-        var selectedSkill = skillInput && skillInput.value ? skillInput.value.trim() : (state.creatingTaskSelectedSkill || defaultSkill().id || 'code_change');
-        var runbook = runbookForSkill(selectedSkill, state.creatingTaskRunbookId);
+        var draft = syncTaskWizardDraft(form);
+        var title = draft.title;
+        var goal = draft.goal;
+        var selectedSkill = draft.selectedSkill;
+        var runbook = draft.runbook;
 
-        state.creatingTaskTitle = title;
-        state.creatingTaskGoal = goal;
-        state.creatingTaskSelectedSkill = selectedSkill;
-        state.creatingTaskRunbookId = runbook.id || '';
-        if (!workstream || !title) {
-            state.error = tr('project.taskTitleRequired', 'Task title required.');
+        if (currentTaskWizardStep() < TASK_WIZARD_TOTAL_STEPS) {
+            nextTaskWizardStep(form);
+            return;
+        }
+        if (!validateTaskWizardStep(TASK_WIZARD_TOTAL_STEPS, workstream, draft)) {
             render();
             focusTaskWizard();
             return;
@@ -4148,6 +4348,12 @@
         panel.querySelectorAll('[data-task-id]').forEach(function(node) {
             node.addEventListener('click', function() {
                 openTask(node.getAttribute('data-task-id'));
+            });
+        });
+        panel.querySelectorAll('[data-task-detail-tab]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                state.selectedTaskTab = normalizeTaskDetailTab(node.getAttribute('data-task-detail-tab'));
+                render();
             });
         });
         panel.querySelectorAll('[data-session-id]').forEach(function(node) {
@@ -4293,6 +4499,20 @@
                 state.creatingTaskSelectedSkill = skill.id || '';
                 state.creatingTaskRunbookId = runbook.id || '';
                 render();
+                focusTaskWizard();
+            });
+        });
+        panel.querySelectorAll('[data-task-wizard-prev]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                previousTaskWizardStep();
+            });
+        });
+        panel.querySelectorAll('[data-task-wizard-next]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                var form = node.closest('[data-task-wizard]');
+                if (form) {
+                    nextTaskWizardStep(form);
+                }
             });
         });
         panel.querySelectorAll('[data-cancel-task-wizard]').forEach(function(node) {
