@@ -6,6 +6,30 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-19
+
+### Added
+
+- Extensible tool registry: tool definitions are now data-driven with per-tool timeout, max output, artifact kind, and allowed phases; default tools (repo_status, diff_capture, go_test) preserved as built-in defaults
+- Tool CRUD API: `POST/PUT/DELETE /api/project-control/tools` for registering custom tools such as `npm test`, `cargo test`, or `pytest`
+- Auto-progression engine: when a tool run passes, the runbook automatically advances to the next phase and starts the matching tool, chaining through phases without manual clicks
+- Full runbook orchestration: `start_execution` action launches the first phase, matches a tool, and triggers the auto-progression chain; a single click can drive plan → implement → test → review
+- OSC terminal notification parser: streaming parser for OSC 9/99/777 escape sequences with support for BEL and ST terminators and partial sequence buffering
+- Notification pipeline: OSC notifications are stripped from terminal output, broadcast via a WebSocket endpoint (`/api/notifications/ws`), and displayed as badges on workspace tabs with browser Notification API support
+- Agent adapter API: `GET /api/agent/v1/task`, `POST /api/agent/v1/artifact`, `POST /api/agent/v1/checkpoint` with bearer token auth for agent-neutral integration; any terminal-first agent can get tasks, submit evidence, and request human review
+- Agent token management: `POST /api/project-control/agent-token` generates a persistent bearer token for agent API access
+- Start Execution button in the project panel replaces Add to queue / Start phase for planned and queued tasks
+- Phase status icons: ✓ (completed), ○ with pulse animation (running), ✗ (failed) in the task detail phase list
+- Documentation reorganization: docs split into user guides, internal/operational, releases, and competitive analysis with a new index page
+
+### Changed
+
+- `normalizeProjectControlToolID` now accepts any registered tool ID instead of only the three hardcoded defaults
+- `projectControlToolAllowedInPhase` uses the tool registry `AllowedPhases` field instead of a hardcoded switch
+- `executeLocalProjectControlTool` uses per-tool timeout and max output from the tool definition
+- `updateTask` supports agent bypass mode (`ExpectedRowVersion: -1`) for agent API artifact submission
+- `start_execution` is now a phase action that starts the first runbook phase instead of only setting task state
+
 ## [0.3.2] - 2026-04-13
 
 ### Added

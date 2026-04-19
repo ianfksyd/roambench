@@ -27,6 +27,7 @@ The next major evolution of RoamBench. These documents capture the design discus
 
 Per-version release copy used for GitHub Releases. See also [CHANGELOG.md](../CHANGELOG.md).
 
+- [v0.4.0](releases/v0.4.0.md)
 - [v0.3.2](releases/v0.3.2.md) · [v0.3.2 中文](releases/v0.3.2-zh.md)
 - [v0.3.1](releases/v0.3.1.md) · [v0.3.1 中文](releases/v0.3.1-zh.md)
 - [v0.3.0](releases/v0.3.0.md) · [v0.3.0 中文](releases/v0.3.0-zh.md)
