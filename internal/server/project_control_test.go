@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -424,7 +426,7 @@ func TestProjectControlRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
 		{phase: "review", kind: "review_result", outcome: "pass", value: "No high severity objections", next: "final_validation"},
 	}
 	for _, step := range steps {
-		if err := startProjectControlTaskPhase(&state, &task, step.phase, now, "", nil); err != nil {
+		if err := startProjectControlTaskPhase(&state, &task, step.phase, now, "", nil, nil); err != nil {
 			t.Fatalf("start %s error: %v", step.phase, err)
 		}
 		req := projectControlTaskUpdateRequest{
@@ -448,7 +450,7 @@ func TestProjectControlRunbookPhaseLifecycleRecordsArtifacts(t *testing.T) {
 	if task.DiffSummary != "Changed project control runbook code" {
 		t.Fatalf("DiffSummary = %q, want implement artifact value", task.DiffSummary)
 	}
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil, nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -505,7 +507,7 @@ func TestProjectControlDocsUpdateRunbookPhaseLifecycleRecordsArtifacts(t *testin
 		{phase: "review", kind: "review_result", outcome: "pass", value: "Docs review passed", next: "final_validation"},
 	}
 	for _, step := range steps {
-		if err := startProjectControlTaskPhase(&state, &task, step.phase, now, "", nil); err != nil {
+		if err := startProjectControlTaskPhase(&state, &task, step.phase, now, "", nil, nil); err != nil {
 			t.Fatalf("start %s error: %v", step.phase, err)
 		}
 		req := projectControlTaskUpdateRequest{
@@ -523,7 +525,7 @@ func TestProjectControlDocsUpdateRunbookPhaseLifecycleRecordsArtifacts(t *testin
 		}
 	}
 
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil, nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -562,7 +564,7 @@ func TestProjectControlDocsUpdateFailureRecoveryReturnsToReview(t *testing.T) {
 	projectControlNormalizeState(&state)
 	now := "2026-04-15T00:00:00Z"
 
-	if err := startProjectControlTaskPhase(&state, &task, "plan", now, "", nil); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "plan", now, "", nil, nil); err != nil {
 		t.Fatalf("start plan error: %v", err)
 	}
 	if err := completeProjectControlTaskPhase(&state, &task, projectControlTaskUpdateRequest{
@@ -574,7 +576,7 @@ func TestProjectControlDocsUpdateFailureRecoveryReturnsToReview(t *testing.T) {
 	}, now); err != nil {
 		t.Fatalf("complete plan error: %v", err)
 	}
-	if err := startProjectControlTaskPhase(&state, &task, "write", now, "", nil); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "write", now, "", nil, nil); err != nil {
 		t.Fatalf("start write error: %v", err)
 	}
 	if err := failProjectControlTaskPhase(&state, &task, "write", "Docs change needs rework", now); err != nil {
@@ -586,7 +588,7 @@ func TestProjectControlDocsUpdateFailureRecoveryReturnsToReview(t *testing.T) {
 	if task.NextStep != "Start fix_or_replan, then rerun review evidence." {
 		t.Fatalf("NextStep after fail = %q, want docs recovery review guidance", task.NextStep)
 	}
-	if err := startProjectControlTaskPhase(&state, &task, "fix_or_replan", now, "", nil); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "fix_or_replan", now, "", nil, nil); err != nil {
 		t.Fatalf("start fix_or_replan error: %v", err)
 	}
 	if err := completeProjectControlTaskPhase(&state, &task, projectControlTaskUpdateRequest{
@@ -624,7 +626,7 @@ func TestProjectControlFinalValidationRequiresCompletionEvidence(t *testing.T) {
 		RunbookState:     "in_progress",
 	}
 	now := "2026-04-15T00:00:00Z"
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil, nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -672,7 +674,7 @@ func TestProjectControlCompletionEvidenceRequiresPassingOutcomes(t *testing.T) {
 		RunbookState:     "in_progress",
 	}
 	now := "2026-04-15T00:00:00Z"
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil, nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -715,7 +717,7 @@ func TestProjectControlDocsUpdateFinalValidationRequiresDocSummary(t *testing.T)
 		RunbookState:     "in_progress",
 	}
 	now := "2026-04-15T00:00:00Z"
-	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil); err != nil {
+	if err := startProjectControlTaskPhase(&state, &task, "final_validation", now, "", nil, nil); err != nil {
 		t.Fatalf("start final_validation error: %v", err)
 	}
 	req := projectControlTaskUpdateRequest{
@@ -920,7 +922,7 @@ func TestProjectControlTaskPhaseActionsPersistThroughAPI(t *testing.T) {
 	}
 }
 
-func TestProjectControlStartPhaseCreatesAttachableTerminalSession(t *testing.T) {
+func TestProjectControlStartReadOnlyPhaseCreatesLogicalSessionWithoutAttach(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Server.AllowAllIPs = true
 	cfg.Auth.SingleUser = "ian"
@@ -954,17 +956,120 @@ func TestProjectControlStartPhaseCreatesAttachableTerminalSession(t *testing.T) 
 		t.Fatalf("len(PhaseAttempts) = %d, want 1", len(snapshot.PhaseAttempts))
 	}
 	terminalSessions := termMgr.ListSessions("ian")
-	if len(terminalSessions) != 1 {
-		t.Fatalf("len(terminal sessions) = %d, want 1", len(terminalSessions))
+	if len(terminalSessions) != 0 {
+		t.Fatalf("len(terminal sessions) = %d, want 0 for read-only phase", len(terminalSessions))
 	}
-	wantSessionID := projectControlSessionIDForTerminal(terminalSessions[0].ID)
 	attempt := snapshot.PhaseAttempts[0]
-	if attempt.SessionID != wantSessionID {
-		t.Fatalf("PhaseAttempt SessionID = %q, want %q", attempt.SessionID, wantSessionID)
+	if projectControlTerminalIDFromSessionID(attempt.SessionID) != "" {
+		t.Fatalf("PhaseAttempt SessionID = %q, want logical non-terminal session", attempt.SessionID)
+	}
+	workspaceKind, workspaceDir := projectControlParseWorkspaceRef(attempt.WorkspaceRef)
+	if workspaceKind != projectControlWorkspaceReadOnlySnapshot {
+		t.Fatalf("PhaseAttempt WorkspaceRef = %q, want %q workspace kind", attempt.WorkspaceRef, projectControlWorkspaceReadOnlySnapshot)
+	}
+	if workspaceDir == "" {
+		t.Fatalf("PhaseAttempt WorkspaceRef = %q, want concrete snapshot path", attempt.WorkspaceRef)
+	}
+	if workspaceDir == srv.projectControl.runtimeRootDir {
+		t.Fatalf("PhaseAttempt workspaceDir = %q, want isolated snapshot path", workspaceDir)
+	}
+	if !strings.HasPrefix(workspaceDir, srv.projectControl.workspaceRootDir) {
+		t.Fatalf("PhaseAttempt workspaceDir = %q, want prefix %q", workspaceDir, srv.projectControl.workspaceRootDir)
+	}
+	if info, err := os.Stat(workspaceDir); err != nil || !info.IsDir() {
+		t.Fatalf("Stat(snapshot workspace) error = %v, want existing directory", err)
+	}
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = workspaceDir
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse in snapshot workspace error: %v", err)
+	}
+	if got := strings.TrimSpace(string(output)); got != workspaceDir {
+		t.Fatalf("git rev-parse workspace = %q, want %q", got, workspaceDir)
 	}
 	taskSessionCount := 0
 	for _, session := range snapshot.Sessions {
 		if session.TaskID != projectControlTaskPanelID {
+			continue
+		}
+		taskSessionCount += 1
+		if session.ID != attempt.SessionID {
+			t.Fatalf("phase session ID = %q, want %q", session.ID, attempt.SessionID)
+		}
+		if session.TerminalID != "" || session.SupportsAttach {
+			t.Fatalf("phase session terminal binding = %#v, want logical non-attachable session", session)
+		}
+		if session.PhaseAttemptID != attempt.ID {
+			t.Fatalf("phase session PhaseAttemptID = %q, want %q", session.PhaseAttemptID, attempt.ID)
+		}
+		if session.WorkspaceRef != attempt.WorkspaceRef {
+			t.Fatalf("phase session WorkspaceRef = %q, want %q", session.WorkspaceRef, attempt.WorkspaceRef)
+		}
+	}
+	if taskSessionCount != 1 {
+		t.Fatalf("task session count = %d, want exactly one phase-linked session", taskSessionCount)
+	}
+}
+
+func TestProjectControlStartWritePhaseCreatesAttachableTerminalSession(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+	cfg.Auth.SingleUser = "ian"
+	cfg.Terminal.PersistDir = t.TempDir()
+
+	sessions, err := auth.NewSessionManager(&cfg.Auth)
+	if err != nil {
+		t.Fatalf("NewSessionManager error: %v", err)
+	}
+	defer sessions.Stop()
+
+	token, err := sessions.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	termMgr := terminal.NewManager(&cfg.Terminal)
+	defer termMgr.Stop()
+	srv := NewServer(cfg, nil, sessions, termMgr, nil)
+
+	task := projectControlTask{ID: projectControlTaskPanelID, RowVersion: 1}
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan")
+	if len(termMgr.ListSessions("ian")) != 0 {
+		t.Fatalf("read-only plan phase created live terminal sessions")
+	}
+	task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan", "plan", "recorded", "Implementation plan recorded")
+
+	startImplementBody := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"implement"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, startImplementBody)
+	terminalSessions := termMgr.ListSessions("ian")
+	if len(terminalSessions) != 1 {
+		t.Fatalf("len(terminal sessions) = %d, want 1 for scoped-write phase", len(terminalSessions))
+	}
+	wantSessionID := projectControlSessionIDForTerminal(terminalSessions[0].ID)
+	wantWorkspaceRef := ""
+	taskSessionCount := 0
+	for _, attempt := range snapshot.PhaseAttempts {
+		if attempt.TaskID != projectControlTaskPanelID || attempt.PhaseID != "implement" {
+			continue
+		}
+		if attempt.SessionID != wantSessionID {
+			t.Fatalf("PhaseAttempt SessionID = %q, want %q", attempt.SessionID, wantSessionID)
+		}
+		workspaceKind, workspaceDir := projectControlParseWorkspaceRef(attempt.WorkspaceRef)
+		if workspaceKind != projectControlWorkspaceSharedRepo {
+			t.Fatalf("PhaseAttempt WorkspaceRef = %q, want %q workspace kind", attempt.WorkspaceRef, projectControlWorkspaceSharedRepo)
+		}
+		if workspaceDir != srv.projectControl.runtimeRootDir {
+			t.Fatalf("PhaseAttempt workspaceDir = %q, want %q", workspaceDir, srv.projectControl.runtimeRootDir)
+		}
+		wantWorkspaceRef = attempt.WorkspaceRef
+	}
+	if wantWorkspaceRef == "" {
+		t.Fatal("implement phase attempt not found in snapshot")
+	}
+	for _, session := range snapshot.Sessions {
+		if session.TaskID != projectControlTaskPanelID || session.PhaseAttemptID == "" || session.ExecutionRole != "implement" {
 			continue
 		}
 		taskSessionCount += 1
@@ -974,12 +1079,47 @@ func TestProjectControlStartPhaseCreatesAttachableTerminalSession(t *testing.T) 
 		if session.TerminalID != terminalSessions[0].ID || !session.SupportsAttach {
 			t.Fatalf("phase session terminal binding = %#v, want attachable terminal %q", session, terminalSessions[0].ID)
 		}
-		if session.PhaseAttemptID != attempt.ID {
-			t.Fatalf("phase session PhaseAttemptID = %q, want %q", session.PhaseAttemptID, attempt.ID)
+		if session.WorkspaceRef != wantWorkspaceRef {
+			t.Fatalf("phase session WorkspaceRef = %q, want %q", session.WorkspaceRef, wantWorkspaceRef)
 		}
 	}
 	if taskSessionCount != 1 {
-		t.Fatalf("task session count = %d, want exactly one phase-linked session", taskSessionCount)
+		t.Fatalf("task session count = %d, want exactly one attachable phase-linked session", taskSessionCount)
+	}
+}
+
+func TestProjectControlAllowsTerminalAttachOnlyForScopedWritePhaseSessions(t *testing.T) {
+	store := newProjectControlStore(t.TempDir())
+	_, err := store.withStateLocked("ian", func(state *projectControlState) error {
+		state.Tasks = []projectControlTask{{
+			ID:               "task-attach-policy",
+			ProjectID:        "project-attach",
+			WorkstreamID:     "workstream-attach",
+			State:            "running",
+			AcceptanceStatus: "not_ready",
+			RuntimeID:        projectControlRuntimeID,
+			SelectedSkill:    projectControlDefaultSkillID,
+			RunbookID:        projectControlDefaultRunbookID,
+			CurrentPhase:     "implement",
+			RunbookState:     "in_progress",
+		}}
+		state.PhaseAttempts = []projectControlPhaseAttempt{
+			{ID: "attempt-review", TaskID: "task-attach-policy", RunbookID: projectControlDefaultRunbookID, PhaseID: "review", SessionID: projectControlSessionIDForTerminal("term-review"), Status: "running"},
+			{ID: "attempt-implement", TaskID: "task-attach-policy", RunbookID: projectControlDefaultRunbookID, PhaseID: "implement", SessionID: projectControlSessionIDForTerminal("term-implement"), Status: "running"},
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withStateLocked error: %v", err)
+	}
+	if store.allowsTerminalAttach("ian", "term-review") {
+		t.Fatal("review phase terminal attach should be denied")
+	}
+	if !store.allowsTerminalAttach("ian", "term-implement") {
+		t.Fatal("implement phase terminal attach should be allowed")
+	}
+	if !store.allowsTerminalAttach("ian", "term-unlinked") {
+		t.Fatal("unlinked terminal sessions should remain attachable")
 	}
 }
 
@@ -989,10 +1129,15 @@ func TestProjectControlRunToolCompletesTestPhaseOnPassingResult(t *testing.T) {
 	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
 
 	previous := projectControlExecuteTool
-	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
+	usedWorkspaceDir := ""
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
 		if toolID != "go_test" {
 			t.Fatalf("toolID = %q, want go_test", toolID)
 		}
+		if strings.TrimSpace(workspaceDir) == "" {
+			t.Fatal("workspaceDir is empty, want runtime workspace")
+		}
+		usedWorkspaceDir = workspaceDir
 		return projectControlToolResult{
 			ToolID:          "go_test",
 			ArtifactKind:    "test_result",
@@ -1021,18 +1166,36 @@ func TestProjectControlRunToolCompletesTestPhaseOnPassingResult(t *testing.T) {
 		t.Fatalf("Artifacts = %#v, want passing test_result from tool", snapshot.Artifacts)
 	}
 	foundCompletedAttempt := false
+	attemptWorkspaceRef := ""
 	for _, attempt := range snapshot.PhaseAttempts {
 		if attempt.TaskID == task.ID && attempt.PhaseID == "test" && attempt.Status == "completed" {
 			foundCompletedAttempt = true
+			attemptWorkspaceRef = attempt.WorkspaceRef
+			workspaceKind, workspaceDir := projectControlParseWorkspaceRef(attempt.WorkspaceRef)
+			if workspaceKind != projectControlWorkspaceReadOnlySnapshot {
+				t.Fatalf("test phase WorkspaceRef = %q, want %q workspace kind", attempt.WorkspaceRef, projectControlWorkspaceReadOnlySnapshot)
+			}
+			if workspaceDir != usedWorkspaceDir {
+				t.Fatalf("tool workspaceDir = %q, want %q from completed attempt", usedWorkspaceDir, workspaceDir)
+			}
+			if workspaceDir == srv.projectControl.runtimeRootDir {
+				t.Fatalf("tool workspaceDir = %q, want isolated snapshot instead of shared repo", workspaceDir)
+			}
 			break
 		}
 	}
 	if !foundCompletedAttempt {
 		t.Fatalf("PhaseAttempts = %#v, want completed test attempt", snapshot.PhaseAttempts)
 	}
+	if attemptWorkspaceRef == "" {
+		t.Fatal("completed test attempt did not record workspace ref")
+	}
 	foundCompletedToolRun := false
 	for _, run := range snapshot.ToolRuns {
 		if run.TaskID == task.ID && run.PhaseID == "test" && run.ToolID == "go_test" && run.Status == "completed" && run.Outcome == "pass" && run.ArtifactID != "" {
+			if run.WorkspaceRef != attemptWorkspaceRef {
+				t.Fatalf("ToolRun WorkspaceRef = %q, want %q", run.WorkspaceRef, attemptWorkspaceRef)
+			}
 			foundCompletedToolRun = true
 			break
 		}
@@ -1048,7 +1211,7 @@ func TestProjectControlRunToolRoutesFailingTestToRecovery(t *testing.T) {
 	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
 
 	previous := projectControlExecuteTool
-	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
 		return projectControlToolResult{
 			ToolID:          "go_test",
 			ArtifactKind:    "test_result",
@@ -1107,7 +1270,7 @@ func TestProjectControlRunToolRecordsRepoStatusWithoutAdvancingReviewPhase(t *te
 	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
 
 	previous := projectControlExecuteTool
-	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
 		if toolID != "repo_status" {
 			t.Fatalf("toolID = %q, want repo_status", toolID)
 		}
@@ -1170,7 +1333,7 @@ func TestProjectControlRunToolReturnsRunningToolRunBeforeAsyncCompletion(t *test
 	})
 	previous := projectControlExecuteTool
 	executed := false
-	projectControlExecuteTool = func(toolID string) (projectControlToolResult, error) {
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
 		executed = true
 		return projectControlToolResult{}, nil
 	}
