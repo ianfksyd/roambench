@@ -218,6 +218,8 @@ type projectControlToolRun struct {
 	Outcome        string `json:"outcome,omitempty"`
 	Summary        string `json:"summary,omitempty"`
 	Error          string `json:"error,omitempty"`
+	RetryCount     int    `json:"retryCount,omitempty"`
+	MaxRetries     int    `json:"maxRetries,omitempty"`
 }
 
 type projectControlRuntime struct {
@@ -1320,6 +1322,7 @@ type projectControlToolDef struct {
 	ArtifactKind   string   `json:"artifactKind"`
 	ArtifactLabel  string   `json:"artifactLabel"`
 	AllowedPhases  []string `json:"allowedPhases"`
+	MaxRetries     int      `json:"maxRetries,omitempty"`
 }
 
 func (d projectControlToolDef) timeout() time.Duration {
@@ -1362,6 +1365,7 @@ func defaultProjectControlTools() []projectControlToolDef {
 			ArtifactKind:   "test_result",
 			ArtifactLabel:  "Go test",
 			AllowedPhases:  []string{"test", "final_validation"},
+			MaxRetries:     1,
 		},
 	}
 }
@@ -1579,6 +1583,10 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 	if runningIndex := findRunningProjectControlToolRunIndex(state.ToolRuns, task.ID, attempt.ID, ""); runningIndex != -1 {
 		return "", fmt.Errorf("tool %s is already running for phase %s", state.ToolRuns[runningIndex].ToolID, phaseID)
 	}
+	maxRetries := 0
+	if def, ok := findProjectControlToolDef(projectControlToolsForState(state), toolID); ok {
+		maxRetries = def.MaxRetries
+	}
 	toolRun := projectControlToolRun{
 		ID:             projectControlID("tool-run", task.ID+"-"+phaseID+"-"+toolID),
 		TaskID:         task.ID,
@@ -1589,6 +1597,7 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 		Status:         "running",
 		StartedAt:      now,
 		Summary:        "Running " + toolID + " for " + phaseID + ".",
+		MaxRetries:     maxRetries,
 	}
 	state.ToolRuns = append(state.ToolRuns, toolRun)
 	task.RecentSummary = "Tool " + toolID + " started for " + phaseID + "."
@@ -1722,36 +1731,67 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 		if taskIndex == -1 {
 			return fmt.Errorf("tool run task not found: %s", state.ToolRuns[runIndex].TaskID)
 		}
-		if runErr != nil {
-			state.ToolRuns[runIndex].Status = "failed"
-			state.ToolRuns[runIndex].CompletedAt = now
-			state.ToolRuns[runIndex].Outcome = "fail"
-			state.ToolRuns[runIndex].Error = runErr.Error()
-			state.ToolRuns[runIndex].Summary = "Tool " + state.ToolRuns[runIndex].ToolID + " failed before producing evidence."
+		handleToolRunFailure := func(failErr string, detail string) {
+			run := &state.ToolRuns[runIndex]
+			task := &state.Tasks[taskIndex]
+			run.Status = "failed"
+			run.CompletedAt = now
+			run.Outcome = "fail"
+			run.Error = failErr
+			run.Summary = detail
 			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
-				ID:           projectControlID("event", "tool-run-failed"),
-				Timestamp:    now,
-				Actor:        "tool_gateway",
-				Action:       "tool_run_failed",
-				Detail:       "Tool " + state.ToolRuns[runIndex].ToolID + " failed: " + runErr.Error(),
-				ProjectID:    state.Tasks[taskIndex].ProjectID,
-				WorkstreamID: state.Tasks[taskIndex].WorkstreamID,
-				TaskID:       state.Tasks[taskIndex].ID,
+				ID: projectControlID("event", "tool-run-failed"), Timestamp: now,
+				Actor: "tool_gateway", Action: "tool_run_failed",
+				Detail: detail, ProjectID: task.ProjectID,
+				WorkstreamID: task.WorkstreamID, TaskID: task.ID,
 			})
-			state.Tasks[taskIndex].RecentSummary = "Tool " + state.ToolRuns[runIndex].ToolID + " failed before producing evidence."
-			state.Tasks[taskIndex].NextStep = "Review the tool failure and retry or continue manually."
-			state.Tasks[taskIndex].RowVersion += 1
+			if run.RetryCount < run.MaxRetries {
+				retry := projectControlToolRun{
+					ID: projectControlID("tool-run", task.ID+"-"+run.PhaseID+"-"+run.ToolID+"-retry"),
+					TaskID: task.ID, PhaseAttemptID: run.PhaseAttemptID,
+					PhaseID: run.PhaseID, ToolID: run.ToolID,
+					WorkspaceRef: run.WorkspaceRef, Status: "running",
+					StartedAt: now, MaxRetries: run.MaxRetries,
+					RetryCount: run.RetryCount + 1,
+					Summary: fmt.Sprintf("Retry %d/%d of %s for %s.", run.RetryCount+1, run.MaxRetries, run.ToolID, run.PhaseID),
+				}
+				state.ToolRuns = append(state.ToolRuns, retry)
+				nextToolRunID = retry.ID
+				task.RecentSummary = fmt.Sprintf("Tool %s failed, retrying (%d/%d).", run.ToolID, retry.RetryCount, retry.MaxRetries)
+				task.NextStep = "Automatic retry in progress."
+				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+					ID: projectControlID("event", "tool-retry"), Timestamp: now,
+					Actor: "tool_gateway", Action: "tool_retry",
+					Detail: fmt.Sprintf("Auto-retrying %s (%d/%d).", run.ToolID, retry.RetryCount, retry.MaxRetries),
+					ProjectID: task.ProjectID, WorkstreamID: task.WorkstreamID, TaskID: task.ID,
+				})
+			} else {
+				cp := projectControlCheckpoint{
+					ID: projectControlID("checkpoint", "tool-failure-"+task.ID+"-"+run.ToolID),
+					TaskID: task.ID, Kind: "tool_failure",
+					Title:  "Tool " + run.ToolID + " failed",
+					Reason: detail, Status: "pending", RequestedAt: now,
+					AllowedActions: []string{"approve", "reject", "reroute"},
+				}
+				state.Checkpoints = append(state.Checkpoints, cp)
+				task.RecentSummary = "Tool " + run.ToolID + " failed after retries; awaiting human review."
+				task.NextStep = "Review the failure in the approvals inbox."
+				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+					ID: projectControlID("event", "tool-failure-checkpoint"), Timestamp: now,
+					Actor: "tool_gateway", Action: "checkpoint_raised",
+					Detail: "Created checkpoint after " + run.ToolID + " exhausted retries.",
+					ProjectID: task.ProjectID, WorkstreamID: task.WorkstreamID,
+					TaskID: task.ID, CheckpointID: cp.ID,
+				})
+			}
+			task.RowVersion += 1
+		}
+		if runErr != nil {
+			handleToolRunFailure(runErr.Error(), "Tool "+state.ToolRuns[runIndex].ToolID+" failed: "+runErr.Error())
 			return nil
 		}
 		if err := applyProjectControlToolResult(state, &state.Tasks[taskIndex], &state.ToolRuns[runIndex], result, now); err != nil {
-			state.ToolRuns[runIndex].Status = "failed"
-			state.ToolRuns[runIndex].CompletedAt = now
-			state.ToolRuns[runIndex].Outcome = "fail"
-			state.ToolRuns[runIndex].Error = err.Error()
-			state.ToolRuns[runIndex].Summary = "Tool " + state.ToolRuns[runIndex].ToolID + " result could not be applied."
-			state.Tasks[taskIndex].RecentSummary = "Tool " + state.ToolRuns[runIndex].ToolID + " result could not be applied."
-			state.Tasks[taskIndex].NextStep = "Review the tool failure and continue manually."
-			state.Tasks[taskIndex].RowVersion += 1
+			handleToolRunFailure(err.Error(), "Tool "+state.ToolRuns[runIndex].ToolID+" result could not be applied: "+err.Error())
 			return nil
 		}
 		state.Tasks[taskIndex].RowVersion += 1

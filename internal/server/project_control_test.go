@@ -4605,3 +4605,80 @@ func TestProjectControlToolCRUDAPI(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectControlToolRunRetriesOnExecutionError(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	callCount := 0
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
+		callCount++
+		if callCount == 1 {
+			return projectControlToolResult{}, fmt.Errorf("transient error")
+		}
+		return projectControlToolResult{
+			ToolID: "go_test", ArtifactKind: "test_result", ArtifactOutcome: "pass",
+			ArtifactLabel: "Go test", ArtifactValue: "ok",
+		}, nil
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+	updated := projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+
+	// go_test has MaxRetries=1, so first fail should retry and pass
+	if callCount != 2 {
+		t.Fatalf("callCount = %d, want 2 (1 fail + 1 retry pass)", callCount)
+	}
+	// After retry passes, should advance past test phase
+	if updated.CurrentPhase != "review" {
+		t.Fatalf("CurrentPhase = %q, want review (retry succeeded)", updated.CurrentPhase)
+	}
+	// Should have a retry event
+	req := httptest.NewRequest(http.MethodGet, "/api/project-control/events?limit=30", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	var eventsResp projectControlEventsResponse
+	json.NewDecoder(rec.Body).Decode(&eventsResp)
+	foundRetry := false
+	for _, ev := range eventsResp.Events {
+		if ev.Action == "tool_retry" {
+			foundRetry = true
+		}
+	}
+	if !foundRetry {
+		t.Fatal("expected tool_retry event")
+	}
+}
+
+func TestProjectControlToolRunCreatesCheckpointAfterRetriesExhausted(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
+		return projectControlToolResult{}, fmt.Errorf("persistent error")
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	task := prepareProjectControlCodeChangeTaskAtTestPhase(t, srv, token)
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"test","toolId":"go_test"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+
+	// go_test MaxRetries=1: first call fails, retry fails → checkpoint
+	foundCheckpoint := false
+	for _, cp := range snapshot.Checkpoints {
+		if cp.TaskID == task.ID && cp.Kind == "tool_failure" && cp.Status == "pending" {
+			foundCheckpoint = true
+		}
+	}
+	if !foundCheckpoint {
+		t.Fatal("expected tool_failure checkpoint after retries exhausted")
+	}
+}
