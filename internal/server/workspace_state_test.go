@@ -2,8 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -123,5 +125,93 @@ func TestWorkspaceStateRouteReturnsEmptyPayloadWhenMissing(t *testing.T) {
 	}
 	if resp.ActiveWorkspaceID != "" {
 		t.Fatalf("ActiveWorkspaceID = %q, want empty", resp.ActiveWorkspaceID)
+	}
+}
+
+func testWorkspaceStatePayload(updatedAt, activeWorkspaceID, workspaceName string) workspaceStatePayload {
+	return workspaceStatePayload{
+		ActiveWorkspaceID: activeWorkspaceID,
+		Workspaces: []workspaceStateRecord{{
+			ID:          activeWorkspaceID,
+			Layout:      "2",
+			TerminalIDs: []string{"term-1", "term-2"},
+			Name:        workspaceName,
+			LabelNumber: 1,
+		}},
+		UpdatedAt: updatedAt,
+	}
+}
+
+func TestWorkspaceStateLoadRecoversFromNewerWAL(t *testing.T) {
+	store := newWorkspaceStateStore(t.TempDir())
+	base := testWorkspaceStatePayload("2026-01-01T00:00:00Z", "view-1", "Base")
+	if err := store.Save("ian", base); err != nil {
+		t.Fatalf("Save(base) error: %v", err)
+	}
+
+	recovered := testWorkspaceStatePayload("2026-01-01T00:01:00Z", "view-2", "Recovered")
+	payload, err := json.Marshal(recovered)
+	if err != nil {
+		t.Fatalf("Marshal(recovered) error: %v", err)
+	}
+	if err := workspaceStateWriteFileAtomically(store.walPathFor("ian"), payload, 0600); err != nil {
+		t.Fatalf("Write WAL error: %v", err)
+	}
+
+	loaded, exists, err := store.Load("ian")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected workspace state to exist after WAL recovery")
+	}
+	if loaded.ActiveWorkspaceID != "view-2" {
+		t.Fatalf("ActiveWorkspaceID = %q, want %q", loaded.ActiveWorkspaceID, "view-2")
+	}
+	if loaded.Workspaces[0].Name != "Recovered" {
+		t.Fatalf("Workspaces[0].Name = %q, want %q", loaded.Workspaces[0].Name, "Recovered")
+	}
+	if _, err := os.Stat(store.walPathFor("ian")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("walPath still exists after recovery: %v", err)
+	}
+
+	persisted, exists, err := workspaceStateReadFile(store.pathFor("ian"))
+	if err != nil {
+		t.Fatalf("Read persisted state error: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected persisted workspace state after WAL recovery")
+	}
+	if persisted.ActiveWorkspaceID != "view-2" {
+		t.Fatalf("persisted ActiveWorkspaceID = %q, want %q", persisted.ActiveWorkspaceID, "view-2")
+	}
+}
+
+func TestWorkspaceStateLoadUsesWALWhenMainStateIsMissing(t *testing.T) {
+	store := newWorkspaceStateStore(t.TempDir())
+	recovered := testWorkspaceStatePayload("2026-01-01T00:02:00Z", "view-3", "Recovered from WAL only")
+	payload, err := json.Marshal(recovered)
+	if err != nil {
+		t.Fatalf("Marshal(recovered) error: %v", err)
+	}
+	if err := workspaceStateWriteFileAtomically(store.walPathFor("ian"), payload, 0600); err != nil {
+		t.Fatalf("Write WAL error: %v", err)
+	}
+
+	loaded, exists, err := store.Load("ian")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected workspace state to recover from WAL without main state")
+	}
+	if loaded.ActiveWorkspaceID != "view-3" {
+		t.Fatalf("ActiveWorkspaceID = %q, want %q", loaded.ActiveWorkspaceID, "view-3")
+	}
+	if _, err := os.Stat(store.pathFor("ian")); err != nil {
+		t.Fatalf("main state path missing after WAL recovery: %v", err)
+	}
+	if _, err := os.Stat(store.walPathFor("ian")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("walPath still exists after recovery: %v", err)
 	}
 }

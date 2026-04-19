@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1315,6 +1316,117 @@ func TestProjectControlAllowsTerminalAttachOnlyForScopedWritePhaseSessions(t *te
 	}
 	if !store.allowsTerminalAttach("ian", "term-unlinked") {
 		t.Fatal("unlinked terminal sessions should remain attachable")
+	}
+}
+
+func testProjectControlPersistenceState(updatedAt, taskTitle string) projectControlState {
+	state := projectControlState{
+		ActiveProjectID: "project-wal",
+		Projects: []projectControlProject{{
+			ID:         "project-wal",
+			Name:       "Project WAL",
+			Status:     "active",
+			RowVersion: 1,
+		}},
+		Workstreams: []projectControlWorkstream{{
+			ID:         "workstream-wal",
+			ProjectID:  "project-wal",
+			Title:      "Durability",
+			Status:     "running",
+			Priority:   "high",
+			RowVersion: 1,
+		}},
+		Tasks: []projectControlTask{{
+			ID:               "task-wal",
+			ProjectID:        "project-wal",
+			WorkstreamID:     "workstream-wal",
+			Title:            taskTitle,
+			State:            "running",
+			AcceptanceStatus: "not_ready",
+			Priority:         "high",
+			RiskLevel:        "medium",
+			SelectedSkill:    projectControlDefaultSkillID,
+			RunbookID:        projectControlDefaultRunbookID,
+			CurrentPhase:     "implement",
+			RunbookState:     "in_progress",
+			RowVersion:       1,
+		}},
+		UpdatedAt: updatedAt,
+	}
+	projectControlNormalizeState(&state)
+	state.UpdatedAt = updatedAt
+	return state
+}
+
+func TestProjectControlLoadLockedRecoversFromNewerWAL(t *testing.T) {
+	store := newProjectControlStore(t.TempDir())
+	base := testProjectControlPersistenceState("2026-01-01T00:00:00Z", "Base task")
+	if err := store.saveLocked("ian", base); err != nil {
+		t.Fatalf("saveLocked(base) error: %v", err)
+	}
+
+	recovered := testProjectControlPersistenceState("2026-01-01T00:01:00Z", "Recovered task")
+	payload, err := json.Marshal(recovered)
+	if err != nil {
+		t.Fatalf("Marshal(recovered) error: %v", err)
+	}
+	if err := projectControlWriteFileAtomically(store.walPathFor("ian"), payload, 0600); err != nil {
+		t.Fatalf("Write WAL error: %v", err)
+	}
+
+	loaded, exists, err := store.loadLocked("ian")
+	if err != nil {
+		t.Fatalf("loadLocked error: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected state to exist after WAL recovery")
+	}
+	if got := loaded.Tasks[0].Title; got != "Recovered task" {
+		t.Fatalf("loaded task title = %q, want %q", got, "Recovered task")
+	}
+	if _, err := os.Stat(store.walPathFor("ian")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("walPath still exists after recovery: %v", err)
+	}
+
+	persisted, exists, err := projectControlReadStateFile(store.pathFor("ian"))
+	if err != nil {
+		t.Fatalf("Read persisted state error: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected persisted state after WAL recovery")
+	}
+	if got := persisted.Tasks[0].Title; got != "Recovered task" {
+		t.Fatalf("persisted task title = %q, want %q", got, "Recovered task")
+	}
+}
+
+func TestProjectControlLoadLockedUsesWALWhenMainStateIsMissing(t *testing.T) {
+	store := newProjectControlStore(t.TempDir())
+	recovered := testProjectControlPersistenceState("2026-01-01T00:02:00Z", "Recovered from WAL only")
+	payload, err := json.Marshal(recovered)
+	if err != nil {
+		t.Fatalf("Marshal(recovered) error: %v", err)
+	}
+	if err := projectControlWriteFileAtomically(store.walPathFor("ian"), payload, 0600); err != nil {
+		t.Fatalf("Write WAL error: %v", err)
+	}
+
+	loaded, exists, err := store.loadLocked("ian")
+	if err != nil {
+		t.Fatalf("loadLocked error: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected loadLocked to recover from WAL without main state")
+	}
+	if got := loaded.Tasks[0].Title; got != "Recovered from WAL only" {
+		t.Fatalf("loaded task title = %q, want %q", got, "Recovered from WAL only")
+	}
+
+	if _, err := os.Stat(store.pathFor("ian")); err != nil {
+		t.Fatalf("main state path missing after WAL recovery: %v", err)
+	}
+	if _, err := os.Stat(store.walPathFor("ian")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("walPath still exists after recovery: %v", err)
 	}
 }
 

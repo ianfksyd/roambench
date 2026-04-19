@@ -45,20 +45,37 @@ func (s *workspaceStateStore) Load(username string) (workspaceStatePayload, bool
 	defer s.mu.Unlock()
 
 	path := s.pathFor(username)
-	payload, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return workspaceStatePayload{Workspaces: []workspaceStateRecord{}}, false, nil
-	}
+	walPath := s.walPathFor(username)
+	state, exists, err := workspaceStateReadFile(path)
 	if err != nil {
 		return workspaceStatePayload{}, false, err
 	}
-
-	var state workspaceStatePayload
-	if err := json.Unmarshal(payload, &state); err != nil {
+	walState, walExists, err := workspaceStateReadFile(walPath)
+	if err != nil {
 		return workspaceStatePayload{}, false, err
 	}
+	if !exists && !walExists {
+		return workspaceStatePayload{Workspaces: []workspaceStateRecord{}}, false, nil
+	}
 
+	stateSourceIsWAL := false
+	clearWAL := false
+	switch {
+	case walExists && (!exists || workspaceStatePreferState(walState, state)):
+		state = walState
+		exists = true
+		stateSourceIsWAL = true
+	case walExists:
+		clearWAL = true
+	}
 	normalizeWorkspaceStatePayload(&state)
+	if stateSourceIsWAL {
+		if err := s.saveLocked(username, state); err != nil {
+			return workspaceStatePayload{}, false, err
+		}
+	} else if clearWAL {
+		_ = os.Remove(walPath)
+	}
 	return state, true, nil
 }
 
@@ -75,32 +92,129 @@ func (s *workspaceStateStore) Save(username string, state workspaceStatePayload)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.saveLocked(username, state)
+}
+
+func (s *workspaceStateStore) saveLocked(username string, state workspaceStatePayload) error {
+	if strings.TrimSpace(username) == "" {
+		return errors.New("missing username")
+	}
+	normalizeWorkspaceStatePayload(&state)
+	if state.UpdatedAt == "" {
+		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
 	if err := os.MkdirAll(s.rootDir, 0700); err != nil {
 		return err
 	}
 
 	path := s.pathFor(username)
-	tmpPath := path + ".tmp"
+	walPath := s.walPathFor(username)
 	backupPath := path + ".bak"
 	payload, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
+	if err := workspaceStateWriteFileAtomically(walPath, payload, 0600); err != nil {
+		return err
+	}
 	if existing, err := os.ReadFile(path); err == nil {
-		if err := os.WriteFile(backupPath, existing, 0600); err != nil {
+		if err := workspaceStateWriteFileAtomically(backupPath, existing, 0600); err != nil {
 			return err
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.WriteFile(tmpPath, payload, 0600); err != nil {
+	if err := workspaceStateWriteFileAtomically(path, payload, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	_ = os.Remove(walPath)
+	return nil
 }
 
 func (s *workspaceStateStore) pathFor(username string) string {
 	return filepath.Join(s.rootDir, storagePathSegment(username)+".json")
+}
+
+func (s *workspaceStateStore) walPathFor(username string) string {
+	return filepath.Join(s.rootDir, storagePathSegment(username)+".wal.json")
+}
+
+func workspaceStateReadFile(path string) (workspaceStatePayload, bool, error) {
+	payload, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return workspaceStatePayload{}, false, nil
+	}
+	if err != nil {
+		return workspaceStatePayload{}, false, err
+	}
+	var state workspaceStatePayload
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return workspaceStatePayload{}, false, err
+	}
+	return state, true, nil
+}
+
+func workspaceStateParseUpdatedAt(state workspaceStatePayload) (time.Time, bool) {
+	value := strings.TrimSpace(state.UpdatedAt)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts, true
+	}
+	if ts, err := time.Parse(time.RFC3339, value); err == nil {
+		return ts, true
+	}
+	return time.Time{}, false
+}
+
+func workspaceStatePreferState(candidate, current workspaceStatePayload) bool {
+	candidateTime, candidateOK := workspaceStateParseUpdatedAt(candidate)
+	currentTime, currentOK := workspaceStateParseUpdatedAt(current)
+	switch {
+	case candidateOK && currentOK:
+		if candidateTime.Equal(currentTime) {
+			return true
+		}
+		return candidateTime.After(currentTime)
+	case candidateOK && !currentOK:
+		return true
+	case !candidateOK && currentOK:
+		return false
+	default:
+		return true
+	}
+}
+
+func workspaceStateWriteFileAtomically(path string, payload []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(payload); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func normalizeWorkspaceStatePayload(state *workspaceStatePayload) {

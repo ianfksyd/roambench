@@ -3919,21 +3919,102 @@ func (s *projectControlStore) save(username string, state projectControlState) e
 	return s.saveLocked(username, state)
 }
 
-func (s *projectControlStore) loadLocked(username string) (projectControlState, bool, error) {
-	path := s.pathFor(username)
+func projectControlReadStateFile(path string) (projectControlState, bool, error) {
 	payload, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		legacyPath := s.legacyPathFor(username)
-		legacyPayload, legacyErr := os.ReadFile(legacyPath)
-		if errors.Is(legacyErr, os.ErrNotExist) {
-			return projectControlState{}, false, nil
+		return projectControlState{}, false, nil
+	}
+	if err != nil {
+		return projectControlState{}, false, err
+	}
+	var state projectControlState
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return projectControlState{}, false, err
+	}
+	return state, true, nil
+}
+
+func projectControlParseStateUpdatedAt(state projectControlState) (time.Time, bool) {
+	value := strings.TrimSpace(state.UpdatedAt)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts, true
+	}
+	if ts, err := time.Parse(time.RFC3339, value); err == nil {
+		return ts, true
+	}
+	return time.Time{}, false
+}
+
+func projectControlPreferState(candidate, current projectControlState) bool {
+	candidateTime, candidateOK := projectControlParseStateUpdatedAt(candidate)
+	currentTime, currentOK := projectControlParseStateUpdatedAt(current)
+	switch {
+	case candidateOK && currentOK:
+		if candidateTime.Equal(currentTime) {
+			return true
 		}
+		return candidateTime.After(currentTime)
+	case candidateOK && !currentOK:
+		return true
+	case !candidateOK && currentOK:
+		return false
+	default:
+		return true
+	}
+}
+
+func projectControlWriteFileAtomically(path string, payload []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(payload); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func (s *projectControlStore) loadLocked(username string) (projectControlState, bool, error) {
+	path := s.pathFor(username)
+	walPath := s.walPathFor(username)
+
+	state, stateExists, err := projectControlReadStateFile(path)
+	if err != nil {
+		return projectControlState{}, false, err
+	}
+	walState, walExists, err := projectControlReadStateFile(walPath)
+	if err != nil {
+		return projectControlState{}, false, err
+	}
+	if !stateExists && !walExists {
+		legacyState, legacyExists, legacyErr := projectControlReadStateFile(s.legacyPathFor(username))
 		if legacyErr != nil {
 			return projectControlState{}, false, legacyErr
 		}
-		var legacyState projectControlState
-		if err := json.Unmarshal(legacyPayload, &legacyState); err != nil {
-			return projectControlState{}, false, err
+		if !legacyExists {
+			return projectControlState{}, false, nil
 		}
 		needsSave := projectControlStateRequiresCanonicalization(legacyState)
 		projectControlNormalizeState(&legacyState)
@@ -3948,25 +4029,35 @@ func (s *projectControlStore) loadLocked(username string) (projectControlState, 
 		}
 		return legacyState, true, nil
 	}
-	if err != nil {
-		return projectControlState{}, false, err
+
+	stateSourceIsWAL := false
+	clearWAL := false
+	switch {
+	case walExists && (!stateExists || projectControlPreferState(walState, state)):
+		state = walState
+		stateExists = true
+		stateSourceIsWAL = true
+	case walExists:
+		clearWAL = true
 	}
-	var state projectControlState
-	if err := json.Unmarshal(payload, &state); err != nil {
-		return projectControlState{}, false, err
-	}
+
 	needsSave := projectControlStateRequiresCanonicalization(state)
 	projectControlNormalizeState(&state)
 	if projectControlRecoverInterruptedToolRuns(&state, time.Now().UTC()) {
 		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		needsSave = true
 	}
+	if stateSourceIsWAL {
+		needsSave = true
+	}
 	if needsSave {
 		if saveErr := s.saveLocked(username, state); saveErr != nil {
 			return projectControlState{}, false, saveErr
 		}
+	} else if clearWAL {
+		_ = os.Remove(walPath)
 	}
-	return state, true, nil
+	return state, stateExists, nil
 }
 
 func (s *projectControlStore) saveLocked(username string, state projectControlState) error {
@@ -3974,27 +4065,35 @@ func (s *projectControlStore) saveLocked(username string, state projectControlSt
 		return err
 	}
 	path := s.pathFor(username)
-	tmpPath := path + ".tmp"
+	walPath := s.walPathFor(username)
 	backupPath := path + ".bak"
 	payload, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
+	if err := projectControlWriteFileAtomically(walPath, payload, 0600); err != nil {
+		return err
+	}
 	if existing, err := os.ReadFile(path); err == nil {
-		if err := os.WriteFile(backupPath, existing, 0600); err != nil {
+		if err := projectControlWriteFileAtomically(backupPath, existing, 0600); err != nil {
 			return err
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.WriteFile(tmpPath, payload, 0600); err != nil {
+	if err := projectControlWriteFileAtomically(path, payload, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	_ = os.Remove(walPath)
+	return nil
 }
 
 func (s *projectControlStore) pathFor(username string) string {
 	return filepath.Join(s.rootDir, storagePathSegment(username)+".json")
+}
+
+func (s *projectControlStore) walPathFor(username string) string {
+	return filepath.Join(s.rootDir, storagePathSegment(username)+".wal.json")
 }
 
 func (s *projectControlStore) legacyPathFor(username string) string {
