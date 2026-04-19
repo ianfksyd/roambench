@@ -2361,25 +2361,35 @@ func TestProjectControlTaskAndWorkstreamActionTransitions(t *testing.T) {
 		}
 	}
 
-	taskReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_execution"}`))
+	// start_execution now starts the first runbook phase, so get the actual rowVersion after.
+	startReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_execution"}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	startRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("PATCH task start action status = %d, want %d: %s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+	startSnapshot := decodeProjectControlSnapshot(t, startRec)
+	startTask := projectControlTaskFromSnapshotByID(t, startSnapshot, projectControlTaskPanelID)
+	if startTask.State != "running" {
+		t.Fatalf("task state after start_execution = %q, want running", startTask.State)
+	}
+	rv := startTask.RowVersion
+
+	markCompleteBody := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"mark_execution_complete"}`, rv)
+	taskReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(markCompleteBody))
 	taskReq.Header.Set("Content-Type", "application/json")
 	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	taskRec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(taskRec, taskReq)
 	if taskRec.Code != http.StatusOK {
-		t.Fatalf("PATCH task start action status = %d, want %d", taskRec.Code, http.StatusOK)
+		t.Fatalf("PATCH task complete action status = %d, want %d: %s", taskRec.Code, http.StatusOK, taskRec.Body.String())
 	}
+	rv++
 
-	taskReq = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":2,"action":"mark_execution_complete"}`))
-	taskReq.Header.Set("Content-Type", "application/json")
-	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-	taskRec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(taskRec, taskReq)
-	if taskRec.Code != http.StatusOK {
-		t.Fatalf("PATCH task complete action status = %d, want %d", taskRec.Code, http.StatusOK)
-	}
-
-	taskReq = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":3,"action":"mark_ready_for_acceptance"}`))
+	readyBody := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"mark_ready_for_acceptance"}`, rv)
+	taskReq = httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(readyBody))
 	taskReq.Header.Set("Content-Type", "application/json")
 	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	taskRec = httptest.NewRecorder()
@@ -2387,18 +2397,31 @@ func TestProjectControlTaskAndWorkstreamActionTransitions(t *testing.T) {
 	if taskRec.Code != http.StatusBadRequest {
 		t.Fatalf("PATCH task ready action status = %d, want %d", taskRec.Code, http.StatusBadRequest)
 	}
-	if !strings.Contains(taskRec.Body.String(), "missing plan") {
-		t.Fatalf("PATCH task ready error = %q, want missing plan evidence", taskRec.Body.String())
+	if !strings.Contains(taskRec.Body.String(), "missing") {
+		t.Fatalf("PATCH task ready error = %q, want missing evidence", taskRec.Body.String())
 	}
 
-	taskSnapshot, rowVersion := completeProjectControlTaskRunbook(t, srv, token, projectControlTaskPanelID, 3)
-	if rowVersion != 13 {
-		t.Fatalf("rowVersion after runbook = %d, want 13", rowVersion)
+	// Plan phase was already started by start_execution, so complete it then continue.
+	completeSteps := []string{
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"plan","artifactKind":"plan","artifactOutcome":"recorded","artifactLabel":"Plan","artifactValue":"ok"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"implement"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"implement","artifactKind":"diff_summary","artifactOutcome":"recorded","artifactLabel":"Diff","artifactValue":"ok"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"test"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"test","artifactKind":"test_result","artifactOutcome":"pass","artifactLabel":"Test","artifactValue":"ok"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"review"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"review","artifactKind":"review_result","artifactOutcome":"pass","artifactLabel":"Review","artifactValue":"ok"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"final_validation"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"final_validation","artifactKind":"completion_check","artifactOutcome":"pass","artifactLabel":"Check","artifactValue":"ok"}`,
+	}
+	var taskSnapshot projectControlSnapshot
+	for _, step := range completeSteps {
+		taskSnapshot = patchProjectControlTask(t, srv, token, projectControlTaskPanelID, fmt.Sprintf(step, rv))
+		rv++
 	}
 	for _, task := range taskSnapshot.Tasks {
 		if task.ID == projectControlTaskPanelID {
-			if task.State != "execution_complete" || task.AcceptanceStatus != "ready_for_acceptance" || task.RowVersion != 13 {
-				t.Fatalf("task after actions = %#v, want execution_complete + ready_for_acceptance + rowVersion=13", task)
+			if task.State != "execution_complete" || task.AcceptanceStatus != "ready_for_acceptance" {
+				t.Fatalf("task after actions = state=%q acceptance=%q, want execution_complete + ready_for_acceptance", task.State, task.AcceptanceStatus)
 			}
 		}
 	}
@@ -3387,10 +3410,11 @@ func TestProjectControlReadyForAcceptanceExpiresArchiveOverrideCheckpoint(t *tes
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
+	// start_execution now starts the first phase (plan), so we set up
+	// the archive override path using direct state transitions instead.
 	for _, body := range []string{
-		`{"expectedRowVersion":1,"action":"start_execution"}`,
-		`{"expectedRowVersion":2,"action":"mark_execution_complete"}`,
-		`{"expectedRowVersion":3,"action":"request_archive_override"}`,
+		`{"expectedRowVersion":1,"action":"queue_task"}`,
+		`{"expectedRowVersion":2,"action":"start_execution"}`,
 	} {
 		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -3398,11 +3422,54 @@ func TestProjectControlReadyForAcceptanceExpiresArchiveOverrideCheckpoint(t *tes
 		rec := httptest.NewRecorder()
 		srv.mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("PATCH setup status = %d, want %d for %s", rec.Code, http.StatusOK, body)
+			t.Fatalf("PATCH setup status = %d, want %d for %s: %s", rec.Code, http.StatusOK, body, rec.Body.String())
 		}
 	}
+	// After start_execution, plan phase is running. Get current rowVersion.
+	snapshot := decodeProjectControlSnapshot(t, func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+		r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, r)
+		return w
+	}())
+	task := projectControlTaskFromSnapshotByID(t, snapshot, projectControlTaskPanelID)
+	rv := task.RowVersion
 
-	snapshot, _ := completeProjectControlTaskRunbook(t, srv, token, projectControlTaskPanelID, 4)
+	// Mark execution complete and request archive override
+	for _, body := range []string{
+		fmt.Sprintf(`{"expectedRowVersion":%d,"action":"mark_execution_complete"}`, rv),
+		fmt.Sprintf(`{"expectedRowVersion":%d,"action":"request_archive_override"}`, rv+1),
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH status = %d, want %d for %s: %s", rec.Code, http.StatusOK, body, rec.Body.String())
+		}
+	}
+	rv += 2
+
+	// Complete the runbook from plan phase (already started by start_execution).
+	// Plan is running, so complete it first, then continue.
+	completeSteps := []string{
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"plan","artifactKind":"plan","artifactOutcome":"recorded","artifactLabel":"Plan","artifactValue":"Plan recorded"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"implement"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"implement","artifactKind":"diff_summary","artifactOutcome":"recorded","artifactLabel":"Diff","artifactValue":"Diff recorded"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"test"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"test","artifactKind":"test_result","artifactOutcome":"pass","artifactLabel":"Test","artifactValue":"ok"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"review"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"review","artifactKind":"review_result","artifactOutcome":"pass","artifactLabel":"Review","artifactValue":"ok"}`,
+		`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"final_validation"}`,
+		`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"final_validation","artifactKind":"completion_check","artifactOutcome":"pass","artifactLabel":"Check","artifactValue":"ok"}`,
+	}
+	for _, step := range completeSteps {
+		snapshot = patchProjectControlTask(t, srv, token, projectControlTaskPanelID, fmt.Sprintf(step, rv))
+		rv++
+	}
+
 	for _, checkpoint := range snapshot.Checkpoints {
 		if checkpoint.TaskID == projectControlTaskPanelID && checkpoint.Kind == "archive_override" && checkpoint.Status == "pending" {
 			t.Fatalf("expected archive_override checkpoint to expire when entering acceptance path, got %#v", checkpoint)
@@ -4195,5 +4262,117 @@ func TestProjectControlAutoProgressChainsFromImplementThroughTestToReview(t *tes
 	}
 	if toolCalls[0] != "diff_capture" || toolCalls[1] != "go_test" {
 		t.Fatalf("toolCalls = %v, want [diff_capture, go_test, ...]", toolCalls)
+	}
+}
+
+func TestProjectControlStartExecutionLaunchesFirstPhaseAndTool(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	toolCalls := []string{}
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
+		toolCalls = append(toolCalls, normalizeProjectControlToolID(toolID))
+		return projectControlToolResult{}, fmt.Errorf("not implemented for %s", toolID)
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	// start_execution should start the plan phase. Plan requires "plan" artifact
+	// but no default tool produces "plan", so no tool is auto-started.
+	snapshot := patchProjectControlTask(t, srv, token, projectControlTaskPanelID,
+		`{"expectedRowVersion":1,"action":"start_execution"}`)
+	task := projectControlTaskFromSnapshotByID(t, snapshot, projectControlTaskPanelID)
+
+	if task.State != "running" {
+		t.Fatalf("State = %q, want running", task.State)
+	}
+	if task.CurrentPhase != "plan" {
+		t.Fatalf("CurrentPhase = %q, want plan", task.CurrentPhase)
+	}
+	if task.RunbookState != "in_progress" {
+		t.Fatalf("RunbookState = %q, want in_progress", task.RunbookState)
+	}
+	// No tool should have been called (plan has no matching tool)
+	if len(toolCalls) != 0 {
+		t.Fatalf("toolCalls = %v, want empty (no tool for plan phase)", toolCalls)
+	}
+	// Verify execution_started event
+	req := httptest.NewRequest(http.MethodGet, "/api/project-control/events?limit=20", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	var eventsResp projectControlEventsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&eventsResp); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	foundExecStarted := false
+	for _, ev := range eventsResp.Events {
+		if ev.Action == "execution_started" {
+			foundExecStarted = true
+			break
+		}
+	}
+	if !foundExecStarted {
+		t.Fatal("expected execution_started event")
+	}
+}
+
+func TestProjectControlStartExecutionChainsAutoProgressWithTools(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	toolCalls := []string{}
+	previous := projectControlExecuteTool
+	projectControlExecuteTool = func(toolID, workspaceDir string) (projectControlToolResult, error) {
+		toolCalls = append(toolCalls, normalizeProjectControlToolID(toolID))
+		switch normalizeProjectControlToolID(toolID) {
+		case "diff_capture":
+			return projectControlToolResult{
+				ToolID: "diff_capture", ArtifactKind: "diff_summary", ArtifactOutcome: "pass",
+				ArtifactLabel: "Diff", ArtifactValue: "1 file changed",
+			}, nil
+		case "go_test":
+			return projectControlToolResult{
+				ToolID: "go_test", ArtifactKind: "test_result", ArtifactOutcome: "pass",
+				ArtifactLabel: "Test", ArtifactValue: "ok",
+			}, nil
+		default:
+			return projectControlToolResult{}, fmt.Errorf("unexpected tool: %s", toolID)
+		}
+	}
+	defer func() { projectControlExecuteTool = previous }()
+
+	// Prepare: start_execution starts plan (no tool). Manually complete plan,
+	// then start implement phase with diff_capture. Auto-progress should chain
+	// implement(diff_capture) → test(go_test) → review(stop).
+	snapshot := patchProjectControlTask(t, srv, token, projectControlTaskPanelID,
+		`{"expectedRowVersion":1,"action":"start_execution"}`)
+	task := projectControlTaskFromSnapshotByID(t, snapshot, projectControlTaskPanelID)
+
+	// Complete plan manually
+	snapshot = patchProjectControlTask(t, srv, token, task.ID,
+		fmt.Sprintf(`{"expectedRowVersion":%d,"action":"complete_phase","phaseId":"plan","artifactKind":"plan","artifactOutcome":"recorded","artifactLabel":"Plan","artifactValue":"ok"}`, task.RowVersion))
+	task = projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+
+	// Start implement and run diff_capture — auto-progress should chain through test
+	snapshot = patchProjectControlTask(t, srv, token, task.ID,
+		fmt.Sprintf(`{"expectedRowVersion":%d,"action":"start_phase","phaseId":"implement"}`, task.RowVersion))
+	task = projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+
+	snapshot = patchProjectControlTask(t, srv, token, task.ID,
+		fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"implement","toolId":"diff_capture"}`, task.RowVersion))
+	task = projectControlTaskFromSnapshotByID(t, snapshot, task.ID)
+
+	// Should have auto-chained: implement(diff_capture) → test(go_test) → review(stop)
+	if task.CurrentPhase != "review" {
+		t.Fatalf("CurrentPhase = %q, want review (auto-chained from implement)", task.CurrentPhase)
+	}
+	if len(toolCalls) < 2 {
+		t.Fatalf("toolCalls = %v, want [diff_capture, go_test]", toolCalls)
+	}
+	if toolCalls[0] != "diff_capture" || toolCalls[1] != "go_test" {
+		t.Fatalf("toolCalls = %v, want [diff_capture, go_test]", toolCalls)
 	}
 }

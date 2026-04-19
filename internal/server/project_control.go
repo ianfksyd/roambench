@@ -469,7 +469,7 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 	case "queue_task":
 		req.State = "queued"
 		req.AcceptanceStatus = "not_ready"
-	case "start_execution", "resume_execution":
+	case "resume_execution":
 		req.State = "running"
 		req.AcceptanceStatus = "not_ready"
 	case "request_human_input":
@@ -498,7 +498,7 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 		if task == nil || task.AcceptanceStatus != "accepted" {
 			req.AcceptanceStatus = "not_ready"
 		}
-	case "start_phase", "complete_phase", "fail_phase", "run_tool":
+	case "start_phase", "complete_phase", "fail_phase", "run_tool", "start_execution":
 		// Phase actions are handled by the runbook helpers because they need
 		// access to PhaseAttempt and Artifact state.
 	default:
@@ -517,7 +517,7 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 
 func isProjectControlPhaseAction(action string) bool {
 	switch strings.TrimSpace(strings.ToLower(action)) {
-	case "start_phase", "complete_phase", "fail_phase", "run_tool":
+	case "start_phase", "complete_phase", "fail_phase", "run_tool", "start_execution":
 		return true
 	default:
 		return false
@@ -2755,6 +2755,46 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 					return err
 				}
 				toolRunID = startedToolRunID
+			case "start_execution":
+				task.State = "running"
+				task.AcceptanceStatus = "not_ready"
+				firstPhase := normalizeProjectControlPhaseID(task.CurrentPhase)
+				if firstPhase == "" || firstPhase == "ready_for_acceptance" {
+					runbook := projectControlRunbookForTask(task)
+					if len(runbook.Phases) > 0 {
+						firstPhase = normalizeProjectControlPhaseID(runbook.Phases[0].ID)
+					}
+				}
+				if firstPhase != "" && firstPhase != "ready_for_acceptance" {
+					if err := startProjectControlTaskPhase(state, &task, firstPhase, now, username, func(t projectControlTask, p projectControlRunbookPhase, attemptID string) (string, error) {
+						return s.prepareWorkspaceDirForPhase(username, t, p, attemptID)
+					}, terminals); err != nil {
+						return err
+					}
+					tools := projectControlToolsForState(state)
+					runbook := projectControlRunbookForTask(task)
+					if phase, ok := findProjectControlRunbookPhase(runbook, firstPhase); ok {
+						if toolDef, hasMatch := projectControlToolForPhase(tools, phase); hasMatch {
+							startedID, err := startProjectControlTaskPhaseTool(state, &task, projectControlTaskUpdateRequest{
+								PhaseID: firstPhase,
+								ToolID:  toolDef.ID,
+							}, now)
+							if err == nil {
+								toolRunID = startedID
+							}
+						}
+					}
+				}
+				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+					ID:           projectControlID("event", "execution-started"),
+					Timestamp:    now,
+					Actor:        "human",
+					Action:       "execution_started",
+					Detail:       "Started runbook execution.",
+					ProjectID:    task.ProjectID,
+					WorkstreamID: task.WorkstreamID,
+					TaskID:       task.ID,
+				})
 			}
 			if value := strings.TrimSpace(req.Title); value != "" {
 				task.Title = value
