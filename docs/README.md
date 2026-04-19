@@ -23,6 +23,13 @@ The next major evolution of RoamBench. These documents capture the design discus
 
 - [cmux Comparison](competitive-analysis/cmux-comparison.md) — feature comparison with manaflow-ai/cmux
 
+## Agent Integrations
+
+- [Overview](agent-integrations/README.md) — quick start and how it works
+- [Claude Code](agent-integrations/claude-code.md) — hooks configuration
+- [OpenCode](agent-integrations/opencode.md) — integration guide
+- [Generic (any agent)](agent-integrations/generic.md) — curl, CLI, and OSC options
+
 ## Release Notes
 
 Per-version release copy used for GitHub Releases. See also [CHANGELOG.md](../CHANGELOG.md).
