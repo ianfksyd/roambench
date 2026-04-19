@@ -216,6 +216,201 @@ func TestProjectControlDashboardCountsRunningWorkstreamsFromWorkstreamStatus(t *
 	}
 }
 
+func TestProjectControlNormalizeStateCompactsOlderTaskHistoryIntoMemory(t *testing.T) {
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	state := projectControlState{
+		ActiveProjectID: projectControlProjectID,
+		Projects: []projectControlProject{{
+			ID:         projectControlProjectID,
+			Name:       "Project",
+			Status:     "active",
+			RowVersion: 1,
+		}},
+		Workstreams: []projectControlWorkstream{{
+			ID:         projectControlWorkstreamUXID,
+			ProjectID:  projectControlProjectID,
+			Title:      "Workstream",
+			Status:     "running",
+			Priority:   "high",
+			RowVersion: 1,
+		}},
+		Tasks: []projectControlTask{{
+			ID:               "task-compact",
+			ProjectID:        projectControlProjectID,
+			WorkstreamID:     projectControlWorkstreamUXID,
+			Title:            "Compact history",
+			State:            "running",
+			AcceptanceStatus: "not_ready",
+			Priority:         "high",
+			RiskLevel:        "medium",
+			SelectedSkill:    projectControlDefaultSkillID,
+			RunbookID:        projectControlDefaultRunbookID,
+			CurrentPhase:     "implement",
+			RunbookState:     "in_progress",
+			Timeline:         []projectControlEvent{{Timestamp: base.Format(time.RFC3339), Actor: "system", Action: "legacy", Detail: "derived history should be stripped"}},
+			Evidence:         []projectControlEvidence{{Label: "legacy", Value: "derived evidence should be stripped"}},
+			Audit:            []projectControlAuditItem{{Timestamp: base.Format(time.RFC3339), Actor: "system", Action: "legacy", Detail: "derived audit should be stripped"}},
+			RowVersion:       1,
+		}},
+	}
+	for i := 0; i < 70; i++ {
+		state.Events = append(state.Events, projectControlRecordedEvent{
+			ID:           fmt.Sprintf("event-%02d", i),
+			Timestamp:    base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339),
+			Actor:        "system",
+			Action:       "phase_progressed",
+			Detail:       fmt.Sprintf("event %d", i),
+			ProjectID:    projectControlProjectID,
+			WorkstreamID: projectControlWorkstreamUXID,
+			TaskID:       "task-compact",
+		})
+	}
+	for i := 0; i < 30; i++ {
+		state.Artifacts = append(state.Artifacts, projectControlArtifact{
+			ID:        fmt.Sprintf("artifact-%02d", i),
+			TaskID:    "task-compact",
+			Kind:      "evidence_note",
+			Outcome:   "recorded",
+			Label:     fmt.Sprintf("Artifact %d", i),
+			Value:     fmt.Sprintf("Value %d", i),
+			CreatedAt: base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339),
+		})
+	}
+	for i := 0; i < 15; i++ {
+		state.PhaseAttempts = append(state.PhaseAttempts, projectControlPhaseAttempt{
+			ID:          fmt.Sprintf("attempt-%02d", i),
+			TaskID:      "task-compact",
+			RunbookID:   projectControlDefaultRunbookID,
+			PhaseID:     "implement",
+			StartedAt:   base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339),
+			CompletedAt: base.Add(time.Duration(i+1) * time.Minute).Format(time.RFC3339),
+			Status:      "completed",
+		})
+		state.ToolRuns = append(state.ToolRuns, projectControlToolRun{
+			ID:          fmt.Sprintf("tool-%02d", i),
+			TaskID:      "task-compact",
+			PhaseID:     "implement",
+			ToolID:      "repo_status",
+			StartedAt:   base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339),
+			CompletedAt: base.Add(time.Duration(i+1) * time.Minute).Format(time.RFC3339),
+			Status:      "completed",
+		})
+	}
+
+	projectControlNormalizeState(&state)
+
+	if len(state.Events) != projectControlRetainedTaskEvents {
+		t.Fatalf("len(Events) = %d, want %d", len(state.Events), projectControlRetainedTaskEvents)
+	}
+	if len(state.Artifacts) != projectControlRetainedTaskArtifacts {
+		t.Fatalf("len(Artifacts) = %d, want %d", len(state.Artifacts), projectControlRetainedTaskArtifacts)
+	}
+	if len(state.PhaseAttempts) != projectControlRetainedTaskPhaseAttempts {
+		t.Fatalf("len(PhaseAttempts) = %d, want %d", len(state.PhaseAttempts), projectControlRetainedTaskPhaseAttempts)
+	}
+	if len(state.ToolRuns) != projectControlRetainedTaskToolRuns {
+		t.Fatalf("len(ToolRuns) = %d, want %d", len(state.ToolRuns), projectControlRetainedTaskToolRuns)
+	}
+	if len(state.Memories) != 1 {
+		t.Fatalf("len(Memories) = %d, want 1", len(state.Memories))
+	}
+	memory := state.Memories[0]
+	if memory.TaskID != "task-compact" {
+		t.Fatalf("Memory TaskID = %q, want task-compact", memory.TaskID)
+	}
+	if memory.EventCount != 6 || memory.ArtifactCount != 7 || memory.PhaseAttemptCount != 3 || memory.ToolRunCount != 3 {
+		t.Fatalf("Memory counts = %#v, want events=6 artifacts=7 phaseAttempts=3 toolRuns=3", memory)
+	}
+	if strings.TrimSpace(memory.Summary) == "" {
+		t.Fatal("expected memory summary after compaction")
+	}
+	task := state.Tasks[0]
+	if len(task.Timeline) != 0 || len(task.Evidence) != 0 || len(task.Audit) != 0 {
+		t.Fatalf("derived task fields were not stripped: timeline=%d evidence=%d audit=%d", len(task.Timeline), len(task.Evidence), len(task.Audit))
+	}
+}
+
+func TestProjectControlSnapshotRebuildsEvidenceAndTimelineFromMemory(t *testing.T) {
+	base := time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC)
+	state := projectControlState{
+		ActiveProjectID: projectControlProjectID,
+		Projects: []projectControlProject{{
+			ID:         projectControlProjectID,
+			Name:       "Project",
+			Status:     "active",
+			RowVersion: 1,
+		}},
+		Workstreams: []projectControlWorkstream{{
+			ID:         projectControlWorkstreamUXID,
+			ProjectID:  projectControlProjectID,
+			Title:      "Workstream",
+			Status:     "running",
+			Priority:   "high",
+			RowVersion: 1,
+		}},
+		Tasks: []projectControlTask{{
+			ID:               "task-memory",
+			ProjectID:        projectControlProjectID,
+			WorkstreamID:     projectControlWorkstreamUXID,
+			Title:            "Memory task",
+			State:            "running",
+			AcceptanceStatus: "not_ready",
+			Priority:         "high",
+			RiskLevel:        "medium",
+			SelectedSkill:    projectControlDefaultSkillID,
+			RunbookID:        projectControlDefaultRunbookID,
+			CurrentPhase:     "implement",
+			RunbookState:     "in_progress",
+			Evidence:         []projectControlEvidence{{Label: "Legacy note", Value: "Preserve me"}},
+			RowVersion:       1,
+		}},
+	}
+	for i := 0; i < 70; i++ {
+		state.Events = append(state.Events, projectControlRecordedEvent{
+			ID:           fmt.Sprintf("memory-event-%02d", i),
+			Timestamp:    base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339),
+			Actor:        "system",
+			Action:       "phase_progressed",
+			Detail:       fmt.Sprintf("event %d", i),
+			ProjectID:    projectControlProjectID,
+			WorkstreamID: projectControlWorkstreamUXID,
+			TaskID:       "task-memory",
+		})
+	}
+
+	projectControlNormalizeState(&state)
+	snapshot := buildProjectControlSnapshot(state, "ian", nil)
+	task := projectControlTaskFromSnapshotByID(t, snapshot, "task-memory")
+
+	foundMemoryEvent := false
+	for _, item := range task.Timeline {
+		if item.Action == "history_compacted" {
+			foundMemoryEvent = true
+			break
+		}
+	}
+	if !foundMemoryEvent {
+		t.Fatal("expected compacted history marker in task timeline")
+	}
+
+	foundLegacyEvidence := false
+	foundHistoryMemory := false
+	for _, item := range task.Evidence {
+		if item.Label == "Legacy note" && item.Value == "Preserve me" {
+			foundLegacyEvidence = true
+		}
+		if item.Label == "History memory" && strings.TrimSpace(item.Value) != "" {
+			foundHistoryMemory = true
+		}
+	}
+	if !foundLegacyEvidence {
+		t.Fatal("expected migrated legacy evidence in task evidence list")
+	}
+	if !foundHistoryMemory {
+		t.Fatal("expected history memory evidence in task evidence list")
+	}
+}
+
 func TestProjectControlDefaultRunbookDefinesCodeChangePhases(t *testing.T) {
 	skills := defaultProjectControlSkills()
 	if len(skills) != 2 {

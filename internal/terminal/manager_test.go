@@ -557,6 +557,10 @@ func TestPersistedStoreSizeIgnoresNonSessionFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat(%s) error: %v", sessionPath, err)
 	}
+	before := mgr.persistedStoreSize()
+	if before < info.Size() {
+		t.Fatalf("persistedStoreSize before unrelated file = %d, want at least %d", before, info.Size())
+	}
 
 	unrelatedPath := filepath.Join(dir, ".project-control", "workspaces", "ian", "snapshot.bin")
 	if err := os.MkdirAll(filepath.Dir(unrelatedPath), 0700); err != nil {
@@ -566,8 +570,8 @@ func TestPersistedStoreSizeIgnoresNonSessionFiles(t *testing.T) {
 		t.Fatalf("WriteFile(%s) error: %v", unrelatedPath, err)
 	}
 
-	if got := mgr.persistedStoreSize(); got != info.Size() {
-		t.Fatalf("persistedStoreSize = %d, want %d", got, info.Size())
+	if got := mgr.persistedStoreSize(); got != before {
+		t.Fatalf("persistedStoreSize = %d, want unchanged size %d", got, before)
 	}
 }
 

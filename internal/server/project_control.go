@@ -47,6 +47,14 @@ const (
 	projectControlWorkspaceReadOnlySnapshot = "read_only_snapshot"
 )
 
+const (
+	projectControlRetainedTaskEvents        = 64
+	projectControlRetainedTaskArtifacts     = 24
+	projectControlRetainedTaskPhaseAttempts = 12
+	projectControlRetainedTaskToolRuns      = 12
+	projectControlRetainedMemoryHighlights  = 8
+)
+
 var projectControlProcessStartedAt = time.Now().UTC().Truncate(time.Second)
 
 type projectControlSnapshot struct {
@@ -65,6 +73,7 @@ type projectControlSnapshot struct {
 	Artifacts       []projectControlArtifact     `json:"artifacts"`
 	Checkpoints     []projectControlCheckpoint   `json:"checkpoints"`
 	Decisions       []projectControlDecision     `json:"decisions,omitempty"`
+	Memories        []projectControlTaskMemory   `json:"memories,omitempty"`
 	Dashboard       projectControlDashboard      `json:"dashboard"`
 }
 
@@ -272,6 +281,21 @@ type projectControlRecordedEvent struct {
 	CheckpointID string `json:"checkpointId,omitempty"`
 }
 
+type projectControlTaskMemory struct {
+	TaskID            string   `json:"taskId"`
+	ProjectID         string   `json:"projectId,omitempty"`
+	WorkstreamID      string   `json:"workstreamId,omitempty"`
+	WindowStart       string   `json:"windowStart,omitempty"`
+	WindowEnd         string   `json:"windowEnd,omitempty"`
+	EventCount        int      `json:"eventCount,omitempty"`
+	ArtifactCount     int      `json:"artifactCount,omitempty"`
+	PhaseAttemptCount int      `json:"phaseAttemptCount,omitempty"`
+	ToolRunCount      int      `json:"toolRunCount,omitempty"`
+	Summary           string   `json:"summary"`
+	Highlights        []string `json:"highlights,omitempty"`
+	UpdatedAt         string   `json:"updatedAt,omitempty"`
+}
+
 type projectControlEvidence struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
@@ -295,6 +319,7 @@ type projectControlState struct {
 	Checkpoints     []projectControlCheckpoint    `json:"checkpoints"`
 	Decisions       []projectControlDecision      `json:"decisions,omitempty"`
 	Events          []projectControlRecordedEvent `json:"events,omitempty"`
+	Memories        []projectControlTaskMemory    `json:"memories,omitempty"`
 	UpdatedAt       string                        `json:"updatedAt,omitempty"`
 }
 
@@ -2890,6 +2915,7 @@ func (s *projectControlStore) eventsForUser(username string, values url.Values) 
 		return projectControlEventsResponse{}, err
 	}
 	events := cloneProjectControlRecordedEvents(state.Events)
+	events = append(events, projectControlMemoryEvents(state.Memories)...)
 	projectID := strings.TrimSpace(values.Get("projectId"))
 	taskID := strings.TrimSpace(values.Get("taskId"))
 	checkpointID := strings.TrimSpace(values.Get("checkpointId"))
@@ -2966,6 +2992,14 @@ func (s *projectControlStore) replayForTask(username, taskID string, terminals *
 	steps := make([]projectControlRecordedEvent, 0)
 	for _, event := range state.Events {
 		if event.TaskID == taskID {
+			steps = append(steps, event)
+		}
+	}
+	for _, memory := range state.Memories {
+		if strings.TrimSpace(memory.TaskID) != taskID {
+			continue
+		}
+		if event, ok := projectControlMemoryEvent(memory); ok {
 			steps = append(steps, event)
 		}
 	}
@@ -3191,6 +3225,638 @@ func decodeProjectControlCursor(cursor string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
+func projectControlStateRequiresCanonicalization(state projectControlState) bool {
+	eventCounts := map[string]int{}
+	artifactCounts := map[string]int{}
+	phaseAttemptCounts := map[string]int{}
+	toolRunCounts := map[string]int{}
+
+	for _, task := range state.Tasks {
+		if len(task.Timeline) > 0 || len(task.Evidence) > 0 || len(task.Audit) > 0 {
+			return true
+		}
+	}
+	for _, event := range state.Events {
+		taskID := strings.TrimSpace(event.TaskID)
+		if taskID == "" {
+			continue
+		}
+		eventCounts[taskID] += 1
+		if eventCounts[taskID] > projectControlRetainedTaskEvents {
+			return true
+		}
+	}
+	for _, artifact := range state.Artifacts {
+		taskID := strings.TrimSpace(artifact.TaskID)
+		if taskID == "" {
+			continue
+		}
+		artifactCounts[taskID] += 1
+		if artifactCounts[taskID] > projectControlRetainedTaskArtifacts {
+			return true
+		}
+	}
+	for _, attempt := range state.PhaseAttempts {
+		taskID := strings.TrimSpace(attempt.TaskID)
+		if taskID == "" {
+			continue
+		}
+		phaseAttemptCounts[taskID] += 1
+		if phaseAttemptCounts[taskID] > projectControlRetainedTaskPhaseAttempts {
+			return true
+		}
+	}
+	for _, run := range state.ToolRuns {
+		taskID := strings.TrimSpace(run.TaskID)
+		if taskID == "" {
+			continue
+		}
+		toolRunCounts[taskID] += 1
+		if toolRunCounts[taskID] > projectControlRetainedTaskToolRuns {
+			return true
+		}
+	}
+	return false
+}
+
+func projectControlTaskHistoryTimestamp(task projectControlTask, fallback string) string {
+	best := strings.TrimSpace(fallback)
+	for _, item := range task.Timeline {
+		ts := strings.TrimSpace(item.Timestamp)
+		if ts != "" && (best == "" || ts > best) {
+			best = ts
+		}
+	}
+	for _, item := range task.Audit {
+		ts := strings.TrimSpace(item.Timestamp)
+		if ts != "" && (best == "" || ts > best) {
+			best = ts
+		}
+	}
+	return best
+}
+
+func projectControlMigrateLegacyEvidenceToArtifacts(state *projectControlState) {
+	if state == nil {
+		return
+	}
+
+	existing := map[string]bool{}
+	for _, artifact := range state.Artifacts {
+		key := strings.TrimSpace(artifact.TaskID) + "\n" + strings.TrimSpace(artifact.Label) + "\n" + strings.TrimSpace(artifact.Value)
+		existing[key] = true
+	}
+
+	fallback := strings.TrimSpace(state.UpdatedAt)
+	if fallback == "" {
+		fallback = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	for _, task := range state.Tasks {
+		createdAt := projectControlTaskHistoryTimestamp(task, fallback)
+		for _, evidence := range task.Evidence {
+			label := strings.TrimSpace(evidence.Label)
+			value := strings.TrimSpace(evidence.Value)
+			if label == "" && value == "" {
+				continue
+			}
+			key := strings.TrimSpace(task.ID) + "\n" + label + "\n" + value
+			if existing[key] {
+				continue
+			}
+			state.Artifacts = append(state.Artifacts, projectControlArtifact{
+				ID:        projectControlID("artifact", task.ID+"-evidence-note"),
+				TaskID:    task.ID,
+				Kind:      "evidence_note",
+				Outcome:   "recorded",
+				Label:     label,
+				Value:     value,
+				CreatedAt: createdAt,
+			})
+			existing[key] = true
+		}
+	}
+}
+
+func projectControlStripDerivedTaskFields(state *projectControlState) {
+	if state == nil {
+		return
+	}
+	for i := range state.Tasks {
+		state.Tasks[i].Timeline = []projectControlEvent{}
+		state.Tasks[i].Evidence = []projectControlEvidence{}
+		state.Tasks[i].Audit = []projectControlAuditItem{}
+	}
+}
+
+func projectControlMemoryWindowUpdate(memory *projectControlTaskMemory, timestamp string) {
+	if memory == nil {
+		return
+	}
+	timestamp = strings.TrimSpace(timestamp)
+	if timestamp == "" {
+		return
+	}
+	if memory.WindowStart == "" || timestamp < memory.WindowStart {
+		memory.WindowStart = timestamp
+	}
+	if memory.WindowEnd == "" || timestamp > memory.WindowEnd {
+		memory.WindowEnd = timestamp
+	}
+}
+
+func projectControlMergeMemoryHighlights(existing []string, additions ...string) []string {
+	merged := make([]string, 0, len(existing)+len(additions))
+	seen := map[string]bool{}
+	for _, item := range additions {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] {
+			continue
+		}
+		merged = append(merged, item)
+		seen[item] = true
+	}
+	for _, item := range existing {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] {
+			continue
+		}
+		merged = append(merged, item)
+		seen[item] = true
+	}
+	if len(merged) > projectControlRetainedMemoryHighlights {
+		merged = merged[:projectControlRetainedMemoryHighlights]
+	}
+	return merged
+}
+
+func projectControlSummarizeCountMap(prefix string, counts map[string]int) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	type countEntry struct {
+		Key   string
+		Count int
+	}
+	items := make([]countEntry, 0, len(counts))
+	for key, count := range counts {
+		key = strings.TrimSpace(key)
+		if key == "" || count < 1 {
+			continue
+		}
+		items = append(items, countEntry{Key: key, Count: count})
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count == items[j].Count {
+			return items[i].Key < items[j].Key
+		}
+		return items[i].Count > items[j].Count
+	})
+	if len(items) > 4 {
+		items = items[:4]
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, fmt.Sprintf("%s×%d", item.Key, item.Count))
+	}
+	return prefix + ": " + strings.Join(parts, ", ")
+}
+
+func projectControlFinalizeTaskMemory(memory *projectControlTaskMemory) {
+	if memory == nil {
+		return
+	}
+	parts := []string{}
+	if memory.EventCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d events", memory.EventCount))
+	}
+	if memory.ArtifactCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d artifacts", memory.ArtifactCount))
+	}
+	if memory.PhaseAttemptCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d phase attempts", memory.PhaseAttemptCount))
+	}
+	if memory.ToolRunCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d tool runs", memory.ToolRunCount))
+	}
+	if len(parts) == 0 {
+		memory.Summary = ""
+		return
+	}
+	rangeLabel := ""
+	switch {
+	case memory.WindowStart != "" && memory.WindowEnd != "" && memory.WindowStart != memory.WindowEnd:
+		rangeLabel = " between " + memory.WindowStart + " and " + memory.WindowEnd
+	case memory.WindowEnd != "":
+		rangeLabel = " through " + memory.WindowEnd
+	}
+	memory.Summary = "Compacted older task history" + rangeLabel + ": " + strings.Join(parts, ", ") + "."
+}
+
+func projectControlEnsureTaskMemory(memories map[string]*projectControlTaskMemory, task projectControlTask, now string) *projectControlTaskMemory {
+	taskID := strings.TrimSpace(task.ID)
+	if taskID == "" {
+		return nil
+	}
+	if memories[taskID] == nil {
+		memories[taskID] = &projectControlTaskMemory{
+			TaskID:       taskID,
+			ProjectID:    strings.TrimSpace(task.ProjectID),
+			WorkstreamID: strings.TrimSpace(task.WorkstreamID),
+		}
+	}
+	memory := memories[taskID]
+	if memory.ProjectID == "" {
+		memory.ProjectID = strings.TrimSpace(task.ProjectID)
+	}
+	if memory.WorkstreamID == "" {
+		memory.WorkstreamID = strings.TrimSpace(task.WorkstreamID)
+	}
+	if strings.TrimSpace(now) != "" {
+		memory.UpdatedAt = strings.TrimSpace(now)
+	}
+	return memory
+}
+
+func projectControlCompactEvents(state *projectControlState, memories map[string]*projectControlTaskMemory, now string) {
+	if state == nil {
+		return
+	}
+	taskByID := map[string]projectControlTask{}
+	for _, task := range state.Tasks {
+		taskByID[task.ID] = task
+	}
+	grouped := map[string][]projectControlRecordedEvent{}
+	passthrough := []projectControlRecordedEvent{}
+	for _, event := range state.Events {
+		taskID := strings.TrimSpace(event.TaskID)
+		if taskID == "" {
+			passthrough = append(passthrough, event)
+			continue
+		}
+		task, ok := taskByID[taskID]
+		if !ok {
+			passthrough = append(passthrough, event)
+			continue
+		}
+		grouped[task.ID] = append(grouped[task.ID], event)
+	}
+	compacted := passthrough
+	taskIDs := make([]string, 0, len(grouped))
+	for taskID := range grouped {
+		taskIDs = append(taskIDs, taskID)
+	}
+	sort.Strings(taskIDs)
+	for _, taskID := range taskIDs {
+		events := grouped[taskID]
+		sort.Slice(events, func(i, j int) bool {
+			if events[i].Timestamp == events[j].Timestamp {
+				return events[i].ID < events[j].ID
+			}
+			return events[i].Timestamp < events[j].Timestamp
+		})
+		if len(events) > projectControlRetainedTaskEvents {
+			pruned := events[:len(events)-projectControlRetainedTaskEvents]
+			events = events[len(events)-projectControlRetainedTaskEvents:]
+			task := taskByID[taskID]
+			memory := projectControlEnsureTaskMemory(memories, task, now)
+			counts := map[string]int{}
+			for _, event := range pruned {
+				memory.EventCount += 1
+				projectControlMemoryWindowUpdate(memory, event.Timestamp)
+				counts[strings.TrimSpace(event.Action)] += 1
+			}
+			memory.Highlights = projectControlMergeMemoryHighlights(memory.Highlights, projectControlSummarizeCountMap("events", counts))
+		}
+		compacted = append(compacted, events...)
+	}
+	state.Events = compacted
+}
+
+func projectControlCompactPhaseAttempts(state *projectControlState, memories map[string]*projectControlTaskMemory, now string) {
+	if state == nil {
+		return
+	}
+	taskByID := map[string]projectControlTask{}
+	for _, task := range state.Tasks {
+		taskByID[task.ID] = task
+	}
+	grouped := map[string][]projectControlPhaseAttempt{}
+	passthrough := []projectControlPhaseAttempt{}
+	for _, attempt := range state.PhaseAttempts {
+		taskID := strings.TrimSpace(attempt.TaskID)
+		if taskID == "" {
+			passthrough = append(passthrough, attempt)
+			continue
+		}
+		task, ok := taskByID[taskID]
+		if !ok {
+			passthrough = append(passthrough, attempt)
+			continue
+		}
+		grouped[task.ID] = append(grouped[task.ID], attempt)
+	}
+	compacted := passthrough
+	taskIDs := make([]string, 0, len(grouped))
+	for taskID := range grouped {
+		taskIDs = append(taskIDs, taskID)
+	}
+	sort.Strings(taskIDs)
+	for _, taskID := range taskIDs {
+		attempts := grouped[taskID]
+		running := make([]projectControlPhaseAttempt, 0, len(attempts))
+		closed := make([]projectControlPhaseAttempt, 0, len(attempts))
+		for _, attempt := range attempts {
+			if normalizeProjectControlPhaseAttemptStatus(attempt.Status) == "running" {
+				running = append(running, attempt)
+			} else {
+				closed = append(closed, attempt)
+			}
+		}
+		sort.Slice(closed, func(i, j int) bool {
+			left := strings.TrimSpace(closed[i].CompletedAt)
+			if left == "" {
+				left = strings.TrimSpace(closed[i].StartedAt)
+			}
+			right := strings.TrimSpace(closed[j].CompletedAt)
+			if right == "" {
+				right = strings.TrimSpace(closed[j].StartedAt)
+			}
+			if left == right {
+				return closed[i].ID < closed[j].ID
+			}
+			return left < right
+		})
+		if len(closed) > projectControlRetainedTaskPhaseAttempts {
+			pruned := closed[:len(closed)-projectControlRetainedTaskPhaseAttempts]
+			closed = closed[len(closed)-projectControlRetainedTaskPhaseAttempts:]
+			task := taskByID[taskID]
+			memory := projectControlEnsureTaskMemory(memories, task, now)
+			counts := map[string]int{}
+			for _, attempt := range pruned {
+				memory.PhaseAttemptCount += 1
+				if strings.TrimSpace(attempt.CompletedAt) != "" {
+					projectControlMemoryWindowUpdate(memory, attempt.CompletedAt)
+				} else {
+					projectControlMemoryWindowUpdate(memory, attempt.StartedAt)
+				}
+				key := strings.TrimSpace(attempt.PhaseID)
+				if status := strings.TrimSpace(attempt.Status); status != "" {
+					key += " (" + status + ")"
+				}
+				counts[strings.TrimSpace(key)] += 1
+			}
+			memory.Highlights = projectControlMergeMemoryHighlights(memory.Highlights, projectControlSummarizeCountMap("phases", counts))
+		}
+		compacted = append(compacted, running...)
+		compacted = append(compacted, closed...)
+	}
+	state.PhaseAttempts = compacted
+}
+
+func projectControlCompactToolRuns(state *projectControlState, memories map[string]*projectControlTaskMemory, now string) {
+	if state == nil {
+		return
+	}
+	taskByID := map[string]projectControlTask{}
+	for _, task := range state.Tasks {
+		taskByID[task.ID] = task
+	}
+	grouped := map[string][]projectControlToolRun{}
+	passthrough := []projectControlToolRun{}
+	for _, run := range state.ToolRuns {
+		taskID := strings.TrimSpace(run.TaskID)
+		if taskID == "" {
+			passthrough = append(passthrough, run)
+			continue
+		}
+		task, ok := taskByID[taskID]
+		if !ok {
+			passthrough = append(passthrough, run)
+			continue
+		}
+		grouped[task.ID] = append(grouped[task.ID], run)
+	}
+	compacted := passthrough
+	taskIDs := make([]string, 0, len(grouped))
+	for taskID := range grouped {
+		taskIDs = append(taskIDs, taskID)
+	}
+	sort.Strings(taskIDs)
+	for _, taskID := range taskIDs {
+		runs := grouped[taskID]
+		running := make([]projectControlToolRun, 0, len(runs))
+		closed := make([]projectControlToolRun, 0, len(runs))
+		for _, run := range runs {
+			if normalizeProjectControlToolRunStatus(run.Status) == "running" {
+				running = append(running, run)
+			} else {
+				closed = append(closed, run)
+			}
+		}
+		sort.Slice(closed, func(i, j int) bool {
+			left := strings.TrimSpace(closed[i].CompletedAt)
+			if left == "" {
+				left = strings.TrimSpace(closed[i].StartedAt)
+			}
+			right := strings.TrimSpace(closed[j].CompletedAt)
+			if right == "" {
+				right = strings.TrimSpace(closed[j].StartedAt)
+			}
+			if left == right {
+				return closed[i].ID < closed[j].ID
+			}
+			return left < right
+		})
+		if len(closed) > projectControlRetainedTaskToolRuns {
+			pruned := closed[:len(closed)-projectControlRetainedTaskToolRuns]
+			closed = closed[len(closed)-projectControlRetainedTaskToolRuns:]
+			task := taskByID[taskID]
+			memory := projectControlEnsureTaskMemory(memories, task, now)
+			counts := map[string]int{}
+			for _, run := range pruned {
+				memory.ToolRunCount += 1
+				if strings.TrimSpace(run.CompletedAt) != "" {
+					projectControlMemoryWindowUpdate(memory, run.CompletedAt)
+				} else {
+					projectControlMemoryWindowUpdate(memory, run.StartedAt)
+				}
+				key := strings.TrimSpace(run.ToolID)
+				if status := strings.TrimSpace(run.Status); status != "" {
+					key += " (" + status + ")"
+				}
+				counts[strings.TrimSpace(key)] += 1
+			}
+			memory.Highlights = projectControlMergeMemoryHighlights(memory.Highlights, projectControlSummarizeCountMap("tools", counts))
+		}
+		compacted = append(compacted, running...)
+		compacted = append(compacted, closed...)
+	}
+	state.ToolRuns = compacted
+}
+
+func projectControlProtectedArtifactIDs(artifacts []projectControlArtifact, phaseAttempts []projectControlPhaseAttempt, toolRuns []projectControlToolRun) map[string]bool {
+	protected := map[string]bool{}
+	for _, attempt := range phaseAttempts {
+		for _, artifactID := range attempt.ArtifactIDs {
+			artifactID = strings.TrimSpace(artifactID)
+			if artifactID != "" {
+				protected[artifactID] = true
+			}
+		}
+	}
+	for _, run := range toolRuns {
+		artifactID := strings.TrimSpace(run.ArtifactID)
+		if artifactID != "" {
+			protected[artifactID] = true
+		}
+	}
+	latestByTaskKind := map[string]projectControlArtifact{}
+	for _, artifact := range artifacts {
+		taskID := strings.TrimSpace(artifact.TaskID)
+		if taskID == "" {
+			continue
+		}
+		key := taskID + "\n" + normalizeProjectControlArtifactKind(artifact.Kind)
+		current, ok := latestByTaskKind[key]
+		if !ok || strings.TrimSpace(artifact.CreatedAt) > strings.TrimSpace(current.CreatedAt) || (strings.TrimSpace(artifact.CreatedAt) == strings.TrimSpace(current.CreatedAt) && artifact.ID > current.ID) {
+			latestByTaskKind[key] = artifact
+		}
+	}
+	for _, artifact := range latestByTaskKind {
+		if strings.TrimSpace(artifact.ID) != "" {
+			protected[artifact.ID] = true
+		}
+	}
+	return protected
+}
+
+func projectControlCompactArtifacts(state *projectControlState, memories map[string]*projectControlTaskMemory, now string) {
+	if state == nil {
+		return
+	}
+	taskByID := map[string]projectControlTask{}
+	for _, task := range state.Tasks {
+		taskByID[task.ID] = task
+	}
+	protected := projectControlProtectedArtifactIDs(state.Artifacts, state.PhaseAttempts, state.ToolRuns)
+	grouped := map[string][]projectControlArtifact{}
+	passthrough := []projectControlArtifact{}
+	for _, artifact := range state.Artifacts {
+		taskID := strings.TrimSpace(artifact.TaskID)
+		if taskID == "" {
+			passthrough = append(passthrough, artifact)
+			continue
+		}
+		task, ok := taskByID[taskID]
+		if !ok {
+			passthrough = append(passthrough, artifact)
+			continue
+		}
+		grouped[task.ID] = append(grouped[task.ID], artifact)
+	}
+	compacted := passthrough
+	taskIDs := make([]string, 0, len(grouped))
+	for taskID := range grouped {
+		taskIDs = append(taskIDs, taskID)
+	}
+	sort.Strings(taskIDs)
+	for _, taskID := range taskIDs {
+		artifacts := grouped[taskID]
+		sort.Slice(artifacts, func(i, j int) bool {
+			if artifacts[i].CreatedAt == artifacts[j].CreatedAt {
+				return artifacts[i].ID < artifacts[j].ID
+			}
+			return artifacts[i].CreatedAt < artifacts[j].CreatedAt
+		})
+		prunableIndexes := []int{}
+		for index, artifact := range artifacts {
+			if !protected[strings.TrimSpace(artifact.ID)] {
+				prunableIndexes = append(prunableIndexes, index)
+			}
+		}
+		prunedByIndex := map[int]bool{}
+		if len(artifacts) > projectControlRetainedTaskArtifacts {
+			toPrune := len(artifacts) - projectControlRetainedTaskArtifacts
+			if toPrune > len(prunableIndexes) {
+				toPrune = len(prunableIndexes)
+			}
+			if toPrune > 0 {
+				task := taskByID[taskID]
+				memory := projectControlEnsureTaskMemory(memories, task, now)
+				counts := map[string]int{}
+				for _, index := range prunableIndexes[:toPrune] {
+					artifact := artifacts[index]
+					prunedByIndex[index] = true
+					memory.ArtifactCount += 1
+					projectControlMemoryWindowUpdate(memory, artifact.CreatedAt)
+					key := strings.TrimSpace(artifact.Kind)
+					if outcome := strings.TrimSpace(artifact.Outcome); outcome != "" {
+						key += " (" + outcome + ")"
+					}
+					counts[strings.TrimSpace(key)] += 1
+				}
+				memory.Highlights = projectControlMergeMemoryHighlights(memory.Highlights, projectControlSummarizeCountMap("artifacts", counts))
+			}
+		}
+		for index, artifact := range artifacts {
+			if prunedByIndex[index] {
+				continue
+			}
+			compacted = append(compacted, artifact)
+		}
+	}
+	state.Artifacts = compacted
+}
+
+func projectControlCompactState(state *projectControlState) {
+	if state == nil {
+		return
+	}
+	projectControlMigrateLegacyEvidenceToArtifacts(state)
+	memories := map[string]*projectControlTaskMemory{}
+	for i := range state.Memories {
+		memory := state.Memories[i]
+		taskID := strings.TrimSpace(memory.TaskID)
+		if taskID == "" {
+			continue
+		}
+		memory.TaskID = taskID
+		if memory.Highlights == nil {
+			memory.Highlights = []string{}
+		}
+		memories[taskID] = &memory
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	projectControlCompactEvents(state, memories, now)
+	projectControlCompactPhaseAttempts(state, memories, now)
+	projectControlCompactToolRuns(state, memories, now)
+	projectControlCompactArtifacts(state, memories, now)
+	state.Memories = make([]projectControlTaskMemory, 0, len(memories))
+	for _, task := range state.Tasks {
+		memory := memories[strings.TrimSpace(task.ID)]
+		if memory == nil {
+			continue
+		}
+		projectControlFinalizeTaskMemory(memory)
+		if strings.TrimSpace(memory.Summary) == "" {
+			continue
+		}
+		memory.Highlights = projectControlMergeMemoryHighlights(nil, memory.Highlights...)
+		state.Memories = append(state.Memories, *memory)
+	}
+	sort.Slice(state.Memories, func(i, j int) bool {
+		if state.Memories[i].UpdatedAt == state.Memories[j].UpdatedAt {
+			return state.Memories[i].TaskID < state.Memories[j].TaskID
+		}
+		return state.Memories[i].UpdatedAt > state.Memories[j].UpdatedAt
+	})
+	projectControlStripDerivedTaskFields(state)
+}
+
 func (s *projectControlStore) loadOrSeed(username string) (projectControlState, error) {
 	if strings.TrimSpace(username) == "" {
 		return projectControlState{}, errors.New("missing username")
@@ -3269,9 +3935,13 @@ func (s *projectControlStore) loadLocked(username string) (projectControlState, 
 		if err := json.Unmarshal(legacyPayload, &legacyState); err != nil {
 			return projectControlState{}, false, err
 		}
+		needsSave := projectControlStateRequiresCanonicalization(legacyState)
 		projectControlNormalizeState(&legacyState)
 		if projectControlRecoverInterruptedToolRuns(&legacyState, time.Now().UTC()) {
 			legacyState.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		if !needsSave {
+			needsSave = true
 		}
 		if saveErr := s.saveLocked(username, legacyState); saveErr != nil {
 			return projectControlState{}, false, saveErr
@@ -3285,9 +3955,13 @@ func (s *projectControlStore) loadLocked(username string) (projectControlState, 
 	if err := json.Unmarshal(payload, &state); err != nil {
 		return projectControlState{}, false, err
 	}
+	needsSave := projectControlStateRequiresCanonicalization(state)
 	projectControlNormalizeState(&state)
 	if projectControlRecoverInterruptedToolRuns(&state, time.Now().UTC()) {
 		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		needsSave = true
+	}
+	if needsSave {
 		if saveErr := s.saveLocked(username, state); saveErr != nil {
 			return projectControlState{}, false, saveErr
 		}
@@ -3666,8 +4340,11 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	artifacts := cloneProjectControlArtifacts(state.Artifacts)
 	checkpoints := cloneProjectControlCheckpoints(state.Checkpoints)
 	decisions := cloneProjectControlDecisions(state.Decisions)
+	memories := cloneProjectControlMemories(state.Memories)
 	events := cloneProjectControlRecordedEvents(state.Events)
-	applyRecordedEventsToTasks(tasks, events)
+	timelineEvents := append(cloneProjectControlRecordedEvents(state.Events), projectControlMemoryEvents(memories)...)
+	applyRecordedEventsToTasks(tasks, timelineEvents)
+	applyProjectControlArtifactsToTasks(tasks, artifacts, memories)
 	for i := range tasks {
 		refreshProjectControlTaskRunbookFields(&tasks[i], artifacts)
 	}
@@ -3793,6 +4470,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		Artifacts:       artifacts,
 		Checkpoints:     checkpoints,
 		Decisions:       decisions,
+		Memories:        memories,
 		Dashboard:       dashboard,
 	}
 }
@@ -4039,6 +4717,9 @@ func projectControlNormalizeState(state *projectControlState) {
 	if state.Events == nil {
 		state.Events = []projectControlRecordedEvent{}
 	}
+	if state.Memories == nil {
+		state.Memories = []projectControlTaskMemory{}
+	}
 	for i := range state.Projects {
 		state.Projects[i].ID = strings.TrimSpace(state.Projects[i].ID)
 		state.Projects[i].Key = strings.TrimSpace(state.Projects[i].Key)
@@ -4164,11 +4845,30 @@ func projectControlNormalizeState(state *projectControlState) {
 		state.Decisions[i].TaskID = strings.TrimSpace(state.Decisions[i].TaskID)
 		state.Decisions[i].CheckpointID = strings.TrimSpace(state.Decisions[i].CheckpointID)
 	}
+	for i := range state.Memories {
+		state.Memories[i].TaskID = strings.TrimSpace(state.Memories[i].TaskID)
+		state.Memories[i].ProjectID = strings.TrimSpace(state.Memories[i].ProjectID)
+		state.Memories[i].WorkstreamID = strings.TrimSpace(state.Memories[i].WorkstreamID)
+		state.Memories[i].WindowStart = strings.TrimSpace(state.Memories[i].WindowStart)
+		state.Memories[i].WindowEnd = strings.TrimSpace(state.Memories[i].WindowEnd)
+		state.Memories[i].Summary = strings.TrimSpace(state.Memories[i].Summary)
+		state.Memories[i].UpdatedAt = strings.TrimSpace(state.Memories[i].UpdatedAt)
+		if state.Memories[i].Highlights == nil {
+			state.Memories[i].Highlights = []string{}
+		}
+		for j := range state.Memories[i].Highlights {
+			state.Memories[i].Highlights[j] = strings.TrimSpace(state.Memories[i].Highlights[j])
+		}
+	}
 	if len(state.Events) == 0 {
 		projectControlMigrateLegacyHistoryToEvents(state)
 	}
+	projectControlCompactState(state)
 	if state.ActiveProjectID == "" && len(state.Projects) > 0 {
 		state.ActiveProjectID = state.Projects[0].ID
+	}
+	for i := range state.Tasks {
+		refreshProjectControlTaskRunbookFields(&state.Tasks[i], state.Artifacts)
 	}
 }
 
@@ -4251,6 +4951,90 @@ func projectControlMigrateLegacyHistoryToEvents(state *projectControlState) {
 	}
 }
 
+func projectControlMemoryEvent(memory projectControlTaskMemory) (projectControlRecordedEvent, bool) {
+	taskID := strings.TrimSpace(memory.TaskID)
+	summary := strings.TrimSpace(memory.Summary)
+	if taskID == "" || summary == "" {
+		return projectControlRecordedEvent{}, false
+	}
+	timestamp := strings.TrimSpace(memory.WindowEnd)
+	if timestamp == "" {
+		timestamp = strings.TrimSpace(memory.UpdatedAt)
+	}
+	if timestamp == "" {
+		timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	detail := summary
+	if len(memory.Highlights) > 0 {
+		detail += " Highlights: " + strings.Join(memory.Highlights, "; ")
+	}
+	return projectControlRecordedEvent{
+		ID:           "memory-" + slugifyProjectControl(taskID),
+		Timestamp:    timestamp,
+		Actor:        "system",
+		Action:       "history_compacted",
+		Detail:       detail,
+		ProjectID:    strings.TrimSpace(memory.ProjectID),
+		WorkstreamID: strings.TrimSpace(memory.WorkstreamID),
+		TaskID:       taskID,
+	}, true
+}
+
+func projectControlMemoryEvents(memories []projectControlTaskMemory) []projectControlRecordedEvent {
+	events := make([]projectControlRecordedEvent, 0, len(memories))
+	for _, memory := range memories {
+		event, ok := projectControlMemoryEvent(memory)
+		if !ok {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func applyProjectControlArtifactsToTasks(tasks []projectControlTask, artifacts []projectControlArtifact, memories []projectControlTaskMemory) {
+	if len(tasks) == 0 {
+		return
+	}
+	indexByTaskID := make(map[string]int, len(tasks))
+	for i := range tasks {
+		indexByTaskID[tasks[i].ID] = i
+		tasks[i].Evidence = []projectControlEvidence{}
+	}
+	if len(artifacts) > 1 {
+		sort.Slice(artifacts, func(i, j int) bool {
+			if artifacts[i].CreatedAt == artifacts[j].CreatedAt {
+				return artifacts[i].ID > artifacts[j].ID
+			}
+			return artifacts[i].CreatedAt > artifacts[j].CreatedAt
+		})
+	}
+	for _, artifact := range artifacts {
+		idx, ok := indexByTaskID[artifact.TaskID]
+		if !ok {
+			continue
+		}
+		label := strings.TrimSpace(artifact.Label)
+		if label == "" {
+			label = normalizeProjectControlArtifactKind(artifact.Kind)
+		}
+		tasks[idx].Evidence = append(tasks[idx].Evidence, projectControlEvidence{
+			Label: label,
+			Value: strings.TrimSpace(artifact.Value),
+		})
+	}
+	for _, memory := range memories {
+		idx, ok := indexByTaskID[strings.TrimSpace(memory.TaskID)]
+		if !ok || strings.TrimSpace(memory.Summary) == "" {
+			continue
+		}
+		tasks[idx].Evidence = append(tasks[idx].Evidence, projectControlEvidence{
+			Label: "History memory",
+			Value: memory.Summary,
+		})
+	}
+}
+
 func cloneProjectControlProjects(items []projectControlProject) []projectControlProject {
 	out := make([]projectControlProject, len(items))
 	copy(out, items)
@@ -4330,6 +5114,15 @@ func cloneProjectControlDecisions(items []projectControlDecision) []projectContr
 func cloneProjectControlRecordedEvents(items []projectControlRecordedEvent) []projectControlRecordedEvent {
 	out := make([]projectControlRecordedEvent, len(items))
 	copy(out, items)
+	return out
+}
+
+func cloneProjectControlMemories(items []projectControlTaskMemory) []projectControlTaskMemory {
+	out := make([]projectControlTaskMemory, len(items))
+	for i, item := range items {
+		out[i] = item
+		out[i].Highlights = append([]string{}, item.Highlights...)
+	}
 	return out
 }
 
