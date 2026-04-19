@@ -5634,6 +5634,28 @@ func (s *projectControlStore) checkHealth(username string, hub *notificationHub)
 		alerts = append(alerts, fmt.Sprintf("Phase %s on task %q running for %s", attempt.PhaseID, taskTitle, now.Sub(started).Truncate(time.Minute)))
 	}
 
+	// Check waiting agent tool runs for timeout
+	tools := projectControlToolsForState(&state)
+	var timedOutToolRuns []string
+	for _, run := range state.ToolRuns {
+		if run.Status != "waiting" {
+			continue
+		}
+		started := parseProjectControlTimestamp(run.StartedAt)
+		if started.IsZero() {
+			continue
+		}
+		timeout := 10 * time.Minute
+		if def, ok := findProjectControlToolDef(tools, run.ToolID); ok && def.timeout() > 0 {
+			timeout = def.timeout()
+		}
+		if now.Sub(started) < timeout {
+			continue
+		}
+		timedOutToolRuns = append(timedOutToolRuns, run.ID)
+		alerts = append(alerts, fmt.Sprintf("Agent tool %s waiting for %s (timeout %s)", run.ToolID, now.Sub(started).Truncate(time.Minute), timeout))
+	}
+
 	for _, task := range state.Tasks {
 		st := normalizeProjectControlTaskState(task.State)
 		if st != "running" && st != "waiting_review" {
@@ -5662,6 +5684,17 @@ func (s *projectControlStore) checkHealth(username string, hub *notificationHub)
 				Action:    "health_alert",
 				Detail:    alert,
 			})
+		}
+		for _, runID := range timedOutToolRuns {
+			for i := range state.ToolRuns {
+				if state.ToolRuns[i].ID == runID && state.ToolRuns[i].Status == "waiting" {
+					state.ToolRuns[i].Status = "failed"
+					state.ToolRuns[i].CompletedAt = nowStr
+					state.ToolRuns[i].Outcome = "fail"
+					state.ToolRuns[i].Error = "agent timeout"
+					state.ToolRuns[i].Summary = "Agent did not respond within timeout."
+				}
+			}
 		}
 		return nil
 	})
