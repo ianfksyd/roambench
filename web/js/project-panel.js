@@ -3495,6 +3495,33 @@
         return crumbs.join('<span class="project-breadcrumb-sep">/</span>');
     }
 
+    function renderAgentActivity(projectSnapshot) {
+        var activeRuns = (state.snapshot && state.snapshot.toolRuns || []).filter(function(run) {
+            return run.status === 'running' || run.status === 'waiting';
+        });
+        var activeSessions = (state.snapshot && state.snapshot.sessions || []).filter(function(s) {
+            return s.state === 'running' || s.state === 'active';
+        });
+        if (!activeRuns.length && !activeSessions.length) {
+            return '';
+        }
+        var rows = activeRuns.map(function(run) {
+            var taskTitle = '';
+            projectSnapshot.tasks.forEach(function(t) { if (t.id === run.taskId) taskTitle = t.title; });
+            var icon = run.status === 'waiting' ? '\u23F3' : '\u25B6';
+            return '<div class="project-agent-row">'
+                + '<span class="project-agent-icon">' + icon + '</span>'
+                + '<span class="project-agent-detail"><strong>' + escapeHTML(run.toolId) + '</strong> on ' + escapeHTML(humanizePhase(run.phaseId))
+                + (taskTitle ? ' \u2014 ' + escapeHTML(taskTitle) : '') + '</span>'
+                + '<span class="project-pill tone-' + (run.status === 'waiting' ? 'warning' : 'info') + '">' + escapeHTML(run.status) + '</span>'
+                + '</div>';
+        }).join('');
+        return '<div class="project-agent-activity">'
+            + '<div class="project-fact-label">' + escapeHTML(tr('project.agentActivity', 'Agent activity')) + '</div>'
+            + rows
+            + '</div>';
+    }
+
     function renderDashboard() {
         var project = getSelectedProject();
         var projectSnapshot;
@@ -3523,6 +3550,7 @@
             + '</div>'
             + '</div>'
             + renderCommandStats(stats)
+            + renderAgentActivity(projectSnapshot)
             + (state.creatingWorkstreamProjectId === project.id ? renderWorkstreamWizard(project) : (!projectSnapshot.workstreams.length && !taskList.length ? '' : renderCommandHero(project, projectSnapshot)))
             + renderCommandLanes(projectSnapshot)
             + (taskList.length

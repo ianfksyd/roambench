@@ -6638,6 +6638,37 @@ button.tab-action:focus-visible {
     margin-top: 0;
 }
 
+.project-agent-activity {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.project-agent-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 13px;
+}
+
+.project-agent-icon {
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+
+.project-agent-detail {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 @media (max-width: 860px) {
     .project-panel,
     .project-main-section {
