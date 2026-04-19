@@ -43,6 +43,7 @@ These docs are for maintainers, not end users.
 - [Rebrand Checklist](internal/rebrand-checklist.md) — naming migration tracker
 - [Release Packaging](internal/release-packaging.md) — build and bundle flow for GitHub Releases
 - [Windows Native Plan](internal/windows-native-plan.md) — Wails + ConPTY desktop app planning
+- [Project Control Iteration Plan](internal/project-control-iteration-plan.md) — next steps for auto-progression, agent API, notifications
 
 ## Branding
 
