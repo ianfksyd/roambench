@@ -1647,7 +1647,7 @@
             openTask(taskId);
             updateBadge();
             render();
-            if (action === 'run_tool' && hasRunningToolRunsForTask(taskId)) {
+            if ((action === 'run_tool' || action === 'start_execution') && hasRunningToolRunsForTask(taskId)) {
                 scheduleToolRunRefresh(taskId, TOOL_RUN_REFRESH_ATTEMPTS);
             }
         }).catch(function(err) {
@@ -1712,12 +1712,12 @@
         switch (task.state) {
         case 'planned':
             return [
-                { action: 'queue_task', label: tr('project.actionAddQueue', 'Add to queue') },
-                phaseStartAction
+                { action: 'start_execution', label: tr('project.actionStartExecution', 'Start execution'), tone: 'primary' },
+                { action: 'queue_task', label: tr('project.actionAddQueue', 'Add to queue') }
             ];
         case 'queued':
             return [
-                phaseStartAction,
+                { action: 'start_execution', label: tr('project.actionStartExecution', 'Start execution'), tone: 'primary' },
                 { action: 'mark_blocked', label: tr('project.actionMarkBlocked', 'Mark blocked') }
             ];
         case 'running':
