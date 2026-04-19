@@ -128,6 +128,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/project-control/workstreams", authRequired(s.sessions, s.handleProjectControlWorkstreams))
 	s.mux.HandleFunc("/api/project-control/tasks", authRequired(s.sessions, s.handleProjectControlTasks))
 	s.mux.HandleFunc("/api/project-control/agent-token", authRequired(s.sessions, s.handleAgentToken))
+	s.mux.HandleFunc("/api/project-control/tools/", authRequired(s.sessions, s.handleProjectControlTool))
+	s.mux.HandleFunc("/api/project-control/tools", authRequired(s.sessions, s.handleProjectControlTools))
 	s.mux.HandleFunc("/api/project-control", authRequired(s.sessions, s.handleProjectControlSnapshot))
 
 	// Agent API (token auth)
@@ -1137,4 +1139,55 @@ func (s *Server) handleAgentRequestCheckpoint(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+func (s *Server) handleProjectControlTools(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var def projectControlToolDef
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		if err := s.projectControl.createTool(GetUsername(r), def); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]string{"ok": "true"})
+		return
+	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (s *Server) handleProjectControlTool(w http.ResponseWriter, r *http.Request) {
+	toolID := strings.TrimPrefix(r.URL.Path, "/api/project-control/tools/")
+	toolID = strings.TrimSpace(toolID)
+	if toolID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tool id required"})
+		return
+	}
+	username := GetUsername(r)
+	switch r.Method {
+	case http.MethodPut:
+		var def projectControlToolDef
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		def.ID = toolID
+		if err := s.projectControl.updateTool(username, def); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+	case http.MethodDelete:
+		if err := s.projectControl.deleteTool(username, toolID); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }

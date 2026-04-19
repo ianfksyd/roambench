@@ -5459,6 +5459,86 @@ func applyRecordedEventsToTasks(tasks []projectControlTask, events []projectCont
 	}
 }
 
+func (s *projectControlStore) createTool(username string, def projectControlToolDef) error {
+	def.ID = normalizeProjectControlToolID(def.ID)
+	if def.ID == "" || len(def.Command) == 0 || def.ArtifactKind == "" {
+		return errors.New("tool id, command, and artifactKind are required")
+	}
+	_, err := s.withStateLocked(username, func(state *projectControlState) error {
+		if state.Tools == nil {
+			state.Tools = append([]projectControlToolDef{}, defaultProjectControlTools()...)
+		}
+		for _, existing := range state.Tools {
+			if normalizeProjectControlToolID(existing.ID) == def.ID {
+				return fmt.Errorf("tool %s already exists", def.ID)
+			}
+		}
+		state.Tools = append(state.Tools, def)
+		return nil
+	})
+	return err
+}
+
+func (s *projectControlStore) updateTool(username string, def projectControlToolDef) error {
+	def.ID = normalizeProjectControlToolID(def.ID)
+	if def.ID == "" {
+		return errors.New("tool id is required")
+	}
+	_, err := s.withStateLocked(username, func(state *projectControlState) error {
+		if state.Tools == nil {
+			state.Tools = append([]projectControlToolDef{}, defaultProjectControlTools()...)
+		}
+		for i, existing := range state.Tools {
+			if normalizeProjectControlToolID(existing.ID) == def.ID {
+				if len(def.Command) > 0 {
+					state.Tools[i].Command = def.Command
+				}
+				if def.Name != "" {
+					state.Tools[i].Name = def.Name
+				}
+				if def.ArtifactKind != "" {
+					state.Tools[i].ArtifactKind = def.ArtifactKind
+				}
+				if def.ArtifactLabel != "" {
+					state.Tools[i].ArtifactLabel = def.ArtifactLabel
+				}
+				if def.TimeoutSeconds > 0 {
+					state.Tools[i].TimeoutSeconds = def.TimeoutSeconds
+				}
+				if def.MaxOutputBytes > 0 {
+					state.Tools[i].MaxOutputBytes = def.MaxOutputBytes
+				}
+				if len(def.AllowedPhases) > 0 {
+					state.Tools[i].AllowedPhases = def.AllowedPhases
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("tool %s not found", def.ID)
+	})
+	return err
+}
+
+func (s *projectControlStore) deleteTool(username, toolID string) error {
+	toolID = normalizeProjectControlToolID(toolID)
+	if toolID == "" {
+		return errors.New("tool id is required")
+	}
+	_, err := s.withStateLocked(username, func(state *projectControlState) error {
+		if state.Tools == nil {
+			return fmt.Errorf("tool %s not found", toolID)
+		}
+		for i, existing := range state.Tools {
+			if normalizeProjectControlToolID(existing.ID) == toolID {
+				state.Tools = append(state.Tools[:i], state.Tools[i+1:]...)
+				return nil
+			}
+		}
+		return fmt.Errorf("tool %s not found", toolID)
+	})
+	return err
+}
+
 func generateAgentToken() string {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {

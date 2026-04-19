@@ -4541,3 +4541,67 @@ func TestProjectControlAgentInvalidTokenReturns401(t *testing.T) {
 		t.Fatalf("GET task with invalid token status = %d, want 401", rec.Code)
 	}
 }
+
+func TestProjectControlToolCRUDAPI(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	// Create a custom tool
+	body := `{"id":"npm_test","name":"NPM Test","command":["npm","test"],"artifactKind":"test_result","artifactLabel":"NPM test","allowedPhases":["test","final_validation"],"timeoutSeconds":300}`
+	req := httptest.NewRequest(http.MethodPost, "/api/project-control/tools", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST tool status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify tool appears in snapshot
+	snapReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapRec, snapReq)
+	snapshot := decodeProjectControlSnapshot(t, snapRec)
+	found := false
+	for _, def := range snapshot.Tools {
+		if def.ID == "npm_test" && def.TimeoutSeconds == 300 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("npm_test tool not found in snapshot after creation")
+	}
+
+	// Update the tool
+	updateBody := `{"name":"NPM Test Updated","timeoutSeconds":600}`
+	req = httptest.NewRequest(http.MethodPut, "/api/project-control/tools/npm_test", strings.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT tool status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Delete the tool
+	req = httptest.NewRequest(http.MethodDelete, "/api/project-control/tools/npm_test", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE tool status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify tool is gone
+	snapReq = httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapRec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapRec, snapReq)
+	snapshot = decodeProjectControlSnapshot(t, snapRec)
+	for _, def := range snapshot.Tools {
+		if def.ID == "npm_test" {
+			t.Fatal("npm_test tool still present after deletion")
+		}
+	}
+}
