@@ -700,6 +700,22 @@ type wsServerMessage struct {
 	PaneHeight     int    `json:"paneHeight,omitempty"`
 }
 
+const (
+	terminalCloseReasonSessionUnavailable = "session unavailable"
+	terminalCloseReasonAttachUnavailable  = "terminal attach unavailable"
+	terminalCloseReasonAttachFailed       = "terminal attach failed"
+	terminalCloseReasonSessionEnded       = "session ended"
+)
+
+func channelClosed(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 	username := GetUsername(r)
 	sessionID := strings.TrimPrefix(r.URL.Path, "/api/terminals/ws/")
@@ -715,9 +731,32 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 	}
 	defer conn.Close()
 
+	writeClose := func(code int, text string) {
+		conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(code, text),
+			time.Now().Add(time.Second),
+		)
+	}
+
+	if s.projectControl != nil && !s.projectControl.allowsTerminalAttach(username, sessionID) {
+		writeClose(websocket.ClosePolicyViolation, terminalCloseReasonAttachUnavailable)
+		return
+	}
+
 	ptmx, cmd, err := s.terminals.AttachSessionForUser(username, sessionID)
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte("Error: session unavailable"))
+		closeCode := websocket.CloseNormalClosure
+		closeText := terminalCloseReasonSessionUnavailable
+		if errors.Is(err, terminal.ErrForbidden) {
+			closeCode = websocket.ClosePolicyViolation
+			closeText = terminalCloseReasonAttachUnavailable
+		} else if !errors.Is(err, terminal.ErrNotFound) {
+			log.Printf("terminal attach error for %s/%s: %v", username, sessionID, err)
+			closeCode = websocket.CloseInternalServerErr
+			closeText = terminalCloseReasonAttachFailed
+		}
+		writeClose(closeCode, closeText)
 		return
 	}
 
@@ -806,13 +845,16 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 				}
 			}
 			if err != nil {
+				if channelClosed(done) {
+					return
+				}
 				if err != io.EOF {
 					log.Printf("pty read error: %v", err)
 				}
 				wsMu.Lock()
 				conn.WriteMessage(websocket.TextMessage, []byte("\r\n[session ended]\r\n"))
 				conn.WriteControl(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, terminalCloseReasonSessionEnded),
 					time.Now().Add(time.Second))
 				wsMu.Unlock()
 				cleanup()
@@ -840,6 +882,7 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 			cleanup()
 			return
 		}
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 		if msgType == websocket.TextMessage {
 			var ctrl wsControlMessage

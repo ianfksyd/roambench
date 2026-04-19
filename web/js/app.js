@@ -843,6 +843,31 @@
             'project.workstreamNameRequired': 'Name required.',
             'project.cancel': 'Cancel',
             'project.create': 'Create',
+            'project.newTask': 'New task',
+            'project.taskTitle': 'Title',
+            'project.taskGoal': 'Goal',
+            'project.skill': 'Skill',
+            'project.runbook': 'Runbook',
+            'project.taskTitlePlaceholder': 'Task title',
+            'project.taskGoalPlaceholder': 'Goal (optional)',
+            'project.taskTitleRequired': 'Task title required.',
+            'project.addFirstTask': 'Add first task',
+            'project.skillCodeChange': 'Code change',
+            'project.skillDocsUpdate': 'Docs update',
+            'project.taskWizardKicker': 'Task wizard',
+            'project.taskWizardIntro': 'Set up one clear next step for this workstream.',
+            'project.taskWizardWorkstream': 'Workstream',
+            'project.taskWizardStep1': 'Define task',
+            'project.taskWizardStep1Copy': 'Name the task and describe the outcome.',
+            'project.taskWizardStep2': 'Execution setup',
+            'project.taskWizardStep2Copy': 'Choose the skill and runbook.',
+            'project.taskWizardStep3': 'Review',
+            'project.taskWizardStep3Copy': 'Confirm the summary before creating.',
+            'project.taskWizardReviewTitle': 'Ready to create',
+            'project.taskWizardReviewCopy': 'Review the summary below, then create the task.',
+            'project.taskWizardBack': 'Back',
+            'project.taskWizardNext': 'Next',
+            'project.taskWizardCreate': 'Create task',
             'project.addTask': 'Add task',
             'project.add': 'Add',
             'project.openTask': 'Open task',
@@ -982,11 +1007,17 @@
             'project.sidebarWorkstreams': 'Workstreams',
             'project.sidebarActions': 'Actions',
             'project.sidebarRuntimes': 'Runtimes',
+            'project.overview': 'Overview',
             'project.timeline': 'Timeline',
             'project.evidence': 'Evidence',
             'project.noEvidence': 'No evidence recorded yet.',
             'project.filesDiff': 'Files & Diff',
             'project.sessions': 'Sessions',
+            'project.openSessions': 'Open sessions',
+            'project.sessionsAttachCopy': 'Open Sessions to inspect this run and attach the terminal.',
+            'project.sessionsTabCopy': 'Open Sessions to inspect this run and continue if needed.',
+            'project.runningNoSessionCopy': 'Running, but no session is ready to attach yet.',
+            'project.startPhaseCopy': 'Start the current phase below when you are ready.',
             'project.noSessions': 'No sessions recorded yet.',
             'project.audit': 'Audit',
             'project.noAudit': 'No audit entries yet.',
@@ -1203,6 +1234,31 @@
             'project.workstreamNameRequired': '请输入名称。',
             'project.cancel': '取消',
             'project.create': '创建',
+            'project.newTask': '新任务',
+            'project.taskTitle': '标题',
+            'project.taskGoal': '目标',
+            'project.skill': '技能',
+            'project.runbook': 'Runbook',
+            'project.taskTitlePlaceholder': '任务标题',
+            'project.taskGoalPlaceholder': '任务目标（可选）',
+            'project.taskTitleRequired': '请输入任务标题。',
+            'project.addFirstTask': '添加第一个任务',
+            'project.skillCodeChange': '代码修改',
+            'project.skillDocsUpdate': '文档更新',
+            'project.taskWizardKicker': '任务向导',
+            'project.taskWizardIntro': '先把这个工作线里的下一步定义清楚，再创建任务。',
+            'project.taskWizardWorkstream': '工作线',
+            'project.taskWizardStep1': '定义任务',
+            'project.taskWizardStep1Copy': '写清标题和希望产出的结果。',
+            'project.taskWizardStep2': '执行配置',
+            'project.taskWizardStep2Copy': '选择技能和将采用的 Runbook。',
+            'project.taskWizardStep3': '确认创建',
+            'project.taskWizardStep3Copy': '最后检查一次，确认后创建任务。',
+            'project.taskWizardReviewTitle': '准备创建',
+            'project.taskWizardReviewCopy': '确认下面的摘要无误后创建任务。',
+            'project.taskWizardBack': '上一步',
+            'project.taskWizardNext': '下一步',
+            'project.taskWizardCreate': '创建任务',
             'project.addTask': '添加任务',
             'project.add': '添加',
             'project.openTask': '打开任务',
@@ -1342,11 +1398,17 @@
             'project.sidebarWorkstreams': '工作线',
             'project.sidebarActions': '操作',
             'project.sidebarRuntimes': '运行时',
+            'project.overview': '概览',
             'project.timeline': '时间线',
             'project.evidence': '证据',
             'project.noEvidence': '暂无证据记录。',
             'project.filesDiff': '文件与 Diff',
             'project.sessions': '会话',
+            'project.openSessions': '打开会话',
+            'project.sessionsAttachCopy': '到“会话”里查看这次运行，并在那里接入终端。',
+            'project.sessionsTabCopy': '到“会话”里查看这次运行，必要时再继续处理。',
+            'project.runningNoSessionCopy': '任务正在运行，但还没有可接入的会话。',
+            'project.startPhaseCopy': '准备好后可在下方启动当前阶段。',
             'project.noSessions': '暂无会话记录。',
             'project.audit': '审计',
             'project.noAudit': '暂无审计记录。',
@@ -1563,6 +1625,31 @@
             'project.workstreamNameRequired': '名前が必要です。',
             'project.cancel': 'キャンセル',
             'project.create': '作成',
+            'project.newTask': '新規タスク',
+            'project.taskTitle': 'タイトル',
+            'project.taskGoal': 'ゴール',
+            'project.skill': 'スキル',
+            'project.runbook': 'Runbook',
+            'project.taskTitlePlaceholder': 'タスク名',
+            'project.taskGoalPlaceholder': 'ゴール（任意）',
+            'project.taskTitleRequired': 'タスク名が必要です。',
+            'project.addFirstTask': '最初のタスクを追加',
+            'project.skillCodeChange': 'コード変更',
+            'project.skillDocsUpdate': 'ドキュメント更新',
+            'project.taskWizardKicker': 'タスクウィザード',
+            'project.taskWizardIntro': 'このワークストリームの次の一手を整理してからタスクを作成します。',
+            'project.taskWizardWorkstream': 'ワークストリーム',
+            'project.taskWizardStep1': 'タスク定義',
+            'project.taskWizardStep1Copy': 'タスク名と目指す結果を明確にします。',
+            'project.taskWizardStep2': '実行設定',
+            'project.taskWizardStep2Copy': '使うスキルと Runbook を選びます。',
+            'project.taskWizardStep3': '確認',
+            'project.taskWizardStep3Copy': '内容を確認してからタスクを作成します。',
+            'project.taskWizardReviewTitle': '作成準備完了',
+            'project.taskWizardReviewCopy': '下の内容を確認してからタスクを作成してください。',
+            'project.taskWizardBack': '戻る',
+            'project.taskWizardNext': '次へ',
+            'project.taskWizardCreate': 'タスクを作成',
             'project.addTask': 'タスクを追加',
             'project.add': '追加',
             'project.openTask': 'タスクを開く',
@@ -1702,11 +1789,17 @@
             'project.sidebarWorkstreams': 'ワークストリーム',
             'project.sidebarActions': '操作',
             'project.sidebarRuntimes': 'ランタイム',
+            'project.overview': '概要',
             'project.timeline': 'タイムライン',
             'project.evidence': '証跡',
             'project.noEvidence': '証跡はまだ記録されていません。',
             'project.filesDiff': 'ファイルと Diff',
             'project.sessions': 'セッション',
+            'project.openSessions': 'セッションを開く',
+            'project.sessionsAttachCopy': 'Sessions で実行内容を確認し、必要なら端末に接続します。',
+            'project.sessionsTabCopy': 'Sessions で実行内容を確認し、必要なら続きを行います。',
+            'project.runningNoSessionCopy': '実行中ですが、まだ接続可能なセッションはありません。',
+            'project.startPhaseCopy': '準備ができたら下で現在のフェーズを開始します。',
             'project.noSessions': 'セッションはまだ記録されていません。',
             'project.audit': '監査',
             'project.noAudit': '監査項目はまだありません。',
@@ -4328,6 +4421,23 @@
         }
     }
 
+    function terminalSocketCloseReason(event) {
+        if (!event || typeof event.reason !== 'string') {
+            return '';
+        }
+        return event.reason.trim().toLowerCase();
+    }
+
+    function shouldRetryTerminalSocket(event) {
+        var reason = terminalSocketCloseReason(event);
+
+        if (event && event.code === 1008) {
+            return false;
+        }
+
+        return reason !== 'session unavailable';
+    }
+
     // ========== Auth ==========
 
     function removeAppLoader() {
@@ -5221,7 +5331,9 @@
             terminalEntry.term.write('\r\n\x1b[31m[' + t('terminal.connectionError') + ']\x1b[0m\r\n');
         };
 
-        ws.onclose = function() {
+        ws.onclose = function(event) {
+            var closeReason = terminalSocketCloseReason(event);
+
             if (!state.terminals[id] || state.terminals[id].ws !== ws) {
                 return;
             }
@@ -5238,6 +5350,13 @@
             }
             if (terminalEntry.detachRequested || !terminalEntry.desiredConnected || !isTerminalViewVisible() || !isTerminalVisibleInActiveWorkspace(id)) {
                 terminalEntry.detachRequested = false;
+                return;
+            }
+
+            if (!shouldRetryTerminalSocket(event)) {
+                if (closeReason === 'session unavailable') {
+                    replaceMissingTerminal(id);
+                }
                 return;
             }
 

@@ -85,6 +85,56 @@ func TestManagerSessionOwnership(t *testing.T) {
 	}
 }
 
+func TestManagerCreateSessionWithOptionsPersistsWorkDir(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+	workDir := t.TempDir()
+
+	session, err := mgr.CreateSessionWithOptions("ian", SessionCreateOptions{WorkDir: workDir})
+	if err != nil {
+		t.Fatalf("CreateSessionWithOptions error: %v", err)
+	}
+
+	mgr.mu.Lock()
+	recordedWorkDir := ""
+	if stored, ok := mgr.sessions[session.ID]; ok {
+		recordedWorkDir = stored.WorkDir
+	}
+	mgr.mu.Unlock()
+	if recordedWorkDir != workDir {
+		t.Fatalf("session workdir = %q, want %q", recordedWorkDir, workDir)
+	}
+
+	persisted := readPersistedSessionFile(t, mgr, "ian", session.ID)
+	if persisted.WorkDir != workDir {
+		t.Fatalf("persisted workdir = %q, want %q", persisted.WorkDir, workDir)
+	}
+}
+
+func TestManagerCreateSessionWithOptionsUsesProvidedName(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSessionWithOptions("ian", SessionCreateOptions{Name: "  Implement   panel shell  "})
+	if err != nil {
+		t.Fatalf("CreateSessionWithOptions error: %v", err)
+	}
+	if session.Name != "Implement panel shell" {
+		t.Fatalf("session name = %q, want %q", session.Name, "Implement panel shell")
+	}
+
+	persisted := readPersistedSessionFile(t, mgr, "ian", session.ID)
+	if persisted.Name != "Implement panel shell" {
+		t.Fatalf("persisted name = %q, want %q", persisted.Name, "Implement panel shell")
+	}
+}
+
 func TestManagerDefaultNamesAndOrdering(t *testing.T) {
 	mgr := newTestManager(t, &config.TerminalConfig{
 		Shell:       "/bin/sh",
@@ -224,6 +274,64 @@ func TestManagerLoadPersistedSessionsRestoresExistingTmuxSessions(t *testing.T) 
 	}
 	if sessions[0].ID != persisted.ID || sessions[0].Name != persisted.Name {
 		t.Fatalf("restored session = %#v, want id %q name %q", sessions[0], persisted.ID, persisted.Name)
+	}
+}
+
+func TestManagerListSessionsPrunesMissingTmuxSessions(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	mgr.hasTmux = true
+	mgr.tmuxSessionExists = func(string) bool {
+		return false
+	}
+
+	sessions := mgr.ListSessions("ian")
+	if len(sessions) != 0 {
+		t.Fatalf("ListSessions length = %d, want 0 after pruning missing tmux session", len(sessions))
+	}
+	if _, err := os.Stat(mgr.persistedSessionPath("ian", session.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("persisted session file still exists, stat err = %v", err)
+	}
+}
+
+func TestManagerAttachSessionForUserPrunesMissingTmuxSessions(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	mgr.hasTmux = true
+	mgr.tmuxSessionExists = func(string) bool {
+		return false
+	}
+
+	if _, _, err := mgr.AttachSessionForUser("ian", session.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AttachSessionForUser error = %v, want %v", err, ErrNotFound)
+	}
+
+	mgr.mu.Lock()
+	_, ok := mgr.sessions[session.ID]
+	mgr.mu.Unlock()
+	if ok {
+		t.Fatal("session should be removed after missing tmux session is pruned")
+	}
+	if _, err := os.Stat(mgr.persistedSessionPath("ian", session.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("persisted session file still exists, stat err = %v", err)
 	}
 }
 
@@ -427,6 +535,39 @@ func TestPersistedSessionPathUsesConfiguredDirectory(t *testing.T) {
 	want := filepath.Join(dir, "ian", "lt-123.json")
 	if path != want {
 		t.Fatalf("persistedSessionPath = %q, want %q", path, want)
+	}
+}
+
+func TestPersistedStoreSizeIgnoresNonSessionFiles(t *testing.T) {
+	dir := t.TempDir()
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 0,
+		IdleTimeout: "1h",
+		PersistDir:  dir,
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	sessionPath := mgr.persistedSessionPath("ian", session.ID)
+	info, err := os.Stat(sessionPath)
+	if err != nil {
+		t.Fatalf("Stat(%s) error: %v", sessionPath, err)
+	}
+
+	unrelatedPath := filepath.Join(dir, ".project-control", "workspaces", "ian", "snapshot.bin")
+	if err := os.MkdirAll(filepath.Dir(unrelatedPath), 0700); err != nil {
+		t.Fatalf("MkdirAll error: %v", err)
+	}
+	if err := os.WriteFile(unrelatedPath, []byte(strings.Repeat("x", 4096)), 0600); err != nil {
+		t.Fatalf("WriteFile(%s) error: %v", unrelatedPath, err)
+	}
+
+	if got := mgr.persistedStoreSize(); got != info.Size() {
+		t.Fatalf("persistedStoreSize = %d, want %d", got, info.Size())
 	}
 }
 

@@ -64,6 +64,11 @@ type SessionInfo struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+type SessionCreateOptions struct {
+	WorkDir string
+	Name    string
+}
+
 type ScrollState struct {
 	InMode         bool
 	HistorySize    int
@@ -75,6 +80,7 @@ type persistedSession struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	Username     string    `json:"username"`
+	WorkDir      string    `json:"workDir,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
 	LastActivity time.Time `json:"lastActivity"`
 }
@@ -88,6 +94,7 @@ type tmuxSessionState struct {
 type Session struct {
 	Info         SessionInfo
 	Username     string
+	WorkDir      string
 	LastActivity time.Time
 	cmd          *exec.Cmd
 	ptyFile      *os.File
@@ -143,13 +150,23 @@ func (m *Manager) HasTmux() bool {
 
 func (m *Manager) ListSessions(username string) []SessionInfo {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	var result []SessionInfo
 	for _, s := range m.sessions {
 		if s.Username == username {
 			result = append(result, s.Info)
 		}
+	}
+	m.mu.Unlock()
+
+	if m.hasTmux {
+		filtered := result[:0]
+		for _, info := range result {
+			if m.pruneMissingTmuxSession(info.ID) {
+				continue
+			}
+			filtered = append(filtered, info)
+		}
+		result = filtered
 	}
 
 	sort.Slice(result, func(i, j int) bool {
@@ -163,6 +180,10 @@ func (m *Manager) ListSessions(username string) []SessionInfo {
 }
 
 func (m *Manager) CreateSession(username string) (SessionInfo, error) {
+	return m.CreateSessionWithOptions(username, SessionCreateOptions{})
+}
+
+func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOptions) (SessionInfo, error) {
 	m.mu.Lock()
 
 	count := 0
@@ -177,8 +198,17 @@ func (m *Manager) CreateSession(username string) (SessionInfo, error) {
 	}
 
 	id := m.generateID()
-	name := m.nextDefaultNameLocked(username)
+	name, err := normalizeSessionName(opts.Name)
+	if err != nil {
+		m.mu.Unlock()
+		return SessionInfo{}, err
+	}
+	if name == "" {
+		name = m.nextDefaultNameLocked(username)
+	}
 	now := time.Now()
+	homeDir := lookupHomeDir(username)
+	workDir := resolveSessionWorkDir(opts.WorkDir, homeDir)
 	session := &Session{
 		Info: SessionInfo{
 			ID:        id,
@@ -186,20 +216,19 @@ func (m *Manager) CreateSession(username string) (SessionInfo, error) {
 			CreatedAt: now,
 		},
 		Username:     username,
+		WorkDir:      workDir,
 		LastActivity: now,
 		dirty:        false,
 	}
 	m.sessions[id] = session
 	m.mu.Unlock()
 
-	homeDir := lookupHomeDir(username)
-
 	if m.hasTmux {
 		defaultCommand := tmuxShellCommand(m.cfg.Shell, homeDir)
-		cmdArgs := tmuxNewSessionArgs(id, defaultCommand, homeDir)
+		cmdArgs := tmuxNewSessionArgs(id, defaultCommand, workDir)
 		cmd := exec.Command("tmux", cmdArgs...)
-		if homeDir != "" {
-			cmd.Dir = homeDir
+		if workDir != "" {
+			cmd.Dir = workDir
 		}
 		cmd.Env = terminalCommandEnv(os.Environ(), homeDir)
 		if err := cmd.Run(); err != nil {
@@ -252,6 +281,9 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 	if err != nil {
 		return nil, nil, err
 	}
+	if m.pruneMissingTmuxSession(sessionID) {
+		return nil, nil, ErrNotFound
+	}
 
 	m.mu.Lock()
 	if session.ptyFile != nil {
@@ -266,6 +298,7 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 
 	var cmd *exec.Cmd
 	homeDir := lookupHomeDir(session.Username)
+	workDir := resolveSessionWorkDir(session.WorkDir, homeDir)
 	if m.hasTmux {
 		cmd = exec.Command("tmux", "attach-session", "-t", sessionID)
 		cmd.Env = terminalCommandEnv(os.Environ(), homeDir)
@@ -276,8 +309,8 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 		} else {
 			cmd = exec.Command(m.cfg.Shell, "-i")
 		}
-		if homeDir != "" {
-			cmd.Dir = homeDir
+		if workDir != "" {
+			cmd.Dir = workDir
 		}
 		cmd.Env = terminalCommandEnv(os.Environ(), homeDir)
 	}
@@ -299,6 +332,17 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 	m.reapAttachedCommand(sessionID, cmd, ptmx)
 
 	return ptmx, cmd, nil
+}
+
+func (m *Manager) pruneMissingTmuxSession(sessionID string) bool {
+	if !m.hasTmux || sessionID == "" {
+		return false
+	}
+	if m.tmuxSessionExists(sessionID) {
+		return false
+	}
+	_ = m.KillSession(sessionID)
+	return true
 }
 
 func (m *Manager) reapAttachedCommand(sessionID string, cmd *exec.Cmd, ptyFile *os.File) <-chan struct{} {
@@ -467,12 +511,9 @@ func abs(value int) int {
 }
 
 func (m *Manager) RenameSession(username, sessionID, name string) error {
-	normalized := strings.Join(strings.Fields(name), " ")
-	if normalized == "" {
-		return errors.New("terminal name cannot be empty")
-	}
-	if len(normalized) > 80 {
-		return errors.New("terminal name must be 80 characters or less")
+	normalized, err := normalizeSessionName(name)
+	if err != nil {
+		return err
 	}
 
 	m.mu.Lock()
@@ -502,6 +543,17 @@ func (m *Manager) RenameSession(username, sessionID, name string) error {
 	}
 
 	return nil
+}
+
+func normalizeSessionName(name string) (string, error) {
+	normalized := strings.Join(strings.Fields(name), " ")
+	if normalized == "" {
+		return "", nil
+	}
+	if len(normalized) > 80 {
+		return "", errors.New("terminal name must be 80 characters or less")
+	}
+	return normalized, nil
 }
 
 func (m *Manager) KillSessionForUser(username, sessionID string) error {
@@ -675,6 +727,32 @@ func lookupHomeDir(username string) string {
 	return homeDir
 }
 
+func resolveSessionWorkDir(requested, fallback string) string {
+	candidates := []string{requested, fallback}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if !filepath.IsAbs(candidate) {
+			absPath, err := filepath.Abs(candidate)
+			if err != nil {
+				continue
+			}
+			candidate = absPath
+		}
+		if resolved, err := filepath.EvalSymlinks(candidate); err == nil && strings.TrimSpace(resolved) != "" {
+			candidate = resolved
+		}
+		info, err := os.Stat(candidate)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		return candidate
+	}
+	return ""
+}
+
 func (m *Manager) cleanupLoop(ctx context.Context) {
 	flushTicker := time.NewTicker(sessionFlushInterval)
 	cleanupTicker := time.NewTicker(sessionCleanupInterval)
@@ -748,6 +826,7 @@ func (m *Manager) persistSession(sessionID string) error {
 		ID:           session.Info.ID,
 		Name:         session.Info.Name,
 		Username:     session.Username,
+		WorkDir:      session.WorkDir,
 		CreatedAt:    session.Info.CreatedAt,
 		LastActivity: session.LastActivity,
 	}
@@ -760,6 +839,7 @@ func (m *Manager) persistSession(sessionID string) error {
 	m.mu.Lock()
 	if session, ok := m.sessions[sessionID]; ok {
 		session.dirty = session.Info.Name != data.Name ||
+			session.WorkDir != data.WorkDir ||
 			!session.Info.CreatedAt.Equal(data.CreatedAt) ||
 			!session.LastActivity.Equal(data.LastActivity)
 	}
@@ -871,6 +951,7 @@ func (m *Manager) loadPersistedSessions() {
 					CreatedAt: data.CreatedAt,
 				},
 				Username:     data.Username,
+				WorkDir:      resolveSessionWorkDir(data.WorkDir, lookupHomeDir(data.Username)),
 				LastActivity: data.LastActivity,
 			}
 		}
@@ -903,13 +984,17 @@ func (m *Manager) enforcePersistedStorageLimit() {
 
 func (m *Manager) persistedStoreSize() int64 {
 	var total int64
-	_ = filepath.Walk(m.persistDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil || info.IsDir() {
-			return nil
+	files, err := filepath.Glob(filepath.Join(m.persistDir, "*", "*.json"))
+	if err != nil {
+		return 0
+	}
+	for _, path := range files {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
 		}
 		total += info.Size()
-		return nil
-	})
+	}
 	return total
 }
 

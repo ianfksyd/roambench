@@ -16,9 +16,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gorilla/websocket"
 	"github.com/ianf339/roambench/internal/auth"
 	"github.com/ianf339/roambench/internal/config"
 	"github.com/ianf339/roambench/internal/filebrowser"
+	"github.com/ianf339/roambench/internal/terminal"
 )
 
 type stubAuthProvider struct {
@@ -525,6 +527,131 @@ func TestFilesPreviewRouteReturnsScaledImage(t *testing.T) {
 	}
 	if cfgImage.Width > 64 || cfgImage.Height > 64 {
 		t.Fatalf("preview size = %dx%d, want max 64px on each edge", cfgImage.Width, cfgImage.Height)
+	}
+}
+
+func TestHandleTerminalWebSocketClosesWithPolicyViolationWhenAttachUnavailable(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+	cfg.Auth.SingleUser = "ian"
+	cfg.Terminal.PersistDir = t.TempDir()
+
+	sessions, err := auth.NewSessionManager(&cfg.Auth)
+	if err != nil {
+		t.Fatalf("NewSessionManager error: %v", err)
+	}
+	defer sessions.Stop()
+
+	token, err := sessions.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	termMgr := terminal.NewManager(&cfg.Terminal)
+	defer termMgr.Stop()
+
+	srv := NewServer(cfg, nil, sessions, termMgr, filebrowser.New())
+	_, err = srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		state.Tasks = []projectControlTask{{
+			ID:               "task-attach-policy",
+			ProjectID:        "project-attach",
+			WorkstreamID:     "workstream-attach",
+			State:            "running",
+			AcceptanceStatus: "not_ready",
+			RuntimeID:        projectControlRuntimeID,
+			SelectedSkill:    projectControlDefaultSkillID,
+			RunbookID:        projectControlDefaultRunbookID,
+			CurrentPhase:     "review",
+			RunbookState:     "in_progress",
+		}}
+		state.PhaseAttempts = []projectControlPhaseAttempt{{
+			ID:        "attempt-review",
+			TaskID:    "task-attach-policy",
+			RunbookID: projectControlDefaultRunbookID,
+			PhaseID:   "review",
+			SessionID: projectControlSessionIDForTerminal("term-review"),
+			Status:    "running",
+		}}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withStateLocked error: %v", err)
+	}
+
+	server := httptest.NewServer(srv.mux)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/terminals/ws/term-review"
+	header := http.Header{}
+	header.Set("Origin", server.URL)
+	header.Set("Cookie", auth.CookieName+"="+token)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer conn.Close()
+
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("ReadMessage error = nil, want close error")
+	} else if closeErr, ok := err.(*websocket.CloseError); !ok {
+		t.Fatalf("ReadMessage error = %T, want *websocket.CloseError", err)
+	} else {
+		if closeErr.Code != websocket.ClosePolicyViolation {
+			t.Fatalf("close code = %d, want %d", closeErr.Code, websocket.ClosePolicyViolation)
+		}
+		if closeErr.Text != terminalCloseReasonAttachUnavailable {
+			t.Fatalf("close reason = %q, want %q", closeErr.Text, terminalCloseReasonAttachUnavailable)
+		}
+	}
+}
+
+func TestHandleTerminalWebSocketClosesWithSessionUnavailableReason(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+	cfg.Auth.SingleUser = "ian"
+	cfg.Terminal.PersistDir = t.TempDir()
+
+	sessions, err := auth.NewSessionManager(&cfg.Auth)
+	if err != nil {
+		t.Fatalf("NewSessionManager error: %v", err)
+	}
+	defer sessions.Stop()
+
+	token, err := sessions.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	termMgr := terminal.NewManager(&cfg.Terminal)
+	defer termMgr.Stop()
+
+	srv := NewServer(cfg, nil, sessions, termMgr, filebrowser.New())
+	server := httptest.NewServer(srv.mux)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/terminals/ws/missing-session"
+	header := http.Header{}
+	header.Set("Origin", server.URL)
+	header.Set("Cookie", auth.CookieName+"="+token)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer conn.Close()
+
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("ReadMessage error = nil, want close error")
+	} else if closeErr, ok := err.(*websocket.CloseError); !ok {
+		t.Fatalf("ReadMessage error = %T, want *websocket.CloseError", err)
+	} else {
+		if closeErr.Code != websocket.CloseNormalClosure {
+			t.Fatalf("close code = %d, want %d", closeErr.Code, websocket.CloseNormalClosure)
+		}
+		if closeErr.Text != terminalCloseReasonSessionUnavailable {
+			t.Fatalf("close reason = %q, want %q", closeErr.Text, terminalCloseReasonSessionUnavailable)
+		}
 	}
 }
 

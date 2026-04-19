@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +40,11 @@ const (
 const (
 	projectControlToolRunTimeout       = 2 * time.Minute
 	projectControlToolRunRecoveryGrace = 30 * time.Second
+)
+
+const (
+	projectControlWorkspaceSharedRepo       = "shared_repo"
+	projectControlWorkspaceReadOnlySnapshot = "read_only_snapshot"
 )
 
 var projectControlProcessStartedAt = time.Now().UTC().Truncate(time.Second)
@@ -191,6 +197,7 @@ type projectControlToolRun struct {
 	PhaseAttemptID string `json:"phaseAttemptId"`
 	PhaseID        string `json:"phaseId"`
 	ToolID         string `json:"toolId"`
+	WorkspaceRef   string `json:"workspaceRef,omitempty"`
 	Status         string `json:"status"`
 	StartedAt      string `json:"startedAt"`
 	CompletedAt    string `json:"completedAt,omitempty"`
@@ -382,8 +389,10 @@ type projectControlReplayResponse struct {
 }
 
 type projectControlStore struct {
-	rootDir string
-	mu      sync.Mutex
+	rootDir          string
+	runtimeRootDir   string
+	workspaceRootDir string
+	mu               sync.Mutex
 }
 
 type projectControlConflictError struct {
@@ -910,13 +919,79 @@ func projectControlPhaseAgentType(phase projectControlRunbookPhase) string {
 	}
 }
 
-func projectControlPhaseWorkspaceRef(phase projectControlRunbookPhase) string {
+func normalizeProjectControlWorkspaceKind(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case projectControlWorkspaceSharedRepo:
+		return projectControlWorkspaceSharedRepo
+	case projectControlWorkspaceReadOnlySnapshot:
+		return projectControlWorkspaceReadOnlySnapshot
+	default:
+		return ""
+	}
+}
+
+func projectControlPhaseWorkspaceKind(phase projectControlRunbookPhase) string {
 	switch phase.WriteAccess {
 	case "scoped_write":
-		return "shared_repo"
+		return projectControlWorkspaceSharedRepo
 	default:
-		return "read_only_snapshot"
+		return projectControlWorkspaceReadOnlySnapshot
 	}
+}
+
+func projectControlWorkspaceRef(kind, workspaceDir string) string {
+	kind = normalizeProjectControlWorkspaceKind(kind)
+	if kind == "" {
+		return ""
+	}
+	workspaceDir = strings.TrimSpace(workspaceDir)
+	if workspaceDir == "" {
+		return kind
+	}
+	return kind + ":" + filepath.Clean(workspaceDir)
+}
+
+func projectControlParseWorkspaceRef(ref string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", ""
+	}
+	if index := strings.Index(ref, ":"); index > 0 {
+		kind := normalizeProjectControlWorkspaceKind(ref[:index])
+		if kind != "" {
+			workspaceDir := strings.TrimSpace(ref[index+1:])
+			if workspaceDir != "" {
+				return kind, filepath.Clean(workspaceDir)
+			}
+			return kind, ""
+		}
+	}
+	return normalizeProjectControlWorkspaceKind(ref), ""
+}
+
+func projectControlWorkspaceDescription(ref string) string {
+	kind, workspaceDir := projectControlParseWorkspaceRef(ref)
+	label := ""
+	switch kind {
+	case projectControlWorkspaceSharedRepo:
+		label = "shared repo"
+	case projectControlWorkspaceReadOnlySnapshot:
+		label = "read only snapshot"
+	}
+	if label == "" {
+		label = strings.TrimSpace(ref)
+	}
+	if label == "" {
+		return ""
+	}
+	if workspaceDir == "" {
+		return label
+	}
+	return label + " (" + workspaceDir + ")"
+}
+
+func projectControlPhaseAllowsTerminalAttach(phase projectControlRunbookPhase) bool {
+	return strings.TrimSpace(strings.ToLower(phase.WriteAccess)) == "scoped_write"
 }
 
 func projectControlSessionIDForTerminal(terminalID string) string {
@@ -960,17 +1035,17 @@ func projectControlPhaseSessionName(task projectControlTask, phaseID string) str
 	return truncateProjectControlLabel(name, 80)
 }
 
-func createProjectControlPhaseSession(username string, task projectControlTask, phaseID string, terminals *terminal.Manager) (string, error) {
-	if terminals == nil {
+func createProjectControlPhaseSession(username string, task projectControlTask, phase projectControlRunbookPhase, workspaceDir string, terminals *terminal.Manager) (string, error) {
+	phaseID := normalizeProjectControlPhaseID(phase.ID)
+	if terminals == nil || !projectControlPhaseAllowsTerminalAttach(phase) || strings.TrimSpace(workspaceDir) == "" {
 		return projectControlID("session", task.ID+"-"+phaseID), nil
 	}
-	session, err := terminals.CreateSession(username)
+	session, err := terminals.CreateSessionWithOptions(username, terminal.SessionCreateOptions{
+		WorkDir: workspaceDir,
+		Name:    projectControlPhaseSessionName(task, phaseID),
+	})
 	if err != nil {
 		return "", fmt.Errorf("create phase session: %w", err)
-	}
-	if err := terminals.RenameSession(username, session.ID, projectControlPhaseSessionName(task, phaseID)); err != nil {
-		_ = terminals.KillSessionForUser(username, session.ID)
-		return "", fmt.Errorf("rename phase session: %w", err)
 	}
 	return projectControlSessionIDForTerminal(session.ID), nil
 }
@@ -1022,7 +1097,7 @@ func findRunningProjectControlPhaseAttemptIndex(attempts []projectControlPhaseAt
 	return -1
 }
 
-func startProjectControlTaskPhase(state *projectControlState, task *projectControlTask, phaseID, now, username string, terminals *terminal.Manager) error {
+func startProjectControlTaskPhase(state *projectControlState, task *projectControlTask, phaseID, now, username string, resolveWorkspace func(projectControlTask, projectControlRunbookPhase, string) (string, error), terminals *terminal.Manager) error {
 	if state == nil || task == nil {
 		return errors.New("missing project control state")
 	}
@@ -1039,19 +1114,28 @@ func startProjectControlTaskPhase(state *projectControlState, task *projectContr
 		return fmt.Errorf("phase %s is already running", phaseID)
 	}
 	phase, _ := findProjectControlRunbookPhase(runbook, phaseID)
-	sessionID, err := createProjectControlPhaseSession(username, *task, phaseID, terminals)
+	attemptID := projectControlID("phase-attempt", task.ID+"-"+phaseID)
+	workspaceDir := ""
+	if resolveWorkspace != nil {
+		var err error
+		workspaceDir, err = resolveWorkspace(*task, phase, attemptID)
+		if err != nil {
+			return err
+		}
+	}
+	sessionID, err := createProjectControlPhaseSession(username, *task, phase, workspaceDir, terminals)
 	if err != nil {
 		return err
 	}
 	attempt := projectControlPhaseAttempt{
-		ID:           projectControlID("phase-attempt", task.ID+"-"+phaseID),
+		ID:           attemptID,
 		TaskID:       task.ID,
 		RunbookID:    task.RunbookID,
 		PhaseID:      phaseID,
 		SessionID:    sessionID,
 		AgentType:    projectControlPhaseAgentType(phase),
 		RuntimeID:    task.RuntimeID,
-		WorkspaceRef: projectControlPhaseWorkspaceRef(phase),
+		WorkspaceRef: projectControlWorkspaceRef(projectControlPhaseWorkspaceKind(phase), workspaceDir),
 		StartedAt:    now,
 		Status:       "running",
 		ArtifactIDs:  []string{},
@@ -1063,13 +1147,21 @@ func startProjectControlTaskPhase(state *projectControlState, task *projectContr
 	task.RunbookState = "in_progress"
 	task.SessionIDs = appendUniqueString(task.SessionIDs, sessionID)
 	task.RecentSummary = "Runbook phase " + phaseID + " started."
-	task.NextStep = "Use session " + sessionID + " to complete " + phaseID + " with required evidence."
+	if projectControlTerminalIDFromSessionID(sessionID) != "" {
+		task.NextStep = "Use session " + sessionID + " to complete " + phaseID + " with required evidence."
+	} else {
+		task.NextStep = "Complete " + phaseID + " with required evidence."
+	}
+	eventDetail := "Started runbook phase " + phaseID + "."
+	if projectControlTerminalIDFromSessionID(sessionID) != "" {
+		eventDetail = "Started runbook phase " + phaseID + " in session " + sessionID + "."
+	}
 	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 		ID:           projectControlID("event", "phase-started"),
 		Timestamp:    now,
 		Actor:        "runbook_engine",
 		Action:       "phase_started",
-		Detail:       "Started runbook phase " + phaseID + " in session " + sessionID + ".",
+		Detail:       eventDetail,
 		ProjectID:    task.ProjectID,
 		WorkstreamID: task.WorkstreamID,
 		TaskID:       task.ID,
@@ -1236,8 +1328,9 @@ func validateProjectControlToolForPhase(toolID string, phase projectControlRunbo
 	if !projectControlToolAllowedInPhase(toolID, phaseID) {
 		return fmt.Errorf("tool %s is not allowed in phase %s", toolID, phaseID)
 	}
-	expectedWorkspace := projectControlPhaseWorkspaceRef(phase)
-	if attempt.WorkspaceRef != "" && expectedWorkspace != "" && attempt.WorkspaceRef != expectedWorkspace {
+	expectedWorkspaceKind := projectControlPhaseWorkspaceKind(phase)
+	actualWorkspaceKind, _ := projectControlParseWorkspaceRef(attempt.WorkspaceRef)
+	if actualWorkspaceKind != "" && expectedWorkspaceKind != "" && actualWorkspaceKind != expectedWorkspaceKind {
 		return fmt.Errorf("tool %s cannot run in workspace %s for phase %s", toolID, attempt.WorkspaceRef, phaseID)
 	}
 	switch toolID {
@@ -1288,14 +1381,26 @@ func compactProjectControlToolOutput(value string, maxBytes int) string {
 	return strings.TrimSpace(string(runes)) + "\n[output truncated]"
 }
 
-func executeLocalProjectControlTool(toolID string) (projectControlToolResult, error) {
+func executeLocalProjectControlTool(toolID, workspaceDir string) (projectControlToolResult, error) {
 	command, artifactKind, label, err := projectControlToolCommand(toolID)
 	if err != nil {
 		return projectControlToolResult{}, err
 	}
+	workspaceDir = strings.TrimSpace(workspaceDir)
+	if workspaceDir == "" {
+		return projectControlToolResult{}, errors.New("tool workspace is unavailable")
+	}
+	info, err := os.Stat(workspaceDir)
+	if err != nil {
+		return projectControlToolResult{}, fmt.Errorf("stat workspace: %w", err)
+	}
+	if !info.IsDir() {
+		return projectControlToolResult{}, fmt.Errorf("workspace is not a directory: %s", workspaceDir)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), projectControlToolRunTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Dir = workspaceDir
 	output, runErr := cmd.CombinedOutput()
 	outcome := "pass"
 	status := "passed"
@@ -1311,9 +1416,9 @@ func executeLocalProjectControlTool(toolID string) (projectControlToolResult, er
 	if outputText == "" {
 		outputText = "No output."
 	}
-	value := "Command: " + strings.Join(command, " ") + "\nStatus: " + status + "\nOutput:\n" + outputText
+	value := "Workspace: " + workspaceDir + "\nCommand: " + strings.Join(command, " ") + "\nStatus: " + status + "\nOutput:\n" + outputText
 	if normalizeProjectControlToolID(toolID) == "repo_status" && strings.TrimSpace(string(output)) == "" {
-		value = "Command: " + strings.Join(command, " ") + "\nStatus: clean\nOutput:\nWorking tree clean."
+		value = "Workspace: " + workspaceDir + "\nCommand: " + strings.Join(command, " ") + "\nStatus: clean\nOutput:\nWorking tree clean."
 	}
 	return projectControlToolResult{
 		ToolID:          normalizeProjectControlToolID(toolID),
@@ -1370,6 +1475,9 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 		return "", errors.New("valid toolId is required")
 	}
 	attempt := state.PhaseAttempts[attemptIndex]
+	if strings.TrimSpace(attempt.WorkspaceRef) == "" {
+		return "", errors.New("workspace is unavailable for tool execution")
+	}
 	if err := validateProjectControlToolForPhase(toolID, phase, attempt); err != nil {
 		return "", err
 	}
@@ -1382,6 +1490,7 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 		PhaseAttemptID: attempt.ID,
 		PhaseID:        phaseID,
 		ToolID:         toolID,
+		WorkspaceRef:   attempt.WorkspaceRef,
 		Status:         "running",
 		StartedAt:      now,
 		Summary:        "Running " + toolID + " for " + phaseID + ".",
@@ -1482,7 +1591,16 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 	if toolRun.Status != "running" {
 		return nil
 	}
-	result, runErr := projectControlExecuteTool(toolRun.ToolID)
+	workspaceDir := s.workspaceDirForRef(toolRun.WorkspaceRef)
+	if workspaceDir == "" {
+		for _, attempt := range state.PhaseAttempts {
+			if attempt.ID == toolRun.PhaseAttemptID {
+				workspaceDir = s.workspaceDirForRef(attempt.WorkspaceRef)
+				break
+			}
+		}
+	}
+	result, runErr := projectControlExecuteTool(toolRun.ToolID, workspaceDir)
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.withStateLocked(username, func(state *projectControlState) error {
 		runIndex := -1
@@ -1918,10 +2036,288 @@ func validateProjectControlFinalAcceptanceApproval(state *projectControlState, c
 	return errors.New("checkpoint task not found")
 }
 
+func discoverProjectControlRuntimeRoot() string {
+	cwd, err := os.Getwd()
+	if err == nil && strings.TrimSpace(cwd) != "" {
+		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+		cmd.Dir = cwd
+		if output, gitErr := cmd.Output(); gitErr == nil {
+			root := strings.TrimSpace(string(output))
+			if root != "" {
+				return root
+			}
+		}
+		return cwd
+	}
+	if homeDir, homeErr := os.UserHomeDir(); homeErr == nil && strings.TrimSpace(homeDir) != "" {
+		return homeDir
+	}
+	return os.TempDir()
+}
+
 func newProjectControlStore(basePersistDir string) *projectControlStore {
 	root := filepath.Join(basePersistDir, ".project-control", "users")
+	workspaces := filepath.Join(basePersistDir, ".project-control", "workspaces")
 	_ = os.MkdirAll(root, 0700)
-	return &projectControlStore{rootDir: root}
+	_ = os.MkdirAll(workspaces, 0700)
+	return &projectControlStore{
+		rootDir:          root,
+		runtimeRootDir:   discoverProjectControlRuntimeRoot(),
+		workspaceRootDir: workspaces,
+	}
+}
+
+func (s *projectControlStore) runtimeWorkspaceDir() (string, error) {
+	if s == nil {
+		return "", errors.New("project control store is unavailable")
+	}
+	workspaceDir := strings.TrimSpace(s.runtimeRootDir)
+	if workspaceDir == "" {
+		return "", errors.New("runtime workspace is unavailable")
+	}
+	info, err := os.Stat(workspaceDir)
+	if err != nil || !info.IsDir() {
+		if err != nil {
+			return "", fmt.Errorf("stat runtime workspace: %w", err)
+		}
+		return "", fmt.Errorf("runtime workspace is not a directory: %s", workspaceDir)
+	}
+	return workspaceDir, nil
+}
+
+func projectControlCloneWorkspaceSnapshot(sourceDir, snapshotDir string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), projectControlToolRunTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "clone", "--quiet", "--shared", sourceDir, snapshotDir)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return errors.New("clone snapshot workspace timed out")
+	}
+	if err != nil {
+		detail := compactProjectControlToolOutput(string(output), 512)
+		if detail == "" {
+			return fmt.Errorf("clone snapshot workspace: %w", err)
+		}
+		return fmt.Errorf("clone snapshot workspace: %s", detail)
+	}
+	return nil
+}
+
+func projectControlCopyWorkspaceFile(sourcePath, targetPath string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0700); err != nil {
+		return fmt.Errorf("create snapshot parent: %w", err)
+	}
+	if err := os.RemoveAll(targetPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove snapshot target: %w", err)
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open workspace file: %w", err)
+	}
+	defer source.Close()
+	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode.Perm())
+	if err != nil {
+		return fmt.Errorf("create snapshot file: %w", err)
+	}
+	defer target.Close()
+	if _, err := io.Copy(target, source); err != nil {
+		return fmt.Errorf("copy workspace file: %w", err)
+	}
+	return nil
+}
+
+func projectControlSyncWorkspaceSnapshot(sourceDir, snapshotDir string) error {
+	seen := map[string]bool{}
+	if err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relPath, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+		if relPath == "." {
+			return nil
+		}
+		if relPath == ".git" {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		seen[relPath] = true
+		targetPath := filepath.Join(snapshotDir, relPath)
+		if info.IsDir() {
+			if existing, err := os.Stat(targetPath); err == nil && !existing.IsDir() {
+				if err := os.RemoveAll(targetPath); err != nil {
+					return fmt.Errorf("replace snapshot directory: %w", err)
+				}
+			} else if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if err := os.MkdirAll(targetPath, info.Mode().Perm()); err != nil {
+				return fmt.Errorf("create snapshot directory: %w", err)
+			}
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return fmt.Errorf("read workspace symlink: %w", err)
+			}
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0700); err != nil {
+				return fmt.Errorf("create snapshot symlink parent: %w", err)
+			}
+			if err := os.RemoveAll(targetPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("replace snapshot symlink: %w", err)
+			}
+			if err := os.Symlink(linkTarget, targetPath); err != nil {
+				return fmt.Errorf("create snapshot symlink: %w", err)
+			}
+			return nil
+		}
+		return projectControlCopyWorkspaceFile(path, targetPath, info.Mode())
+	}); err != nil {
+		return err
+	}
+	stalePaths := []string{}
+	if err := filepath.Walk(snapshotDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relPath, err := filepath.Rel(snapshotDir, path)
+		if err != nil {
+			return err
+		}
+		if relPath == "." {
+			return nil
+		}
+		if relPath == ".git" {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if seen[relPath] {
+			return nil
+		}
+		stalePaths = append(stalePaths, path)
+		if info.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	sort.Slice(stalePaths, func(i, j int) bool {
+		return len(stalePaths[i]) > len(stalePaths[j])
+	})
+	for _, stalePath := range stalePaths {
+		if err := os.RemoveAll(stalePath); err != nil {
+			return fmt.Errorf("remove stale snapshot path: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *projectControlStore) createReadOnlySnapshotWorkspace(username string, task projectControlTask, phase projectControlRunbookPhase, attemptID string) (string, error) {
+	sourceDir, err := s.runtimeWorkspaceDir()
+	if err != nil {
+		return "", err
+	}
+	workspaceRootDir := strings.TrimSpace(s.workspaceRootDir)
+	if workspaceRootDir == "" {
+		return "", errors.New("workspace root is unavailable")
+	}
+	snapshotParent := filepath.Join(workspaceRootDir, slugifyProjectControl(username), slugifyProjectControl(task.ID), slugifyProjectControl(phase.ID))
+	if err := os.MkdirAll(snapshotParent, 0700); err != nil {
+		return "", fmt.Errorf("create snapshot workspace parent: %w", err)
+	}
+	snapshotDir := filepath.Join(snapshotParent, slugifyProjectControl(attemptID))
+	if info, statErr := os.Stat(snapshotDir); statErr == nil {
+		if !info.IsDir() {
+			return "", fmt.Errorf("snapshot workspace is not a directory: %s", snapshotDir)
+		}
+		if _, gitErr := os.Stat(filepath.Join(snapshotDir, ".git")); gitErr == nil {
+			if err := projectControlSyncWorkspaceSnapshot(sourceDir, snapshotDir); err != nil {
+				return "", err
+			}
+			return snapshotDir, nil
+		}
+		if err := os.RemoveAll(snapshotDir); err != nil {
+			return "", fmt.Errorf("reset snapshot workspace: %w", err)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("stat snapshot workspace: %w", statErr)
+	}
+	if err := projectControlCloneWorkspaceSnapshot(sourceDir, snapshotDir); err != nil {
+		return "", err
+	}
+	if err := projectControlSyncWorkspaceSnapshot(sourceDir, snapshotDir); err != nil {
+		_ = os.RemoveAll(snapshotDir)
+		return "", err
+	}
+	return snapshotDir, nil
+}
+
+func (s *projectControlStore) prepareWorkspaceDirForPhase(username string, task projectControlTask, phase projectControlRunbookPhase, attemptID string) (string, error) {
+	switch projectControlPhaseWorkspaceKind(phase) {
+	case projectControlWorkspaceReadOnlySnapshot:
+		return s.createReadOnlySnapshotWorkspace(username, task, phase, attemptID)
+	default:
+		return s.runtimeWorkspaceDir()
+	}
+}
+
+func (s *projectControlStore) workspaceDirForRef(ref string) string {
+	workspaceKind, workspaceDir := projectControlParseWorkspaceRef(ref)
+	if workspaceDir != "" {
+		info, err := os.Stat(workspaceDir)
+		if err != nil || !info.IsDir() {
+			return ""
+		}
+		return workspaceDir
+	}
+	if workspaceKind == "" {
+		return ""
+	}
+	workspaceDir, err := s.runtimeWorkspaceDir()
+	if err != nil {
+		return ""
+	}
+	return workspaceDir
+}
+
+func (s *projectControlStore) allowsTerminalAttach(username, terminalID string) bool {
+	if s == nil {
+		return true
+	}
+	terminalID = strings.TrimSpace(terminalID)
+	if terminalID == "" {
+		return false
+	}
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return true
+	}
+	sessionID := projectControlSessionIDForTerminal(terminalID)
+	for _, attempt := range state.PhaseAttempts {
+		if projectControlPhaseAttemptSessionID(attempt) != sessionID {
+			continue
+		}
+		for _, task := range state.Tasks {
+			if task.ID != attempt.TaskID {
+				continue
+			}
+			phase, ok := findProjectControlRunbookPhase(projectControlRunbookForTask(task), attempt.PhaseID)
+			if !ok {
+				return false
+			}
+			return projectControlPhaseAllowsTerminalAttach(phase)
+		}
+		return false
+	}
+	return true
 }
 
 func (s *projectControlStore) snapshotForUser(username string, terminals *terminal.Manager) (projectControlSnapshot, error) {
@@ -2167,7 +2563,9 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			now := time.Now().UTC().Format(time.RFC3339)
 			switch action {
 			case "start_phase":
-				if err := startProjectControlTaskPhase(state, &task, req.PhaseID, now, username, terminals); err != nil {
+				if err := startProjectControlTaskPhase(state, &task, req.PhaseID, now, username, func(task projectControlTask, phase projectControlRunbookPhase, attemptID string) (string, error) {
+					return s.prepareWorkspaceDirForPhase(username, task, phase, attemptID)
+				}, terminals); err != nil {
 					return err
 				}
 			case "complete_phase":
@@ -3179,6 +3577,8 @@ func projectControlPhaseAttemptSummary(attempt projectControlPhaseAttempt) strin
 		workspaceRef := strings.TrimSpace(attempt.WorkspaceRef)
 		if workspaceRef == "" {
 			workspaceRef = "the configured workspace"
+		} else if description := projectControlWorkspaceDescription(workspaceRef); description != "" {
+			workspaceRef = description
 		}
 		return "Runbook phase " + phaseName + " is running in " + workspaceRef + "."
 	}
@@ -3233,7 +3633,7 @@ func projectControlSessionForPhaseAttempt(attempt projectControlPhaseAttempt, ta
 		Summary:        projectControlPhaseAttemptSummary(attempt),
 		Claims:         projectControlPhaseAttemptClaims(attempt),
 		Artifacts:      projectControlPhaseAttemptArtifactTexts(attempt, artifacts),
-		SupportsAttach: terminalsConnected && hasLive,
+		SupportsAttach: terminalsConnected && hasLive && projectControlPhaseAllowsTerminalAttach(phase),
 	}
 }
 
@@ -3715,6 +4115,7 @@ func projectControlNormalizeState(state *projectControlState) {
 		state.ToolRuns[i].PhaseAttemptID = strings.TrimSpace(state.ToolRuns[i].PhaseAttemptID)
 		state.ToolRuns[i].PhaseID = normalizeProjectControlPhaseID(state.ToolRuns[i].PhaseID)
 		state.ToolRuns[i].ToolID = normalizeProjectControlToolID(state.ToolRuns[i].ToolID)
+		state.ToolRuns[i].WorkspaceRef = strings.TrimSpace(state.ToolRuns[i].WorkspaceRef)
 		state.ToolRuns[i].Status = normalizeProjectControlToolRunStatus(state.ToolRuns[i].Status)
 		state.ToolRuns[i].StartedAt = strings.TrimSpace(state.ToolRuns[i].StartedAt)
 		state.ToolRuns[i].CompletedAt = strings.TrimSpace(state.ToolRuns[i].CompletedAt)
