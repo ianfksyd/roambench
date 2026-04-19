@@ -4682,3 +4682,87 @@ func TestProjectControlToolRunCreatesCheckpointAfterRetriesExhausted(t *testing.
 		t.Fatal("expected tool_failure checkpoint after retries exhausted")
 	}
 }
+
+func TestProjectControlHealthMonitorDetectsPhaseTimeout(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	// Start execution to get a running phase
+	patchProjectControlTask(t, srv, token, projectControlTaskPanelID,
+		`{"expectedRowVersion":1,"action":"start_execution"}`)
+
+	// Backdate the phase attempt to simulate timeout
+	srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		old := time.Now().UTC().Add(-45 * time.Minute).Format(time.RFC3339)
+		for i := range state.PhaseAttempts {
+			if state.PhaseAttempts[i].Status == "running" {
+				state.PhaseAttempts[i].StartedAt = old
+			}
+		}
+		return nil
+	})
+
+	// Run health check
+	srv.projectControl.checkHealth("ian", srv.notifHub)
+
+	// Verify health_alert event was recorded
+	req := httptest.NewRequest(http.MethodGet, "/api/project-control/events?limit=30", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	var eventsResp projectControlEventsResponse
+	json.NewDecoder(rec.Body).Decode(&eventsResp)
+	found := false
+	for _, ev := range eventsResp.Events {
+		if ev.Action == "health_alert" && strings.Contains(ev.Detail, "running for") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected health_alert event for phase timeout")
+	}
+}
+
+func TestProjectControlHealthMonitorDetectsStalledTask(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	// Start execution
+	patchProjectControlTask(t, srv, token, projectControlTaskPanelID,
+		`{"expectedRowVersion":1,"action":"start_execution"}`)
+
+	// Backdate all events to simulate stall
+	srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		old := time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339)
+		for i := range state.Events {
+			if state.Events[i].TaskID == projectControlTaskPanelID {
+				state.Events[i].Timestamp = old
+			}
+		}
+		// Also backdate phase attempt so it doesn't trigger phase timeout
+		for i := range state.PhaseAttempts {
+			state.PhaseAttempts[i].StartedAt = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+		}
+		return nil
+	})
+
+	srv.projectControl.checkHealth("ian", srv.notifHub)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/project-control/events?limit=30", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	var eventsResp projectControlEventsResponse
+	json.NewDecoder(rec.Body).Decode(&eventsResp)
+	found := false
+	for _, ev := range eventsResp.Events {
+		if ev.Action == "health_alert" && strings.Contains(ev.Detail, "no activity") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected health_alert event for stalled task")
+	}
+}

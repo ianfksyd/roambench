@@ -239,6 +239,8 @@ func (s *Server) basePathHandler(next http.Handler) http.Handler {
 }
 
 func (s *Server) Start() error {
+	go s.projectControl.runHealthMonitor(s.cfg.Auth.SingleUser, s.notifHub)
+
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
 	handler := recoverer(requestLogger(ipAllowlist(s.cfg, secureHeaders(s.cfg, s.basePathHandler(s.mux)))))
 	s.httpServer = &http.Server{

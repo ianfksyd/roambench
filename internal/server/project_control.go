@@ -5499,6 +5499,110 @@ func applyRecordedEventsToTasks(tasks []projectControlTask, events []projectCont
 	}
 }
 
+const (
+	healthMonitorInterval       = 60 * time.Second
+	healthMonitorPhaseTimeout   = 30 * time.Minute
+	healthMonitorStallThreshold = 2 * time.Hour
+)
+
+var healthMonitorTicker = func() *time.Ticker { return time.NewTicker(healthMonitorInterval) }
+
+func (s *projectControlStore) runHealthMonitor(username string, hub *notificationHub) {
+	if username == "" {
+		return
+	}
+	ticker := healthMonitorTicker()
+	defer ticker.Stop()
+	for range ticker.C {
+		s.checkHealth(username, hub)
+	}
+}
+
+func (s *projectControlStore) checkHealth(username string, hub *notificationHub) {
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return
+	}
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+	var alerts []string
+
+	for _, attempt := range state.PhaseAttempts {
+		if attempt.Status != "running" {
+			continue
+		}
+		started := parseProjectControlTimestamp(attempt.StartedAt)
+		if started.IsZero() || now.Sub(started) < healthMonitorPhaseTimeout {
+			continue
+		}
+		taskTitle := ""
+		for _, t := range state.Tasks {
+			if t.ID == attempt.TaskID {
+				taskTitle = t.Title
+				break
+			}
+		}
+		alerts = append(alerts, fmt.Sprintf("Phase %s on task %q running for %s", attempt.PhaseID, taskTitle, now.Sub(started).Truncate(time.Minute)))
+	}
+
+	for _, task := range state.Tasks {
+		st := normalizeProjectControlTaskState(task.State)
+		if st != "running" && st != "waiting_review" {
+			continue
+		}
+		latest := latestEventTimestamp(state.Events, task.ID)
+		if latest.IsZero() {
+			continue
+		}
+		if now.Sub(latest) < healthMonitorStallThreshold {
+			continue
+		}
+		alerts = append(alerts, fmt.Sprintf("Task %q has no activity for %s", task.Title, now.Sub(latest).Truncate(time.Minute)))
+	}
+
+	if len(alerts) == 0 {
+		return
+	}
+
+	s.withStateLocked(username, func(state *projectControlState) error {
+		for _, alert := range alerts {
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:        projectControlID("event", "health-alert"),
+				Timestamp: nowStr,
+				Actor:     "health_monitor",
+				Action:    "health_alert",
+				Detail:    alert,
+			})
+		}
+		return nil
+	})
+
+	if hub != nil {
+		for _, alert := range alerts {
+			hub.broadcast(terminal.OSCNotification{
+				Code:      777,
+				Title:     "Health Alert",
+				Body:      alert,
+				Timestamp: now,
+			})
+		}
+	}
+}
+
+func latestEventTimestamp(events []projectControlRecordedEvent, taskID string) time.Time {
+	var latest time.Time
+	for _, ev := range events {
+		if ev.TaskID != taskID {
+			continue
+		}
+		t := parseProjectControlTimestamp(ev.Timestamp)
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
+}
+
 func (s *projectControlStore) createTool(username string, def projectControlToolDef) error {
 	def.ID = normalizeProjectControlToolID(def.ID)
 	if def.ID == "" || len(def.Command) == 0 || def.ArtifactKind == "" {
