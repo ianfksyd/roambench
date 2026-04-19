@@ -1316,6 +1316,7 @@ func recordProjectControlPhaseArtifact(state *projectControlState, task *project
 type projectControlToolDef struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
+	Kind           string   `json:"kind,omitempty"`
 	Command        []string `json:"command"`
 	TimeoutSeconds int      `json:"timeoutSeconds,omitempty"`
 	MaxOutputBytes int      `json:"maxOutputBytes,omitempty"`
@@ -1323,6 +1324,10 @@ type projectControlToolDef struct {
 	ArtifactLabel  string   `json:"artifactLabel"`
 	AllowedPhases  []string `json:"allowedPhases"`
 	MaxRetries     int      `json:"maxRetries,omitempty"`
+}
+
+func (d projectControlToolDef) isAgent() bool {
+	return strings.TrimSpace(strings.ToLower(d.Kind)) == "agent"
 }
 
 func (d projectControlToolDef) timeout() time.Duration {
@@ -1404,13 +1409,13 @@ func normalizeProjectControlToolID(value string) string {
 	return strings.TrimSpace(strings.ToLower(value))
 }
 
-func projectControlToolAllowedInPhase(toolID, phaseID string) bool {
+func projectControlToolAllowedInPhase(toolID, phaseID string, tools []projectControlToolDef) bool {
 	toolID = normalizeProjectControlToolID(toolID)
 	phaseID = normalizeProjectControlPhaseID(phaseID)
 	if toolID == "" || phaseID == "" {
 		return false
 	}
-	def, ok := findProjectControlToolDef(defaultProjectControlTools(), toolID)
+	def, ok := findProjectControlToolDef(tools, toolID)
 	if !ok {
 		return false
 	}
@@ -1425,10 +1430,10 @@ func projectControlToolAllowedInPhase(toolID, phaseID string) bool {
 	return false
 }
 
-func validateProjectControlToolForPhase(toolID string, phase projectControlRunbookPhase, attempt projectControlPhaseAttempt) error {
+func validateProjectControlToolForPhase(toolID string, phase projectControlRunbookPhase, attempt projectControlPhaseAttempt, tools []projectControlToolDef) error {
 	toolID = normalizeProjectControlToolID(toolID)
 	phaseID := normalizeProjectControlPhaseID(phase.ID)
-	if !projectControlToolAllowedInPhase(toolID, phaseID) {
+	if !projectControlToolAllowedInPhase(toolID, phaseID, tools) {
 		return fmt.Errorf("tool %s is not allowed in phase %s", toolID, phaseID)
 	}
 	expectedWorkspaceKind := projectControlPhaseWorkspaceKind(phase)
@@ -1577,7 +1582,7 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 	if strings.TrimSpace(attempt.WorkspaceRef) == "" {
 		return "", errors.New("workspace is unavailable for tool execution")
 	}
-	if err := validateProjectControlToolForPhase(toolID, phase, attempt); err != nil {
+	if err := validateProjectControlToolForPhase(toolID, phase, attempt, projectControlToolsForState(state)); err != nil {
 		return "", err
 	}
 	if runningIndex := findRunningProjectControlToolRunIndex(state.ToolRuns, task.ID, attempt.ID, ""); runningIndex != -1 {
@@ -1587,6 +1592,12 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 	if def, ok := findProjectControlToolDef(projectControlToolsForState(state), toolID); ok {
 		maxRetries = def.MaxRetries
 	}
+	toolStatus := "running"
+	toolSummary := "Running " + toolID + " for " + phaseID + "."
+	if def, ok := findProjectControlToolDef(projectControlToolsForState(state), toolID); ok && def.isAgent() {
+		toolStatus = "waiting"
+		toolSummary = "Waiting for agent to complete " + toolID + "."
+	}
 	toolRun := projectControlToolRun{
 		ID:             projectControlID("tool-run", task.ID+"-"+phaseID+"-"+toolID),
 		TaskID:         task.ID,
@@ -1594,9 +1605,9 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 		PhaseID:        phaseID,
 		ToolID:         toolID,
 		WorkspaceRef:   attempt.WorkspaceRef,
-		Status:         "running",
+		Status:         toolStatus,
 		StartedAt:      now,
-		Summary:        "Running " + toolID + " for " + phaseID + ".",
+		Summary:        toolSummary,
 		MaxRetries:     maxRetries,
 	}
 	state.ToolRuns = append(state.ToolRuns, toolRun)
@@ -1612,6 +1623,9 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 		WorkstreamID: task.WorkstreamID,
 		TaskID:       task.ID,
 	})
+	if toolStatus == "waiting" {
+		return "", nil
+	}
 	return toolRun.ID, nil
 }
 
@@ -4988,7 +5002,7 @@ func normalizeProjectControlPhaseAttemptStatus(value string) string {
 
 func normalizeProjectControlToolRunStatus(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "running", "completed", "failed", "cancelled":
+	case "running", "waiting", "completed", "failed", "cancelled":
 		return strings.TrimSpace(strings.ToLower(value))
 	default:
 		return "running"
@@ -5605,8 +5619,11 @@ func latestEventTimestamp(events []projectControlRecordedEvent, taskID string) t
 
 func (s *projectControlStore) createTool(username string, def projectControlToolDef) error {
 	def.ID = normalizeProjectControlToolID(def.ID)
-	if def.ID == "" || len(def.Command) == 0 || def.ArtifactKind == "" {
-		return errors.New("tool id, command, and artifactKind are required")
+	if def.ID == "" || def.ArtifactKind == "" {
+		return errors.New("tool id and artifactKind are required")
+	}
+	if !def.isAgent() && len(def.Command) == 0 {
+		return errors.New("command is required for non-agent tools")
 	}
 	_, err := s.withStateLocked(username, func(state *projectControlState) error {
 		if state.Tools == nil {
@@ -5762,6 +5779,23 @@ func (s *projectControlStore) agentSubmitArtifact(username string, req agentArti
 	if req.TaskID == "" || req.ArtifactKind == "" {
 		return projectControlSnapshot{}, errors.New("taskId and artifactKind are required")
 	}
+	// Complete any waiting agent tool run for this task/phase
+	s.withStateLocked(username, func(state *projectControlState) error {
+		now := time.Now().UTC().Format(time.RFC3339)
+		for i := range state.ToolRuns {
+			run := &state.ToolRuns[i]
+			if run.TaskID == req.TaskID && run.Status == "waiting" {
+				if req.PhaseID == "" || run.PhaseID == normalizeProjectControlPhaseID(req.PhaseID) {
+					run.Status = "completed"
+					run.CompletedAt = now
+					run.Outcome = normalizeProjectControlArtifactOutcome(req.Outcome)
+					run.Summary = "Agent completed " + run.ToolID + "."
+					break
+				}
+			}
+		}
+		return nil
+	})
 	return s.updateTask(username, req.TaskID, projectControlTaskUpdateRequest{
 		ExpectedRowVersion: -1, // agent bypass
 		Action:             "complete_phase",

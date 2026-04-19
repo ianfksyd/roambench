@@ -4036,19 +4036,20 @@ func TestProjectControlToolDefTimeoutDefaults(t *testing.T) {
 }
 
 func TestProjectControlToolAllowedInPhaseUsesRegistry(t *testing.T) {
-	if !projectControlToolAllowedInPhase("go_test", "test") {
+	tools := defaultProjectControlTools()
+	if !projectControlToolAllowedInPhase("go_test", "test", tools) {
 		t.Fatal("go_test should be allowed in test phase")
 	}
-	if projectControlToolAllowedInPhase("go_test", "plan") {
+	if projectControlToolAllowedInPhase("go_test", "plan", tools) {
 		t.Fatal("go_test should not be allowed in plan phase")
 	}
-	if !projectControlToolAllowedInPhase("repo_status", "implement") {
+	if !projectControlToolAllowedInPhase("repo_status", "implement", tools) {
 		t.Fatal("repo_status should be allowed in implement phase")
 	}
-	if projectControlToolAllowedInPhase("repo_status", "ready_for_acceptance") {
+	if projectControlToolAllowedInPhase("repo_status", "ready_for_acceptance", tools) {
 		t.Fatal("repo_status should not be allowed in ready_for_acceptance phase")
 	}
-	if projectControlToolAllowedInPhase("unknown_tool", "test") {
+	if projectControlToolAllowedInPhase("unknown_tool", "test", tools) {
 		t.Fatal("unknown tool should not be allowed in any phase")
 	}
 }
@@ -4764,5 +4765,102 @@ func TestProjectControlHealthMonitorDetectsStalledTask(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected health_alert event for stalled task")
+	}
+}
+
+func TestProjectControlAgentAsToolWaitsForCallback(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	setProjectControlRunToolAsyncForTest(t, func(fn func()) { fn() })
+
+	// Register an agent-kind tool
+	toolBody := `{"id":"agent_implement","name":"Agent Implement","kind":"agent","artifactKind":"diff_summary","artifactLabel":"Agent diff","allowedPhases":["implement"],"timeoutSeconds":600}`
+	req := httptest.NewRequest(http.MethodPost, "/api/project-control/tools", strings.NewReader(toolBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST tool status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify tool is persisted
+	verifyReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	verifyReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	verifyRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(verifyRec, verifyReq)
+	verifySnap := decodeProjectControlSnapshot(t, verifyRec)
+	foundAgent := false
+	for _, def := range verifySnap.Tools {
+		if def.ID == "agent_implement" && def.isAgent() {
+			foundAgent = true
+		}
+	}
+	if !foundAgent {
+		t.Fatalf("agent_implement tool not found or not agent kind in snapshot, tools: %+v", verifySnap.Tools)
+	}
+
+	// Prepare task at implement phase
+	task := projectControlTask{ID: projectControlTaskPanelID, RowVersion: 1}
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan")
+	task = completeProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan", "plan", "recorded", "Plan done")
+	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "implement")
+
+	// Run the agent tool
+	body := fmt.Sprintf(`{"expectedRowVersion":%d,"action":"run_tool","phaseId":"implement","toolId":"agent_implement"}`, task.RowVersion)
+	snapshot := patchProjectControlTask(t, srv, token, task.ID, body)
+
+	// Tool run should be in "waiting" status
+	foundWaiting := false
+	for _, run := range snapshot.ToolRuns {
+		if run.TaskID == task.ID && run.ToolID == "agent_implement" {
+			if run.Status == "waiting" {
+				foundWaiting = true
+			} else {
+				t.Fatalf("agent tool run status = %q, want waiting (all runs: %+v)", run.Status, snapshot.ToolRuns)
+			}
+		}
+	}
+	if !foundWaiting {
+		t.Fatalf("expected agent tool run in waiting status, tool runs: %+v", snapshot.ToolRuns)
+	}
+
+	// Generate agent token and submit artifact via agent API
+	tokenReq := httptest.NewRequest(http.MethodPost, "/api/project-control/agent-token", nil)
+	tokenReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	tokenRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(tokenRec, tokenReq)
+	var tokenResp map[string]string
+	json.NewDecoder(tokenRec.Body).Decode(&tokenResp)
+	agentToken := tokenResp["token"]
+
+	artifactBody := `{"taskId":"` + task.ID + `","phaseId":"implement","artifactKind":"diff_summary","outcome":"pass","label":"Agent diff","value":"1 file changed"}`
+	artReq := httptest.NewRequest(http.MethodPost, "/api/agent/v1/artifact", strings.NewReader(artifactBody))
+	artReq.Header.Set("Authorization", "Bearer "+agentToken)
+	artReq.Header.Set("Content-Type", "application/json")
+	artRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(artRec, artReq)
+	if artRec.Code != http.StatusOK {
+		t.Fatalf("POST artifact status = %d: %s", artRec.Code, artRec.Body.String())
+	}
+
+	// Verify tool run completed and phase advanced
+	snapReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	snapReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	snapRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(snapRec, snapReq)
+	finalSnapshot := decodeProjectControlSnapshot(t, snapRec)
+	finalTask := projectControlTaskFromSnapshotByID(t, finalSnapshot, task.ID)
+	if finalTask.CurrentPhase != "test" {
+		t.Fatalf("CurrentPhase = %q, want test (advanced after agent callback)", finalTask.CurrentPhase)
+	}
+	foundCompleted := false
+	for _, run := range finalSnapshot.ToolRuns {
+		if run.TaskID == task.ID && run.ToolID == "agent_implement" && run.Status == "completed" {
+			foundCompleted = true
+		}
+	}
+	if !foundCompleted {
+		t.Fatal("expected agent tool run to be completed after artifact submission")
 	}
 }
