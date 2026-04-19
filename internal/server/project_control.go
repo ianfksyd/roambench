@@ -68,6 +68,7 @@ type projectControlSnapshot struct {
 	Runtimes        []projectControlRuntime      `json:"runtimes"`
 	Skills          []projectControlSkill        `json:"skills"`
 	Runbooks        []projectControlRunbook      `json:"runbooks"`
+	Tools           []projectControlToolDef      `json:"tools"`
 	PhaseAttempts   []projectControlPhaseAttempt `json:"phaseAttempts"`
 	ToolRuns        []projectControlToolRun      `json:"toolRuns,omitempty"`
 	Artifacts       []projectControlArtifact     `json:"artifacts"`
@@ -313,6 +314,7 @@ type projectControlState struct {
 	Projects        []projectControlProject       `json:"projects"`
 	Workstreams     []projectControlWorkstream    `json:"workstreams"`
 	Tasks           []projectControlTask          `json:"tasks"`
+	Tools           []projectControlToolDef       `json:"tools,omitempty"`
 	PhaseAttempts   []projectControlPhaseAttempt  `json:"phaseAttempts,omitempty"`
 	ToolRuns        []projectControlToolRun       `json:"toolRuns,omitempty"`
 	Artifacts       []projectControlArtifact      `json:"artifacts,omitempty"`
@@ -1305,6 +1307,78 @@ func recordProjectControlPhaseArtifact(state *projectControlState, task *project
 	return artifact
 }
 
+type projectControlToolDef struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Command        []string `json:"command"`
+	TimeoutSeconds int      `json:"timeoutSeconds,omitempty"`
+	MaxOutputBytes int      `json:"maxOutputBytes,omitempty"`
+	ArtifactKind   string   `json:"artifactKind"`
+	ArtifactLabel  string   `json:"artifactLabel"`
+	AllowedPhases  []string `json:"allowedPhases"`
+}
+
+func (d projectControlToolDef) timeout() time.Duration {
+	if d.TimeoutSeconds > 0 {
+		return time.Duration(d.TimeoutSeconds) * time.Second
+	}
+	return projectControlToolRunTimeout
+}
+
+func (d projectControlToolDef) maxOutput() int {
+	if d.MaxOutputBytes > 0 {
+		return d.MaxOutputBytes
+	}
+	return 3200
+}
+
+func defaultProjectControlTools() []projectControlToolDef {
+	return []projectControlToolDef{
+		{
+			ID:           "repo_status",
+			Name:         "Repo Status",
+			Command:      []string{"git", "status", "--short"},
+			ArtifactKind: "repo_status",
+			ArtifactLabel: "Repo status",
+			AllowedPhases: []string{"plan", "implement", "write", "test", "review", "fix_or_replan", "final_validation"},
+		},
+		{
+			ID:           "diff_capture",
+			Name:         "Diff Capture",
+			Command:      []string{"git", "diff", "--stat", "--find-renames"},
+			ArtifactKind: "diff_summary",
+			ArtifactLabel: "Diff summary",
+			AllowedPhases: []string{"implement", "write", "fix_or_replan", "review", "final_validation"},
+		},
+		{
+			ID:             "go_test",
+			Name:           "Go Test",
+			Command:        []string{"go", "test", "./..."},
+			TimeoutSeconds: 120,
+			ArtifactKind:   "test_result",
+			ArtifactLabel:  "Go test",
+			AllowedPhases:  []string{"test", "final_validation"},
+		},
+	}
+}
+
+func findProjectControlToolDef(tools []projectControlToolDef, toolID string) (projectControlToolDef, bool) {
+	toolID = strings.TrimSpace(strings.ToLower(toolID))
+	for _, def := range tools {
+		if strings.TrimSpace(strings.ToLower(def.ID)) == toolID {
+			return def, true
+		}
+	}
+	return projectControlToolDef{}, false
+}
+
+func projectControlToolsForState(state *projectControlState) []projectControlToolDef {
+	if state != nil && len(state.Tools) > 0 {
+		return state.Tools
+	}
+	return defaultProjectControlTools()
+}
+
 type projectControlToolResult struct {
 	ToolID          string
 	ArtifactKind    string
@@ -1319,32 +1393,28 @@ var projectControlRunToolAsync = func(fn func()) {
 }
 
 func normalizeProjectControlToolID(value string) string {
-	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "repo_status", "diff_capture", "go_test":
-		return strings.TrimSpace(strings.ToLower(value))
-	default:
-		return ""
-	}
+	return strings.TrimSpace(strings.ToLower(value))
 }
 
 func projectControlToolAllowedInPhase(toolID, phaseID string) bool {
 	toolID = normalizeProjectControlToolID(toolID)
 	phaseID = normalizeProjectControlPhaseID(phaseID)
-	switch toolID {
-	case "repo_status":
-		return phaseID != "" && phaseID != "ready_for_acceptance"
-	case "diff_capture":
-		switch phaseID {
-		case "implement", "write", "fix_or_replan", "review", "final_validation":
-			return true
-		default:
-			return false
-		}
-	case "go_test":
-		return phaseID == "test" || phaseID == "final_validation"
-	default:
+	if toolID == "" || phaseID == "" {
 		return false
 	}
+	def, ok := findProjectControlToolDef(defaultProjectControlTools(), toolID)
+	if !ok {
+		return false
+	}
+	if len(def.AllowedPhases) == 0 {
+		return true
+	}
+	for _, allowed := range def.AllowedPhases {
+		if normalizeProjectControlPhaseID(allowed) == phaseID {
+			return true
+		}
+	}
+	return false
 }
 
 func validateProjectControlToolForPhase(toolID string, phase projectControlRunbookPhase, attempt projectControlPhaseAttempt) error {
@@ -1382,16 +1452,11 @@ func projectControlPhaseRequiresArtifact(phase projectControlRunbookPhase, artif
 }
 
 func projectControlToolCommand(toolID string) ([]string, string, string, error) {
-	switch normalizeProjectControlToolID(toolID) {
-	case "repo_status":
-		return []string{"git", "status", "--short"}, "repo_status", "Repo status", nil
-	case "diff_capture":
-		return []string{"git", "diff", "--stat", "--find-renames"}, "diff_summary", "Diff summary", nil
-	case "go_test":
-		return []string{"go", "test", "./..."}, "test_result", "Go test", nil
-	default:
+	def, ok := findProjectControlToolDef(defaultProjectControlTools(), toolID)
+	if !ok {
 		return nil, "", "", fmt.Errorf("unknown tool: %s", strings.TrimSpace(toolID))
 	}
+	return def.Command, def.ArtifactKind, def.ArtifactLabel, nil
 }
 
 func compactProjectControlToolOutput(value string, maxBytes int) string {
@@ -1407,9 +1472,9 @@ func compactProjectControlToolOutput(value string, maxBytes int) string {
 }
 
 func executeLocalProjectControlTool(toolID, workspaceDir string) (projectControlToolResult, error) {
-	command, artifactKind, label, err := projectControlToolCommand(toolID)
-	if err != nil {
-		return projectControlToolResult{}, err
+	def, ok := findProjectControlToolDef(defaultProjectControlTools(), toolID)
+	if !ok {
+		return projectControlToolResult{}, fmt.Errorf("unknown tool: %s", strings.TrimSpace(toolID))
 	}
 	workspaceDir = strings.TrimSpace(workspaceDir)
 	if workspaceDir == "" {
@@ -1422,9 +1487,9 @@ func executeLocalProjectControlTool(toolID, workspaceDir string) (projectControl
 	if !info.IsDir() {
 		return projectControlToolResult{}, fmt.Errorf("workspace is not a directory: %s", workspaceDir)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), projectControlToolRunTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), def.timeout())
 	defer cancel()
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd := exec.CommandContext(ctx, def.Command[0], def.Command[1:]...)
 	cmd.Dir = workspaceDir
 	output, runErr := cmd.CombinedOutput()
 	outcome := "pass"
@@ -1437,19 +1502,20 @@ func executeLocalProjectControlTool(toolID, workspaceDir string) (projectControl
 		outcome = "fail"
 		status = "timed out"
 	}
-	outputText := compactProjectControlToolOutput(string(output), 3200)
+	outputText := compactProjectControlToolOutput(string(output), def.maxOutput())
 	if outputText == "" {
 		outputText = "No output."
 	}
-	value := "Workspace: " + workspaceDir + "\nCommand: " + strings.Join(command, " ") + "\nStatus: " + status + "\nOutput:\n" + outputText
+	command := strings.Join(def.Command, " ")
+	value := "Workspace: " + workspaceDir + "\nCommand: " + command + "\nStatus: " + status + "\nOutput:\n" + outputText
 	if normalizeProjectControlToolID(toolID) == "repo_status" && strings.TrimSpace(string(output)) == "" {
-		value = "Workspace: " + workspaceDir + "\nCommand: " + strings.Join(command, " ") + "\nStatus: clean\nOutput:\nWorking tree clean."
+		value = "Workspace: " + workspaceDir + "\nCommand: " + command + "\nStatus: clean\nOutput:\nWorking tree clean."
 	}
 	return projectControlToolResult{
 		ToolID:          normalizeProjectControlToolID(toolID),
-		ArtifactKind:    artifactKind,
+		ArtifactKind:    def.ArtifactKind,
 		ArtifactOutcome: outcome,
-		ArtifactLabel:   label,
+		ArtifactLabel:   def.ArtifactLabel,
 		ArtifactValue:   value,
 	}, nil
 }
@@ -4553,6 +4619,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	}
 
 	dashboard := buildProjectControlDashboard(workstreams, tasks, checkpoints, runtimes, events)
+	tools := projectControlToolsForState(&state)
 	return projectControlSnapshot{
 		GeneratedAt:     now.Format(time.RFC3339),
 		ActiveProjectID: state.ActiveProjectID,
@@ -4564,6 +4631,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		Runtimes:        runtimes,
 		Skills:          skills,
 		Runbooks:        runbooks,
+		Tools:           tools,
 		PhaseAttempts:   phaseAttempts,
 		ToolRuns:        toolRuns,
 		Artifacts:       artifacts,

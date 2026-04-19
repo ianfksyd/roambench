@@ -3916,3 +3916,97 @@ func TestProjectControlStatePersistsAcrossServerRestart(t *testing.T) {
 		t.Fatalf("checkpoint status after restart = %q, want approved", persistedSnapshot.Checkpoints[0].Status)
 	}
 }
+
+func TestProjectControlDefaultToolsReturnThreeBuiltinTools(t *testing.T) {
+	tools := defaultProjectControlTools()
+	if len(tools) != 3 {
+		t.Fatalf("len(defaultProjectControlTools()) = %d, want 3", len(tools))
+	}
+	ids := map[string]bool{}
+	for _, def := range tools {
+		ids[def.ID] = true
+		if len(def.Command) == 0 {
+			t.Fatalf("tool %q has empty Command", def.ID)
+		}
+		if def.ArtifactKind == "" {
+			t.Fatalf("tool %q has empty ArtifactKind", def.ID)
+		}
+		if len(def.AllowedPhases) == 0 {
+			t.Fatalf("tool %q has empty AllowedPhases", def.ID)
+		}
+	}
+	for _, expected := range []string{"repo_status", "diff_capture", "go_test"} {
+		if !ids[expected] {
+			t.Fatalf("missing default tool %q", expected)
+		}
+	}
+}
+
+func TestProjectControlFindToolDefReturnsMatchAndMiss(t *testing.T) {
+	tools := defaultProjectControlTools()
+	def, ok := findProjectControlToolDef(tools, "go_test")
+	if !ok {
+		t.Fatal("findProjectControlToolDef(go_test) returned false")
+	}
+	if def.ArtifactKind != "test_result" {
+		t.Fatalf("ArtifactKind = %q, want test_result", def.ArtifactKind)
+	}
+	_, ok = findProjectControlToolDef(tools, "nonexistent_tool")
+	if ok {
+		t.Fatal("findProjectControlToolDef(nonexistent_tool) returned true, want false")
+	}
+}
+
+func TestProjectControlToolDefTimeoutDefaults(t *testing.T) {
+	def := projectControlToolDef{}
+	if def.timeout() != projectControlToolRunTimeout {
+		t.Fatalf("zero timeout() = %v, want %v", def.timeout(), projectControlToolRunTimeout)
+	}
+	def.TimeoutSeconds = 600
+	if def.timeout() != 600*time.Second {
+		t.Fatalf("custom timeout() = %v, want 600s", def.timeout())
+	}
+}
+
+func TestProjectControlToolAllowedInPhaseUsesRegistry(t *testing.T) {
+	if !projectControlToolAllowedInPhase("go_test", "test") {
+		t.Fatal("go_test should be allowed in test phase")
+	}
+	if projectControlToolAllowedInPhase("go_test", "plan") {
+		t.Fatal("go_test should not be allowed in plan phase")
+	}
+	if !projectControlToolAllowedInPhase("repo_status", "implement") {
+		t.Fatal("repo_status should be allowed in implement phase")
+	}
+	if projectControlToolAllowedInPhase("repo_status", "ready_for_acceptance") {
+		t.Fatal("repo_status should not be allowed in ready_for_acceptance phase")
+	}
+	if projectControlToolAllowedInPhase("unknown_tool", "test") {
+		t.Fatal("unknown tool should not be allowed in any phase")
+	}
+}
+
+func TestProjectControlSnapshotIncludesTools(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	req := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/project-control status = %d, want 200", rec.Code)
+	}
+	snapshot := decodeProjectControlSnapshot(t, rec)
+	if len(snapshot.Tools) == 0 {
+		t.Fatal("snapshot.Tools is empty, want default tools")
+	}
+	foundGoTest := false
+	for _, def := range snapshot.Tools {
+		if def.ID == "go_test" {
+			foundGoTest = true
+		}
+	}
+	if !foundGoTest {
+		t.Fatal("snapshot.Tools missing go_test")
+	}
+}
