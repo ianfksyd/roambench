@@ -3495,6 +3495,33 @@
         return crumbs.join('<span class="project-breadcrumb-sep">/</span>');
     }
 
+    function renderToolManager() {
+        var toolDefs = (state.snapshot && state.snapshot.tools) || [];
+        var rows = toolDefs.map(function(def) {
+            var kindLabel = def.kind === 'agent' ? 'Agent' : 'Command';
+            var cmd = Array.isArray(def.command) ? def.command.join(' ') : '';
+            return '<div class="project-agent-row">'
+                + '<span class="project-agent-detail"><strong>' + escapeHTML(def.name || def.id) + '</strong>'
+                + ' <small>(' + escapeHTML(kindLabel) + (cmd ? ': ' + escapeHTML(cmd) : '') + ')</small>'
+                + ' \u2192 ' + escapeHTML(def.artifactKind)
+                + (def.timeoutSeconds ? ' / ' + def.timeoutSeconds + 's' : '')
+                + '</span>'
+                + '<button type="button" class="project-inline-btn project-inline-btn-sm" data-delete-tool="' + escapeHTML(def.id) + '">\u00d7</button>'
+                + '</div>';
+        }).join('');
+        return '<details class="project-disclosure"><summary><span>' + escapeHTML(tr('project.tools', 'Tools')) + '</span><small>' + escapeHTML(itemCountText(toolDefs.length)) + '</small></summary>'
+            + '<div class="project-disclosure-body">' + rows
+            + '<div class="project-tool-add-form">'
+            + '<input type="text" class="project-input" data-tool-field="id" placeholder="Tool ID (e.g. npm_test)" />'
+            + '<input type="text" class="project-input" data-tool-field="name" placeholder="Display name" />'
+            + '<input type="text" class="project-input" data-tool-field="command" placeholder="Command (e.g. npm test)" />'
+            + '<input type="text" class="project-input" data-tool-field="artifactKind" placeholder="Artifact kind (e.g. test_result)" />'
+            + '<input type="text" class="project-input" data-tool-field="allowedPhases" placeholder="Phases (e.g. test,final_validation)" />'
+            + '<select class="project-input" data-tool-field="kind"><option value="">Command</option><option value="agent">Agent</option></select>'
+            + '<button type="button" class="project-inline-btn primary" data-add-tool="1">' + escapeHTML(tr('project.addTool', 'Add tool')) + '</button>'
+            + '</div></div></details>';
+    }
+
     function renderAgentActivity(projectSnapshot) {
         var activeRuns = (state.snapshot && state.snapshot.toolRuns || []).filter(function(run) {
             return run.status === 'running' || run.status === 'waiting';
@@ -3559,6 +3586,7 @@
                     + renderTaskManagerTable(taskList, tr('project.noTasksYetSentence', 'No tasks yet.'))
                     + '</details>'
                 : '')
+            + renderToolManager()
             + '</section>';
     }
 
@@ -4600,6 +4628,38 @@
                     state.error = err.message || tr('project.decisionFailed', 'Decision failed');
                     render();
                 });
+            });
+        });
+        panel.querySelectorAll('[data-add-tool]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                var container = node.closest('.project-tool-add-form');
+                if (!container) return;
+                var id = (container.querySelector('[data-tool-field="id"]') || {}).value || '';
+                var name = (container.querySelector('[data-tool-field="name"]') || {}).value || '';
+                var command = (container.querySelector('[data-tool-field="command"]') || {}).value || '';
+                var artifactKind = (container.querySelector('[data-tool-field="artifactKind"]') || {}).value || '';
+                var allowedPhases = (container.querySelector('[data-tool-field="allowedPhases"]') || {}).value || '';
+                var kind = (container.querySelector('[data-tool-field="kind"]') || {}).value || '';
+                if (!id || !artifactKind) { state.error = 'Tool ID and artifact kind are required'; render(); return; }
+                var body = { id: id, name: name || id, artifactKind: artifactKind };
+                if (command) body.command = command.split(/\s+/);
+                if (allowedPhases) body.allowedPhases = allowedPhases.split(',').map(function(s) { return s.trim(); });
+                if (kind) body.kind = kind;
+                fetchJSON('/api/project-control/tools', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                }).then(function() { refreshSnapshotSilently(); }).catch(function(err) {
+                    state.error = err.message || 'Failed to add tool'; render();
+                });
+            });
+        });
+        panel.querySelectorAll('[data-delete-tool]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                var toolId = node.getAttribute('data-delete-tool');
+                if (!toolId || !confirm('Delete tool ' + toolId + '?')) return;
+                fetchJSON('/api/project-control/tools/' + encodeURIComponent(toolId), { method: 'DELETE' })
+                    .then(function() { refreshSnapshotSilently(); })
+                    .catch(function(err) { state.error = err.message || 'Failed to delete tool'; render(); });
             });
         });
     }

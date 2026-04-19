@@ -6669,6 +6669,32 @@ button.tab-action:focus-visible {
     white-space: nowrap;
 }
 
+.project-tool-add-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.project-tool-add-form .project-input {
+    flex: 1 1 140px;
+    min-width: 100px;
+    padding: 5px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: inherit;
+    font-size: 12px;
+}
+
+.project-inline-btn-sm {
+    padding: 2px 6px;
+    font-size: 12px;
+    line-height: 1;
+}
+
 @media (max-width: 860px) {
     .project-panel,
     .project-main-section {
