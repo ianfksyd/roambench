@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -316,6 +318,7 @@ type projectControlState struct {
 	Workstreams     []projectControlWorkstream    `json:"workstreams"`
 	Tasks           []projectControlTask          `json:"tasks"`
 	Tools           []projectControlToolDef       `json:"tools,omitempty"`
+	AgentToken      string                        `json:"agentToken,omitempty"`
 	PhaseAttempts   []projectControlPhaseAttempt  `json:"phaseAttempts,omitempty"`
 	ToolRuns        []projectControlToolRun       `json:"toolRuns,omitempty"`
 	Artifacts       []projectControlArtifact      `json:"artifacts,omitempty"`
@@ -2712,7 +2715,8 @@ func (s *projectControlStore) updateWorkstream(username, workstreamID string, re
 }
 
 func (s *projectControlStore) updateTask(username, taskID string, req projectControlTaskUpdateRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
-	if req.ExpectedRowVersion < 1 {
+	agentBypass := req.ExpectedRowVersion == -1
+	if !agentBypass && req.ExpectedRowVersion < 1 {
 		return projectControlSnapshot{}, errors.New("expectedRowVersion must be provided")
 	}
 	toolRunID := ""
@@ -2721,8 +2725,11 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			if task.ID != taskID {
 				continue
 			}
-			if req.ExpectedRowVersion != task.RowVersion {
+			if !agentBypass && req.ExpectedRowVersion != task.RowVersion {
 				return projectControlRowVersionConflict("task", req.ExpectedRowVersion, task.RowVersion)
+			}
+			if agentBypass {
+				req.ExpectedRowVersion = task.RowVersion
 			}
 			originalState := task.State
 			originalAcceptance := task.AcceptanceStatus
@@ -5450,6 +5457,131 @@ func applyRecordedEventsToTasks(tasks []projectControlTask, events []projectCont
 			})
 		}
 	}
+}
+
+func generateAgentToken() string {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return hex.EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano)))
+	}
+	return hex.EncodeToString(b)
+}
+
+func (s *projectControlStore) ensureAgentToken(username string) (string, error) {
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return "", err
+	}
+	if state.AgentToken != "" {
+		return state.AgentToken, nil
+	}
+	token := generateAgentToken()
+	_, err = s.withStateLocked(username, func(state *projectControlState) error {
+		if state.AgentToken == "" {
+			state.AgentToken = token
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (s *projectControlStore) validateAgentToken(username, token string) bool {
+	state, err := s.loadOrSeed(username)
+	if err != nil || state.AgentToken == "" {
+		return false
+	}
+	return state.AgentToken == token
+}
+
+func (s *projectControlStore) agentGetTask(username string) (map[string]interface{}, error) {
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range state.Tasks {
+		st := normalizeProjectControlTaskState(task.State)
+		if st == "running" || st == "waiting_review" {
+			runbook := projectControlRunbookForTask(task)
+			var phase projectControlRunbookPhase
+			if p, ok := findProjectControlRunbookPhase(runbook, task.CurrentPhase); ok {
+				phase = p
+			}
+			return map[string]interface{}{
+				"taskId":            task.ID,
+				"title":             task.Title,
+				"goal":              task.Goal,
+				"state":             task.State,
+				"currentPhase":      task.CurrentPhase,
+				"runbookState":      task.RunbookState,
+				"requiredArtifacts": phase.RequiredArtifacts,
+				"missingEvidence":   task.MissingEvidence,
+				"nextStep":          task.NextStep,
+			}, nil
+		}
+	}
+	return map[string]interface{}{"taskId": "", "message": "no active task"}, nil
+}
+
+type agentArtifactRequest struct {
+	TaskID       string `json:"taskId"`
+	PhaseID      string `json:"phaseId"`
+	ArtifactKind string `json:"artifactKind"`
+	Outcome      string `json:"outcome"`
+	Label        string `json:"label"`
+	Value        string `json:"value"`
+}
+
+func (s *projectControlStore) agentSubmitArtifact(username string, req agentArtifactRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
+	if req.TaskID == "" || req.ArtifactKind == "" {
+		return projectControlSnapshot{}, errors.New("taskId and artifactKind are required")
+	}
+	return s.updateTask(username, req.TaskID, projectControlTaskUpdateRequest{
+		ExpectedRowVersion: -1, // agent bypass
+		Action:             "complete_phase",
+		PhaseID:            req.PhaseID,
+		ArtifactKind:       req.ArtifactKind,
+		ArtifactOutcome:    req.Outcome,
+		ArtifactLabel:      req.Label,
+		ArtifactValue:      req.Value,
+	}, terminals)
+}
+
+type agentCheckpointRequest struct {
+	TaskID string `json:"taskId"`
+	Reason string `json:"reason"`
+}
+
+func (s *projectControlStore) agentRequestCheckpoint(username string, req agentCheckpointRequest) error {
+	if req.TaskID == "" || req.Reason == "" {
+		return errors.New("taskId and reason are required")
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.withStateLocked(username, func(state *projectControlState) error {
+		checkpoint := projectControlCheckpoint{
+			ID:             projectControlID("checkpoint", "agent-"+req.TaskID),
+			TaskID:         req.TaskID,
+			Kind:           "agent_request",
+			Title:          "Agent requests human input",
+			Reason:         req.Reason,
+			Status:         "pending",
+			RequestedAt:    now,
+			AllowedActions: []string{"approve", "reject"},
+		}
+		state.Checkpoints = append(state.Checkpoints, checkpoint)
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:        projectControlID("event", "agent-checkpoint"),
+			Timestamp: now,
+			Actor:     "agent",
+			Action:    "checkpoint_requested",
+			Detail:    "Agent requested checkpoint: " + req.Reason,
+			TaskID:    req.TaskID,
+		})
+		return nil
+	})
+	return err
 }
 
 func (s *Server) handleProjectControlSnapshot(w http.ResponseWriter, r *http.Request) {

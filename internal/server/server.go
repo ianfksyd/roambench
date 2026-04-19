@@ -127,7 +127,13 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/project-control/workstreams/", authRequired(s.sessions, s.handleProjectControlWorkstreamUpdate))
 	s.mux.HandleFunc("/api/project-control/workstreams", authRequired(s.sessions, s.handleProjectControlWorkstreams))
 	s.mux.HandleFunc("/api/project-control/tasks", authRequired(s.sessions, s.handleProjectControlTasks))
+	s.mux.HandleFunc("/api/project-control/agent-token", authRequired(s.sessions, s.handleAgentToken))
 	s.mux.HandleFunc("/api/project-control", authRequired(s.sessions, s.handleProjectControlSnapshot))
+
+	// Agent API (token auth)
+	s.mux.HandleFunc("/api/agent/v1/task", s.handleAgentGetTask)
+	s.mux.HandleFunc("/api/agent/v1/artifact", s.handleAgentSubmitArtifact)
+	s.mux.HandleFunc("/api/agent/v1/checkpoint", s.handleAgentRequestCheckpoint)
 
 	// Terminals (auth required)
 	s.mux.HandleFunc("/api/terminals/ws/", authRequired(s.sessions, s.handleTerminalWebSocket))
@@ -1035,4 +1041,100 @@ func (s *Server) handleNotificationWebSocket(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+}
+
+func (s *Server) agentUsername(r *http.Request) (string, bool) {
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", false
+	}
+	username := s.cfg.Auth.SingleUser
+	if username == "" {
+		return "", false
+	}
+	if !s.projectControl.validateAgentToken(username, token) {
+		return "", false
+	}
+	return username, true
+}
+
+func (s *Server) handleAgentToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username := GetUsername(r)
+	token, err := s.projectControl.ensureAgentToken(username)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+func (s *Server) handleAgentGetTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, ok := s.agentUsername(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid agent token"})
+		return
+	}
+	result, err := s.projectControl.agentGetTask(username)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleAgentSubmitArtifact(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, ok := s.agentUsername(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid agent token"})
+		return
+	}
+	var req agentArtifactRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	snapshot, err := s.projectControl.agentSubmitArtifact(username, req, s.terminals)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":           true,
+		"currentPhase": snapshot.Tasks[0].CurrentPhase,
+	})
+}
+
+func (s *Server) handleAgentRequestCheckpoint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, ok := s.agentUsername(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid agent token"})
+		return
+	}
+	var req agentCheckpointRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if err := s.projectControl.agentRequestCheckpoint(username, req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 }

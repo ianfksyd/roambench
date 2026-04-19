@@ -4376,3 +4376,168 @@ func TestProjectControlStartExecutionChainsAutoProgressWithTools(t *testing.T) {
 		t.Fatalf("toolCalls = %v, want [diff_capture, go_test]", toolCalls)
 	}
 }
+
+func TestProjectControlAgentTokenGenerationAndValidation(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	// Generate agent token
+	req := httptest.NewRequest(http.MethodPost, "/api/project-control/agent-token", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST agent-token status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var tokenResp map[string]string
+	json.NewDecoder(rec.Body).Decode(&tokenResp)
+	agentToken := tokenResp["token"]
+	if agentToken == "" {
+		t.Fatal("agent token is empty")
+	}
+
+	// Second call returns same token
+	req2 := httptest.NewRequest(http.MethodPost, "/api/project-control/agent-token", nil)
+	req2.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec2 := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec2, req2)
+	var tokenResp2 map[string]string
+	json.NewDecoder(rec2.Body).Decode(&tokenResp2)
+	if tokenResp2["token"] != agentToken {
+		t.Fatalf("second token = %q, want same as first %q", tokenResp2["token"], agentToken)
+	}
+}
+
+func TestProjectControlAgentGetTaskReturnsActiveTask(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	// Generate agent token
+	tokenReq := httptest.NewRequest(http.MethodPost, "/api/project-control/agent-token", nil)
+	tokenReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	tokenRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(tokenRec, tokenReq)
+	var tokenResp map[string]string
+	json.NewDecoder(tokenRec.Body).Decode(&tokenResp)
+	agentToken := tokenResp["token"]
+
+	// Start execution to make a task active
+	patchProjectControlTask(t, srv, token, projectControlTaskPanelID,
+		`{"expectedRowVersion":1,"action":"start_execution"}`)
+
+	// Agent gets task
+	req := httptest.NewRequest(http.MethodGet, "/api/agent/v1/task", nil)
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET task status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var taskResp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&taskResp)
+	if taskResp["taskId"] == "" {
+		t.Fatal("agent task response has empty taskId")
+	}
+	if taskResp["currentPhase"] != "plan" {
+		t.Fatalf("currentPhase = %v, want plan", taskResp["currentPhase"])
+	}
+}
+
+func TestProjectControlAgentSubmitArtifactAdvancesPhase(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	// Generate agent token
+	tokenReq := httptest.NewRequest(http.MethodPost, "/api/project-control/agent-token", nil)
+	tokenReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	tokenRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(tokenRec, tokenReq)
+	var tokenResp map[string]string
+	json.NewDecoder(tokenRec.Body).Decode(&tokenResp)
+	agentToken := tokenResp["token"]
+
+	// Start execution (starts plan phase)
+	patchProjectControlTask(t, srv, token, projectControlTaskPanelID,
+		`{"expectedRowVersion":1,"action":"start_execution"}`)
+
+	// Agent submits plan artifact to complete plan phase
+	body := `{"taskId":"` + projectControlTaskPanelID + `","phaseId":"plan","artifactKind":"plan","outcome":"recorded","label":"Plan","value":"Agent plan"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/v1/artifact", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST artifact status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify task advanced to implement phase
+	snapshot := func() projectControlSnapshot {
+		r := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+		r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, r)
+		return decodeProjectControlSnapshot(t, w)
+	}()
+	task := projectControlTaskFromSnapshotByID(t, snapshot, projectControlTaskPanelID)
+	if task.CurrentPhase != "implement" {
+		t.Fatalf("CurrentPhase = %q, want implement (advanced from plan)", task.CurrentPhase)
+	}
+}
+
+func TestProjectControlAgentRequestCheckpointCreatesPendingCheckpoint(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	// Generate agent token
+	tokenReq := httptest.NewRequest(http.MethodPost, "/api/project-control/agent-token", nil)
+	tokenReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	tokenRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(tokenRec, tokenReq)
+	var tokenResp map[string]string
+	json.NewDecoder(tokenRec.Body).Decode(&tokenResp)
+	agentToken := tokenResp["token"]
+
+	// Agent requests checkpoint
+	body := `{"taskId":"` + projectControlTaskPanelID + `","reason":"Need human review of API design"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/v1/checkpoint", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST checkpoint status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify checkpoint exists
+	snapshot := func() projectControlSnapshot {
+		r := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
+		r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, r)
+		return decodeProjectControlSnapshot(t, w)
+	}()
+	found := false
+	for _, cp := range snapshot.Checkpoints {
+		if cp.TaskID == projectControlTaskPanelID && cp.Kind == "agent_request" && cp.Status == "pending" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected pending agent_request checkpoint")
+	}
+}
+
+func TestProjectControlAgentInvalidTokenReturns401(t *testing.T) {
+	srv, _, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agent/v1/task", nil)
+	req.Header.Set("Authorization", "Bearer invalid-token")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET task with invalid token status = %d, want 401", rec.Code)
+	}
+}
