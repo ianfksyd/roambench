@@ -38,6 +38,17 @@ func readPersistedSessionFile(t *testing.T, mgr *Manager, username, sessionID st
 	return persisted
 }
 
+func writePersistedSessionWALFile(t *testing.T, mgr *Manager, data persistedSession) {
+	t.Helper()
+	payload, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("Marshal persistedSession error: %v", err)
+	}
+	if err := writePersistedSessionFileAtomically(mgr.persistedSessionWALPath(data.Username, data.ID), payload, 0600); err != nil {
+		t.Fatalf("writePersistedSessionWALFile error: %v", err)
+	}
+}
+
 func TestManagerSessionOwnership(t *testing.T) {
 	mgr := newTestManager(t, &config.TerminalConfig{
 		Shell:       "/bin/sh",
@@ -274,6 +285,120 @@ func TestManagerLoadPersistedSessionsRestoresExistingTmuxSessions(t *testing.T) 
 	}
 	if sessions[0].ID != persisted.ID || sessions[0].Name != persisted.Name {
 		t.Fatalf("restored session = %#v, want id %q name %q", sessions[0], persisted.ID, persisted.Name)
+	}
+}
+
+func TestManagerLoadPersistedSessionsPrefersNewerWAL(t *testing.T) {
+	dir := t.TempDir()
+	baseWorkDir := t.TempDir()
+	recoveredWorkDir := t.TempDir()
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:           "/bin/sh",
+		MaxSessions:     0,
+		Scrollback:      1000,
+		IdleTimeout:     "72h",
+		PersistDir:      dir,
+		PersistMaxBytes: 64 << 20,
+	})
+
+	now := time.Now().UTC().Truncate(time.Second)
+	base := persistedSession{
+		ID:           "lt-wal-newer",
+		Name:         "Base shell",
+		Username:     "ian",
+		WorkDir:      baseWorkDir,
+		CreatedAt:    now.Add(-10 * time.Minute),
+		LastActivity: now.Add(-2 * time.Minute),
+		UpdatedAt:    now.Add(-2 * time.Minute),
+	}
+	if err := mgr.writePersistedSession(base); err != nil {
+		t.Fatalf("writePersistedSession(base) error: %v", err)
+	}
+
+	recovered := base
+	recovered.Name = "Recovered shell"
+	recovered.WorkDir = recoveredWorkDir
+	recovered.UpdatedAt = now.Add(-time.Minute)
+	writePersistedSessionWALFile(t, mgr, recovered)
+
+	mgr.mu.Lock()
+	mgr.sessions = make(map[string]*Session)
+	mgr.mu.Unlock()
+	mgr.hasTmux = true
+	mgr.tmuxSessionExists = func(sessionID string) bool {
+		return sessionID == recovered.ID
+	}
+
+	mgr.loadPersistedSessions()
+
+	sessions := mgr.ListSessions("ian")
+	if len(sessions) != 1 {
+		t.Fatalf("ListSessions length = %d, want 1", len(sessions))
+	}
+	if sessions[0].Name != recovered.Name {
+		t.Fatalf("restored session name = %q, want %q", sessions[0].Name, recovered.Name)
+	}
+	mgr.mu.Lock()
+	workDir := mgr.sessions[recovered.ID].WorkDir
+	mgr.mu.Unlock()
+	if workDir != recovered.WorkDir {
+		t.Fatalf("restored workdir = %q, want %q", workDir, recovered.WorkDir)
+	}
+	if _, err := os.Stat(mgr.persistedSessionWALPath("ian", recovered.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("persisted WAL still exists, stat err = %v", err)
+	}
+	persisted := readPersistedSessionFile(t, mgr, "ian", recovered.ID)
+	if persisted.Name != recovered.Name || persisted.WorkDir != recovered.WorkDir {
+		t.Fatalf("persisted session = %#v, want name %q workdir %q", persisted, recovered.Name, recovered.WorkDir)
+	}
+}
+
+func TestManagerLoadPersistedSessionsRestoresWALWithoutMainFile(t *testing.T) {
+	dir := t.TempDir()
+	recoveredWorkDir := t.TempDir()
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:           "/bin/sh",
+		MaxSessions:     0,
+		Scrollback:      1000,
+		IdleTimeout:     "72h",
+		PersistDir:      dir,
+		PersistMaxBytes: 64 << 20,
+	})
+
+	now := time.Now().UTC().Truncate(time.Second)
+	recovered := persistedSession{
+		ID:           "lt-wal-only",
+		Name:         "Recovered from WAL",
+		Username:     "ian",
+		WorkDir:      recoveredWorkDir,
+		CreatedAt:    now.Add(-8 * time.Minute),
+		LastActivity: now.Add(-time.Minute),
+		UpdatedAt:    now.Add(-time.Minute),
+	}
+	writePersistedSessionWALFile(t, mgr, recovered)
+
+	mgr.mu.Lock()
+	mgr.sessions = make(map[string]*Session)
+	mgr.mu.Unlock()
+	mgr.hasTmux = true
+	mgr.tmuxSessionExists = func(sessionID string) bool {
+		return sessionID == recovered.ID
+	}
+
+	mgr.loadPersistedSessions()
+
+	sessions := mgr.ListSessions("ian")
+	if len(sessions) != 1 {
+		t.Fatalf("ListSessions length = %d, want 1", len(sessions))
+	}
+	if sessions[0].ID != recovered.ID || sessions[0].Name != recovered.Name {
+		t.Fatalf("restored session = %#v, want id %q name %q", sessions[0], recovered.ID, recovered.Name)
+	}
+	if _, err := os.Stat(mgr.persistedSessionPath("ian", recovered.ID)); err != nil {
+		t.Fatalf("persisted session file missing after WAL recovery: %v", err)
+	}
+	if _, err := os.Stat(mgr.persistedSessionWALPath("ian", recovered.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("persisted WAL still exists, stat err = %v", err)
 	}
 }
 
@@ -569,6 +694,35 @@ func TestPersistedStoreSizeIgnoresNonSessionFiles(t *testing.T) {
 	if err := os.WriteFile(unrelatedPath, []byte(strings.Repeat("x", 4096)), 0600); err != nil {
 		t.Fatalf("WriteFile(%s) error: %v", unrelatedPath, err)
 	}
+
+	if got := mgr.persistedStoreSize(); got != before {
+		t.Fatalf("persistedStoreSize = %d, want unchanged size %d", got, before)
+	}
+}
+
+func TestPersistedStoreSizeIgnoresSessionWALFiles(t *testing.T) {
+	dir := t.TempDir()
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 0,
+		IdleTimeout: "1h",
+		PersistDir:  dir,
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	before := mgr.persistedStoreSize()
+	if before == 0 {
+		t.Fatal("persistedStoreSize = 0, want persisted session size")
+	}
+
+	persisted := readPersistedSessionFile(t, mgr, "ian", session.ID)
+	persisted.Name = "Recovered later"
+	persisted.UpdatedAt = time.Now().UTC().Add(time.Minute)
+	writePersistedSessionWALFile(t, mgr, persisted)
 
 	if got := mgr.persistedStoreSize(); got != before {
 		t.Fatalf("persistedStoreSize = %d, want unchanged size %d", got, before)

@@ -83,6 +83,7 @@ type persistedSession struct {
 	WorkDir      string    `json:"workDir,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
 	LastActivity time.Time `json:"lastActivity"`
+	UpdatedAt    time.Time `json:"updatedAt,omitempty"`
 }
 
 type tmuxSessionState struct {
@@ -857,6 +858,9 @@ func (m *Manager) writePersistedSession(data persistedSession) error {
 	if data.LastActivity.IsZero() {
 		data.LastActivity = time.Now()
 	}
+	if data.UpdatedAt.IsZero() {
+		data.UpdatedAt = time.Now().UTC()
+	}
 
 	dir := filepath.Dir(m.persistedSessionPath(data.Username, data.ID))
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -864,20 +868,36 @@ func (m *Manager) writePersistedSession(data persistedSession) error {
 	}
 
 	path := m.persistedSessionPath(data.Username, data.ID)
-	tmpPath := path + ".tmp"
+	walPath := m.persistedSessionWALPath(data.Username, data.ID)
+	backupPath := m.persistedSessionBackupPath(data.Username, data.ID)
 	payload, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmpPath, payload, 0600); err != nil {
+	if err := writePersistedSessionFileAtomically(walPath, payload, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if existing, err := os.ReadFile(path); err == nil {
+		if err := writePersistedSessionFileAtomically(backupPath, existing, 0600); err != nil {
+			return err
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := writePersistedSessionFileAtomically(path, payload, 0600); err != nil {
+		return err
+	}
+	_ = os.Remove(walPath)
+	return nil
 }
 
 func (m *Manager) removePersistedSession(username, sessionID string) {
 	path := m.persistedSessionPath(username, sessionID)
+	walPath := m.persistedSessionWALPath(username, sessionID)
+	backupPath := m.persistedSessionBackupPath(username, sessionID)
 	os.Remove(path)
+	os.Remove(walPath)
+	os.Remove(backupPath)
 	parent := filepath.Dir(path)
 	entries, err := os.ReadDir(parent)
 	if err == nil && len(entries) == 0 {
@@ -889,8 +909,91 @@ func (m *Manager) persistedSessionPath(username, sessionID string) string {
 	return filepath.Join(m.persistDir, storagePathSegment(username), storagePathSegment(sessionID)+".json")
 }
 
+func (m *Manager) persistedSessionWALPath(username, sessionID string) string {
+	return filepath.Join(m.persistDir, storagePathSegment(username), storagePathSegment(sessionID)+".wal.json")
+}
+
+func (m *Manager) persistedSessionBackupPath(username, sessionID string) string {
+	return m.persistedSessionPath(username, sessionID) + ".bak"
+}
+
 func storagePathSegment(value string) string {
 	return strings.ReplaceAll(value, string(os.PathSeparator), "_")
+}
+
+func readPersistedSessionData(path string) (persistedSession, bool, error) {
+	payload, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return persistedSession{}, false, nil
+	}
+	if err != nil {
+		return persistedSession{}, false, err
+	}
+
+	var data persistedSession
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return persistedSession{}, false, err
+	}
+	return data, true, nil
+}
+
+func persistedSessionRecency(data persistedSession) time.Time {
+	if !data.UpdatedAt.IsZero() {
+		return data.UpdatedAt
+	}
+	if !data.LastActivity.IsZero() {
+		return data.LastActivity
+	}
+	return data.CreatedAt
+}
+
+func preferPersistedSession(candidate, current persistedSession) bool {
+	candidateTime := persistedSessionRecency(candidate)
+	currentTime := persistedSessionRecency(current)
+	switch {
+	case !candidateTime.IsZero() && !currentTime.IsZero():
+		if candidateTime.Equal(currentTime) {
+			return true
+		}
+		return candidateTime.After(currentTime)
+	case !candidateTime.IsZero() && currentTime.IsZero():
+		return true
+	case candidateTime.IsZero() && !currentTime.IsZero():
+		return false
+	default:
+		return true
+	}
+}
+
+func writePersistedSessionFileAtomically(path string, payload []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+
+	tmpPath := path + ".tmp"
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(payload); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) loadPersistedSessions() {
@@ -905,20 +1008,59 @@ func (m *Manager) loadPersistedSessions() {
 
 	idleTimeout := m.cfg.GetIdleTimeout()
 	now := time.Now()
+	seen := map[string]bool{}
 
 	for _, path := range files {
-		payload, err := os.ReadFile(path)
+		base := filepath.Base(path)
+		dir := filepath.Dir(path)
+		var key string
+		switch {
+		case strings.HasSuffix(base, ".wal.json"):
+			key = filepath.Join(dir, strings.TrimSuffix(base, ".wal.json"))
+		case strings.HasSuffix(base, ".json"):
+			key = filepath.Join(dir, strings.TrimSuffix(base, ".json"))
+		default:
+			continue
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		mainPath := key + ".json"
+		walPath := key + ".wal.json"
+		data, exists, err := readPersistedSessionData(mainPath)
 		if err != nil {
+			_ = os.Remove(mainPath)
+			data = persistedSession{}
+			exists = false
+		}
+		walData, walExists, err := readPersistedSessionData(walPath)
+		if err != nil {
+			_ = os.Remove(walPath)
+			walData = persistedSession{}
+			walExists = false
+		}
+		if !exists && !walExists {
 			continue
 		}
 
-		var data persistedSession
-		if err := json.Unmarshal(payload, &data); err != nil {
-			os.Remove(path)
+		selectedFromWAL := false
+		clearWAL := false
+		switch {
+		case walExists && (!exists || preferPersistedSession(walData, data)):
+			data = walData
+			exists = true
+			selectedFromWAL = true
+		case walExists:
+			clearWAL = true
+		}
+		if !exists {
 			continue
 		}
 		if data.ID == "" || data.Username == "" {
-			os.Remove(path)
+			_ = os.Remove(mainPath)
+			_ = os.Remove(walPath)
 			continue
 		}
 		if data.LastActivity.IsZero() {
@@ -928,17 +1070,25 @@ func (m *Manager) loadPersistedSessions() {
 			data.CreatedAt = data.LastActivity
 		}
 		if data.CreatedAt.IsZero() {
-			os.Remove(path)
+			_ = os.Remove(mainPath)
+			_ = os.Remove(walPath)
 			continue
 		}
 		if now.Sub(data.LastActivity) > idleTimeout {
 			exec.Command("tmux", "kill-session", "-t", data.ID).Run()
-			os.Remove(path)
+			m.removePersistedSession(data.Username, data.ID)
 			continue
 		}
 		if !m.tmuxSessionExists(data.ID) {
-			os.Remove(path)
+			m.removePersistedSession(data.Username, data.ID)
 			continue
+		}
+		if selectedFromWAL {
+			if err := m.writePersistedSession(data); err != nil {
+				continue
+			}
+		} else if clearWAL {
+			_ = os.Remove(walPath)
 		}
 
 		m.mu.Lock()
@@ -989,6 +1139,9 @@ func (m *Manager) persistedStoreSize() int64 {
 		return 0
 	}
 	for _, path := range files {
+		if strings.HasSuffix(path, ".wal.json") {
+			continue
+		}
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() {
 			continue
