@@ -6197,6 +6197,15 @@ button.tab-action:focus-visible {
     font-variant-numeric: tabular-nums;
 }
 
+.project-phase-row.tone-info .project-phase-index {
+    animation: phase-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes phase-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
 .project-phase-main,
 .project-artifact-main {
     display: grid;

@@ -3664,8 +3664,9 @@
             var status = phaseStatusForTask(task, phase);
             var tone = phaseStatusTone(status);
             var artifact = taskArtifactForKind(task.id, artifactKindForPhase(phase));
+            var statusIcon = status === 'completed' ? '\u2713 ' : status === 'running' ? '\u25CB ' : status === 'failed' ? '\u2717 ' : '';
             return '<div class="project-phase-row tone-' + escapeHTML(tone) + '">'
-                + '<div class="project-phase-index">' + escapeHTML(String(index + 1)) + '</div>'
+                + '<div class="project-phase-index">' + escapeHTML(statusIcon + String(index + 1)) + '</div>'
                 + '<div class="project-phase-main"><div class="project-phase-title">' + escapeHTML(humanizePhase(phase.id)) + '</div>'
                 + '<div class="project-phase-meta">' + escapeHTML(artifact ? humanizeArtifactKind(artifact.kind) + ' / ' + humanizeArtifactOutcome(artifact.outcome) : humanizeArtifactKind(artifactKindForPhase(phase))) + '</div></div>'
                 + '<span class="project-pill tone-' + escapeHTML(tone) + '">' + escapeHTML(phaseStatusLabel(status)) + '</span>'
