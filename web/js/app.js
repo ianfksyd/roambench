@@ -4515,6 +4515,7 @@
             syncVisibleTerminalConnections();
             applyMaximizeState();
             scheduleFitActiveTerminal();
+            connectNotificationWs();
         }
         if (name === 'login') {
             syncVisibleTerminalConnections();
@@ -5446,6 +5447,7 @@
             return;
         }
         state.activeWorkspaceId = id;
+        clearNotifBadge(id);
         ensureActiveTerminalVisible();
         saveWorkspaceState();
         renderTabBar();
@@ -6204,6 +6206,16 @@
                 renameWorkspace(workspace.id);
             };
             tabButton.appendChild(name);
+
+            var unreadCount = notifUnread[workspace.id] || 0;
+            if (unreadCount > 0) {
+                var badge = document.createElement('span');
+                badge.className = 'tab-notif-badge';
+                badge.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
+                badge.setAttribute('aria-label', unreadCount + ' unread');
+                tabButton.appendChild(badge);
+            }
+
             tab.appendChild(tabButton);
 
             const actions = document.createElement('span');
@@ -11825,4 +11837,70 @@
             }
         }
     };
+    // --- Notification System ---
+    var notifWs = null;
+    var notifUnread = {};
+
+    function connectNotificationWs() {
+        if (notifWs) return;
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var url = proto + '//' + location.host + (window.__ROAMBENCH_BASE_PATH__ || '') + '/api/notifications/ws';
+        try { notifWs = new WebSocket(url); } catch(e) { return; }
+        notifWs.onmessage = function(event) {
+            try {
+                var data = JSON.parse(event.data);
+                if (data.type === 'notification') {
+                    handleOSCNotification(data);
+                }
+            } catch(e) {}
+        };
+        notifWs.onclose = function() {
+            notifWs = null;
+            setTimeout(connectNotificationWs, 5000);
+        };
+        notifWs.onerror = function() { notifWs = null; };
+    }
+
+    function handleOSCNotification(data) {
+        var sessionId = data.sessionId || '';
+        var wsId = findWorkspaceForSession(sessionId);
+        if (wsId && wsId !== state.activeWorkspaceId) {
+            notifUnread[wsId] = (notifUnread[wsId] || 0) + 1;
+            renderTabBar();
+        }
+        if (document.hidden && Notification && Notification.permission === 'granted') {
+            var title = data.title || 'RoamBench';
+            var body = data.body || data.title || '';
+            try { new Notification(title, { body: body, tag: 'roambench-' + sessionId }); } catch(e) {}
+        }
+    }
+
+    function findWorkspaceForSession(sessionId) {
+        if (!sessionId) return '';
+        for (var i = 0; i < state.workspaces.length; i++) {
+            var ws = state.workspaces[i];
+            if (ws.terminals) {
+                for (var j = 0; j < ws.terminals.length; j++) {
+                    if (ws.terminals[j] === sessionId) return ws.id;
+                }
+            }
+        }
+        return '';
+    }
+
+    function clearNotifBadge(workspaceId) {
+        if (notifUnread[workspaceId]) {
+            delete notifUnread[workspaceId];
+            renderTabBar();
+        }
+    }
+
+    // Request notification permission on first user interaction
+    document.addEventListener('click', function requestNotifPerm() {
+        if (Notification && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+        document.removeEventListener('click', requestNotifPerm);
+    }, { once: true });
+
 })();

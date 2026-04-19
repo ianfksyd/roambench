@@ -23,6 +23,41 @@ import (
 	"github.com/ianf339/roambench/web"
 )
 
+type notificationHub struct {
+	mu      sync.Mutex
+	clients map[chan terminal.OSCNotification]struct{}
+}
+
+func newNotificationHub() *notificationHub {
+	return &notificationHub{clients: make(map[chan terminal.OSCNotification]struct{})}
+}
+
+func (h *notificationHub) subscribe() chan terminal.OSCNotification {
+	ch := make(chan terminal.OSCNotification, 16)
+	h.mu.Lock()
+	h.clients[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *notificationHub) unsubscribe(ch chan terminal.OSCNotification) {
+	h.mu.Lock()
+	delete(h.clients, ch)
+	h.mu.Unlock()
+	close(ch)
+}
+
+func (h *notificationHub) broadcast(n terminal.OSCNotification) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.clients {
+		select {
+		case ch <- n:
+		default:
+		}
+	}
+}
+
 type Server struct {
 	cfg            *config.Config
 	authProv       auth.AuthProvider
@@ -32,6 +67,7 @@ type Server struct {
 	workspaceState *workspaceStateStore
 	fileBrowser    *filebrowser.FileBrowser
 	projectControl *projectControlStore
+	notifHub       *notificationHub
 	mux            *http.ServeMux
 	upgrader       websocket.Upgrader
 	httpServer     *http.Server
@@ -53,6 +89,7 @@ func NewServer(
 		workspaceState: newWorkspaceStateStore(cfg.Terminal.GetPersistDir()),
 		fileBrowser:    fb,
 		projectControl: newProjectControlStore(cfg.Terminal.GetPersistDir()),
+		notifHub:       newNotificationHub(),
 		mux:            http.NewServeMux(),
 	}
 	s.upgrader = websocket.Upgrader{
@@ -94,6 +131,7 @@ func (s *Server) registerRoutes() {
 
 	// Terminals (auth required)
 	s.mux.HandleFunc("/api/terminals/ws/", authRequired(s.sessions, s.handleTerminalWebSocket))
+	s.mux.HandleFunc("/api/notifications/ws", authRequired(s.sessions, s.handleNotificationWebSocket))
 	s.mux.HandleFunc("/api/terminals/", authRequired(s.sessions, s.handleTerminal))
 	s.mux.HandleFunc("/api/terminals", authRequired(s.sessions, s.handleTerminals))
 
@@ -832,16 +870,24 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 		}
 	}()
 
+	oscScanner := terminal.NewOSCScanner(sessionID)
+
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
 				s.terminals.TouchSessionForUser(username, sessionID)
-				writeErr := writeBinaryMessage(buf[:n])
-				if writeErr != nil {
-					cleanup()
-					return
+				passthrough, notifs := oscScanner.Feed(buf[:n])
+				for _, notif := range notifs {
+					s.notifHub.broadcast(notif)
+				}
+				if len(passthrough) > 0 {
+					writeErr := writeBinaryMessage(passthrough)
+					if writeErr != nil {
+						cleanup()
+						return
+					}
 				}
 			}
 			if err != nil {
@@ -944,5 +990,49 @@ func defaultPort(scheme string) string {
 		return "443"
 	default:
 		return "80"
+	}
+}
+
+func (s *Server) handleNotificationWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	ch := s.notifHub.subscribe()
+	defer s.notifHub.unsubscribe(ch)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	for {
+		select {
+		case notif, ok := <-ch:
+			if !ok {
+				return
+			}
+			msg := map[string]interface{}{
+				"type":      "notification",
+				"code":      notif.Code,
+				"title":     notif.Title,
+				"subtitle":  notif.Subtitle,
+				"body":      notif.Body,
+				"sessionId": notif.SessionID,
+				"timestamp": notif.Timestamp.Format(time.RFC3339),
+			}
+			if err := conn.WriteJSON(msg); err != nil {
+				return
+			}
+		case <-done:
+			return
+		}
 	}
 }

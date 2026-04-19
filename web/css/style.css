@@ -1650,6 +1650,23 @@ body.view-login #terminal-view {
     text-overflow: ellipsis;
 }
 
+.tab-notif-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    margin-left: 6px;
+    border-radius: 8px;
+    background: var(--primary, #4a9eff);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
 .tab.active {
     color: var(--text);
     border-bottom-color: var(--primary);
