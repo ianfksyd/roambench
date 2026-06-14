@@ -99,6 +99,7 @@ type Session struct {
 	LastActivity time.Time
 	cmd          *exec.Cmd
 	ptyFile      *os.File
+	replacedPTYs map[*os.File]struct{}
 	dirty        bool
 }
 
@@ -288,6 +289,10 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 
 	m.mu.Lock()
 	if session.ptyFile != nil {
+		if session.replacedPTYs == nil {
+			session.replacedPTYs = make(map[*os.File]struct{})
+		}
+		session.replacedPTYs[session.ptyFile] = struct{}{}
 		session.ptyFile.Close()
 		session.ptyFile = nil
 	}
@@ -333,6 +338,31 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 	m.reapAttachedCommand(sessionID, cmd, ptmx)
 
 	return ptmx, cmd, nil
+}
+
+// ConsumeAttachReplacementForUser reports whether the given PTY was detached
+// because a newer browser connection attached to the same terminal session.
+// The replacement marker is consumed so callers can distinguish replacement
+// from a normal shell/tmux exit without leaking stale PTY references.
+func (m *Manager) ConsumeAttachReplacementForUser(username, sessionID string, ptyFile *os.File) bool {
+	if ptyFile == nil {
+		return false
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.sessions[sessionID]
+	if !ok || session.Username != username || session.replacedPTYs == nil {
+		return false
+	}
+
+	if _, replaced := session.replacedPTYs[ptyFile]; replaced {
+		delete(session.replacedPTYs, ptyFile)
+		return true
+	}
+
+	return false
 }
 
 func (m *Manager) pruneMissingTmuxSession(sessionID string) bool {

@@ -12,6 +12,7 @@
     const TERMINAL_SETTINGS_FALLBACK_KEYS = ['roambench.terminal-settings'];
     const LANGUAGE_STORAGE_KEY = 'roambench.language.v1';
     const TERMINAL_WORKSPACES_STORAGE_KEY = 'roambench.terminal-workspaces.v1';
+    const TERMINAL_VIEW_STATE_STORAGE_KEY = 'roambench.terminal-view-state.v1';
     const EDITOR_DRAFTS_STORAGE_KEY = 'roambench.editor-drafts.v1';
     const EDITOR_UI_STORAGE_KEY = 'roambench.editor-ui.v1';
     const UPLOAD_RESPONSE_GRACE_MS = 6000;
@@ -2459,9 +2460,58 @@
 
     function applyWorkspaceStatePayload(payload) {
         var normalized = normalizeWorkspaceStatePayload(payload);
+        var windowActiveWorkspaceId = readWindowActiveWorkspaceId();
 
         state.workspaces = normalized.workspaces;
-        state.activeWorkspaceId = normalized.activeWorkspaceId;
+        state.activeWorkspaceId = workspaceListContainsId(state.workspaces, windowActiveWorkspaceId)
+            ? windowActiveWorkspaceId
+            : normalized.activeWorkspaceId;
+    }
+
+    function workspaceListContainsId(workspaces, id) {
+        if (!id || !Array.isArray(workspaces)) {
+            return false;
+        }
+
+        return workspaces.some(function(workspace) {
+            return workspace && workspace.id === id;
+        });
+    }
+
+    function readWindowActiveWorkspaceId() {
+        var stored = null;
+        var payload = null;
+
+        try {
+            stored = window.sessionStorage.getItem(TERMINAL_VIEW_STATE_STORAGE_KEY);
+        } catch (_) {
+            stored = null;
+        }
+
+        if (!stored) {
+            return '';
+        }
+
+        try {
+            payload = JSON.parse(stored);
+        } catch (_) {
+            payload = null;
+        }
+
+        return payload && typeof payload.activeWorkspaceId === 'string'
+            ? payload.activeWorkspaceId.trim()
+            : '';
+    }
+
+    function persistWindowWorkspaceViewState() {
+        try {
+            window.sessionStorage.setItem(TERMINAL_VIEW_STATE_STORAGE_KEY, JSON.stringify({
+                activeWorkspaceId: state.activeWorkspaceId || '',
+                updatedAt: new Date().toISOString()
+            }));
+        } catch (_) {
+            // Ignore storage failures and continue with in-memory state.
+        }
     }
 
     function readLocalWorkspaceStatePayload() {
@@ -2669,6 +2719,7 @@
     function saveWorkspaceState() {
         var payload = buildWorkspaceStatePayload();
 
+        persistWindowWorkspaceViewState();
         persistWorkspaceStateLocally(payload);
         persistWorkspaceStateToServer(payload);
     }
@@ -4434,6 +4485,9 @@
         if (event && event.code === 1008) {
             return false;
         }
+        if (reason === 'attached elsewhere') {
+            return false;
+        }
 
         return reason !== 'session unavailable';
     }
@@ -5449,7 +5503,7 @@
         state.activeWorkspaceId = id;
         clearNotifBadge(id);
         ensureActiveTerminalVisible();
-        saveWorkspaceState();
+        persistWindowWorkspaceViewState();
         renderTabBar();
         renderActiveWorkspace();
         syncWorkspaceFileBrowserDefaults('workspace-change');

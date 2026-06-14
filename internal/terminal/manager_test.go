@@ -96,6 +96,51 @@ func TestManagerSessionOwnership(t *testing.T) {
 	}
 }
 
+func TestManagerConsumesAttachReplacement(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+	defer mgr.Stop()
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+	defer mgr.KillSessionForUser("ian", session.ID)
+
+	firstPTY, firstCmd, err := mgr.AttachSessionForUser("ian", session.ID)
+	if err != nil {
+		t.Fatalf("first AttachSessionForUser error: %v", err)
+	}
+	if mgr.ConsumeAttachReplacementForUser("ian", session.ID, firstPTY) {
+		t.Fatal("first attach was marked replaced before a second attach")
+	}
+
+	secondPTY, secondCmd, err := mgr.AttachSessionForUser("ian", session.ID)
+	if err != nil {
+		t.Fatalf("second AttachSessionForUser error: %v", err)
+	}
+
+	if !mgr.ConsumeAttachReplacementForUser("ian", session.ID, firstPTY) {
+		t.Fatal("first attach was not marked replaced after second attach")
+	}
+	if mgr.ConsumeAttachReplacementForUser("ian", session.ID, firstPTY) {
+		t.Fatal("first attach replacement marker was not consumed")
+	}
+	if mgr.ConsumeAttachReplacementForUser("ian", session.ID, secondPTY) {
+		t.Fatal("current attach should not be marked replaced")
+	}
+
+	if firstCmd != nil && firstCmd.Process != nil {
+		_ = firstCmd.Process.Kill()
+	}
+	if secondCmd != nil && secondCmd.Process != nil {
+		_ = secondCmd.Process.Kill()
+	}
+}
+
 func TestManagerCreateSessionWithOptionsPersistsWorkDir(t *testing.T) {
 	mgr := newTestManager(t, &config.TerminalConfig{
 		Shell:       "/bin/sh",

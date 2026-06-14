@@ -753,6 +753,7 @@ const (
 	terminalCloseReasonAttachUnavailable  = "terminal attach unavailable"
 	terminalCloseReasonAttachFailed       = "terminal attach failed"
 	terminalCloseReasonSessionEnded       = "session ended"
+	terminalCloseReasonAttachedElsewhere  = "attached elsewhere"
 )
 
 func channelClosed(done <-chan struct{}) bool {
@@ -907,10 +908,16 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 				if err != io.EOF {
 					log.Printf("pty read error: %v", err)
 				}
+				closeReason := terminalCloseReasonSessionEnded
+				closeMessage := "\r\n[session ended]\r\n"
+				if s.terminals.ConsumeAttachReplacementForUser(username, sessionID, ptmx) {
+					closeReason = terminalCloseReasonAttachedElsewhere
+					closeMessage = "\r\n[attached in another view]\r\n"
+				}
 				wsMu.Lock()
-				conn.WriteMessage(websocket.TextMessage, []byte("\r\n[session ended]\r\n"))
+				conn.WriteMessage(websocket.TextMessage, []byte(closeMessage))
 				conn.WriteControl(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, terminalCloseReasonSessionEnded),
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, closeReason),
 					time.Now().Add(time.Second))
 				wsMu.Unlock()
 				cleanup()
