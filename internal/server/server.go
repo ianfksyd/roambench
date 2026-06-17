@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 	"github.com/ianf339/roambench/internal/auth"
 	"github.com/ianf339/roambench/internal/config"
@@ -59,18 +60,20 @@ func (h *notificationHub) broadcast(n terminal.OSCNotification) {
 }
 
 type Server struct {
-	cfg            *config.Config
-	authProv       auth.AuthProvider
-	sessions       *auth.SessionManager
-	rateLimiter    *auth.RateLimiter
-	terminals      *terminal.Manager
-	workspaceState *workspaceStateStore
-	fileBrowser    *filebrowser.FileBrowser
-	projectControl *projectControlStore
-	notifHub       *notificationHub
-	mux            *http.ServeMux
-	upgrader       websocket.Upgrader
-	httpServer     *http.Server
+	cfg                  *config.Config
+	authProv             auth.AuthProvider
+	sessions             *auth.SessionManager
+	rateLimiter          *auth.RateLimiter
+	terminals            *terminal.Manager
+	workspaceState       *workspaceStateStore
+	fileBrowser          *filebrowser.FileBrowser
+	projectControl       *projectControlStore
+	notifHub             *notificationHub
+	mux                  *http.ServeMux
+	upgrader             websocket.Upgrader
+	httpServer           *http.Server
+	terminalAttachMu     sync.Mutex
+	terminalAttachCounts map[string]int
 }
 
 func NewServer(
@@ -81,16 +84,17 @@ func NewServer(
 	fb *filebrowser.FileBrowser,
 ) *Server {
 	s := &Server{
-		cfg:            cfg,
-		authProv:       authProv,
-		sessions:       sessions,
-		rateLimiter:    auth.NewRateLimiter(cfg.Auth.MaxLoginAttempts, cfg.Auth.GetLockoutDuration()),
-		terminals:      terminals,
-		workspaceState: newWorkspaceStateStore(cfg.Terminal.GetPersistDir()),
-		fileBrowser:    fb,
-		projectControl: newProjectControlStore(cfg.Terminal.GetPersistDir()),
-		notifHub:       newNotificationHub(),
-		mux:            http.NewServeMux(),
+		cfg:                  cfg,
+		authProv:             authProv,
+		sessions:             sessions,
+		rateLimiter:          auth.NewRateLimiter(cfg.Auth.MaxLoginAttempts, cfg.Auth.GetLockoutDuration()),
+		terminals:            terminals,
+		workspaceState:       newWorkspaceStateStore(cfg.Terminal.GetPersistDir()),
+		fileBrowser:          fb,
+		projectControl:       newProjectControlStore(cfg.Terminal.GetPersistDir()),
+		notifHub:             newNotificationHub(),
+		mux:                  http.NewServeMux(),
+		terminalAttachCounts: make(map[string]int),
 	}
 	s.upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -393,8 +397,9 @@ func (s *Server) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 		"title": title,
 		"motd":  strings.TrimSpace(s.cfg.UI.MOTD),
 		"terminal": map[string]interface{}{
-			"scrollback": s.cfg.Terminal.Scrollback,
-			"tmux":       s.terminals != nil && s.terminals.HasTmux(),
+			"scrollback":         s.cfg.Terminal.Scrollback,
+			"tmux":               s.terminals != nil && s.terminals.HasTmux(),
+			"clientIdleDetachMs": s.cfg.Terminal.GetClientIdleDetach().Milliseconds(),
 		},
 	})
 }
@@ -738,6 +743,7 @@ type wsControlMessage struct {
 	Rows  uint16 `json:"rows"`
 	Cols  uint16 `json:"cols"`
 	Lines int    `json:"lines"`
+	Force bool   `json:"force"`
 }
 
 type wsServerMessage struct {
@@ -762,6 +768,44 @@ func channelClosed(done <-chan struct{}) bool {
 	default:
 		return false
 	}
+}
+
+func terminalAttachmentKey(username, sessionID string) string {
+	return username + "\x00" + sessionID
+}
+
+func (s *Server) registerTerminalAttachment(username, sessionID string) {
+	s.terminalAttachMu.Lock()
+	defer s.terminalAttachMu.Unlock()
+
+	if s.terminalAttachCounts == nil {
+		s.terminalAttachCounts = make(map[string]int)
+	}
+	s.terminalAttachCounts[terminalAttachmentKey(username, sessionID)]++
+}
+
+func (s *Server) unregisterTerminalAttachment(username, sessionID string) {
+	s.terminalAttachMu.Lock()
+	defer s.terminalAttachMu.Unlock()
+
+	key := terminalAttachmentKey(username, sessionID)
+	count := s.terminalAttachCounts[key]
+	if count <= 1 {
+		delete(s.terminalAttachCounts, key)
+		return
+	}
+	s.terminalAttachCounts[key] = count - 1
+}
+
+func (s *Server) terminalAttachmentCount(username, sessionID string) int {
+	s.terminalAttachMu.Lock()
+	defer s.terminalAttachMu.Unlock()
+
+	return s.terminalAttachCounts[terminalAttachmentKey(username, sessionID)]
+}
+
+func (s *Server) shouldResizeSharedTerminal(username, sessionID string, force bool) bool {
+	return force || s.terminalAttachmentCount(username, sessionID) <= 1
 }
 
 func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -807,6 +851,7 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 		writeClose(closeCode, closeText)
 		return
 	}
+	s.registerTerminalAttachment(username, sessionID)
 
 	var once sync.Once
 	var wsMu sync.Mutex
@@ -815,6 +860,7 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 	cleanup := func() {
 		once.Do(func() {
 			close(done)
+			s.unregisterTerminalAttachment(username, sessionID)
 			ptmx.Close()
 			// In tmux mode this is only the attach client; killing it detaches
 			// the web bridge without killing the persisted tmux session.
@@ -932,7 +978,7 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 	for {
 		msgType, msg, err := conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
 				log.Printf("websocket read error: %v", err)
 			}
 			cleanup()
@@ -944,7 +990,8 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 			var ctrl wsControlMessage
 			if err := json.Unmarshal(msg, &ctrl); err == nil {
 				if ctrl.Type == "resize" && ctrl.Rows > 0 && ctrl.Cols > 0 {
-					s.terminals.ResizeSessionForUser(username, sessionID, ctrl.Rows, ctrl.Cols)
+					pty.Setsize(ptmx, &pty.Winsize{Rows: ctrl.Rows, Cols: ctrl.Cols})
+					s.terminals.ResizeSessionForUser(username, sessionID, ctrl.Rows, ctrl.Cols, s.shouldResizeSharedTerminal(username, sessionID, ctrl.Force))
 					sendScrollState()
 				} else if ctrl.Type == "scroll" && ctrl.Lines != 0 {
 					s.terminals.ScrollSessionForUser(username, sessionID, ctrl.Lines)

@@ -43,6 +43,9 @@ func TestCopyFileCreatesIndependentTarget(t *testing.T) {
 	if err := os.WriteFile(src, []byte("hello"), 0640); err != nil {
 		t.Fatalf("WriteFile src error: %v", err)
 	}
+	if err := os.Chmod(src, 0640); err != nil {
+		t.Fatalf("Chmod src error: %v", err)
+	}
 
 	if err := fb.Copy(username, src, dest); err != nil {
 		t.Fatalf("Copy error: %v", err)

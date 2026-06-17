@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestValidateRejectsNonPositiveScrollback(t *testing.T) {
 	cfg := Defaults()
@@ -9,6 +12,40 @@ func TestValidateRejectsNonPositiveScrollback(t *testing.T) {
 
 	if err := Validate(cfg); err == nil {
 		t.Fatal("Validate error = nil, want failure for non-positive terminal.scrollback")
+	}
+}
+
+func TestTerminalConfigGetClientIdleDetach(t *testing.T) {
+	cfg := Defaults()
+	cfg.Terminal.ClientIdleDetach = "4m"
+
+	if got := cfg.Terminal.GetClientIdleDetach(); got != 4*time.Minute {
+		t.Fatalf("GetClientIdleDetach() = %v, want 4m", got)
+	}
+
+	cfg.Terminal.ClientIdleDetach = "0"
+	if got := cfg.Terminal.GetClientIdleDetach(); got != 0 {
+		t.Fatalf("GetClientIdleDetach() for 0 = %v, want 0", got)
+	}
+
+	cfg.Terminal.ClientIdleDetach = "not-a-duration"
+	if got := cfg.Terminal.GetClientIdleDetach(); got != 0 {
+		t.Fatalf("GetClientIdleDetach() for invalid value = %v, want 0", got)
+	}
+}
+
+func TestValidateRejectsInvalidClientIdleDetach(t *testing.T) {
+	cfg := Defaults()
+	cfg.Server.AllowAllIPs = true
+	cfg.Terminal.ClientIdleDetach = "soon"
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("Validate error = nil, want failure for invalid terminal.client_idle_detach")
+	}
+
+	cfg.Terminal.ClientIdleDetach = "-1s"
+	if err := Validate(cfg); err == nil {
+		t.Fatal("Validate error = nil, want failure for negative terminal.client_idle_detach")
 	}
 }
 

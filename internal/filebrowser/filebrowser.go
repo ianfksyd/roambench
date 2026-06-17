@@ -305,7 +305,7 @@ func copyDir(src, dest string, mode os.FileMode) error {
 		}
 	}
 
-	return nil
+	return os.Chmod(dest, mode)
 }
 
 func copyFile(src, dest string, mode os.FileMode) error {
@@ -325,7 +325,7 @@ func copyFile(src, dest string, mode os.FileMode) error {
 		return err
 	}
 
-	return nil
+	return destFile.Chmod(mode)
 }
 
 func sanitizeFilenameASCII(name string) string {

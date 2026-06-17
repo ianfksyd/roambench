@@ -15,8 +15,10 @@
     const EDITOR_DRAFTS_STORAGE_KEY = 'roambench.editor-drafts.v1';
     const EDITOR_UI_STORAGE_KEY = 'roambench.editor-ui.v1';
     const UPLOAD_RESPONSE_GRACE_MS = 6000;
+    const TERMINAL_SYNC_INTERVAL_MS = 5000;
+    const TERMINAL_ONLY_MODE = true;
     const DEFAULT_LANGUAGE = 'en';
-    const WORKSPACE_LAYOUT_SLOT_COUNTS = { '1': 1, '2': 2, '4': 4, '4w': 4 };
+    const WORKSPACE_LAYOUT_SLOT_COUNTS = { '1': 1, '2': 2, '3': 3, '3w': 3, '4': 4, '4w': 4 };
     const BASE_PATH = normalizeBasePath(typeof window.__BASE_PATH__ === 'string' ? window.__BASE_PATH__ : '');
     const DEFAULT_TERMINAL_NAME_PREFIXES = {
         en: 'Term ',
@@ -77,6 +79,8 @@
             'workspace.layoutSwitcher': 'Terminal Layout',
             'workspace.layout.single': 'Single Terminal',
             'workspace.layout.double': 'Two Terminals',
+            'workspace.layout.triple': 'Three Terminals',
+            'workspace.layout.tripleWide': 'Three Columns',
             'workspace.layout.quad': 'Four Terminals',
             'workspace.layout.quadWide': 'Four Columns',
             'workspace.emptySlot': 'Empty pane',
@@ -210,6 +214,7 @@
             'terminal.connectionError': 'connection error',
             'terminal.disconnected': 'disconnected',
             'terminal.copySelection': 'Copy Selection',
+            'terminal.fitToDevice': 'Fit terminal to this device',
             'files.showHidden': 'Show Hidden',
             'files.hideHidden': 'Hide Hidden',
             'files.upload': 'Upload',
@@ -288,6 +293,8 @@
             'workspace.layoutSwitcher': '终端布局',
             'workspace.layout.single': '单终端',
             'workspace.layout.double': '双终端',
+            'workspace.layout.triple': '三终端',
+            'workspace.layout.tripleWide': '三列布局',
             'workspace.layout.quad': '四终端',
             'workspace.layout.quadWide': '四列布局',
             'workspace.emptySlot': '空白窗格',
@@ -421,6 +428,7 @@
             'terminal.connectionError': '连接错误',
             'terminal.disconnected': '已断开连接',
             'terminal.copySelection': '复制选中内容',
+            'terminal.fitToDevice': '适配到此设备',
             'files.showHidden': '显示隐藏文件',
             'files.hideHidden': '不显示隐藏文件',
             'files.upload': '上传',
@@ -499,6 +507,8 @@
             'workspace.layoutSwitcher': '端末レイアウト',
             'workspace.layout.single': '単一端末',
             'workspace.layout.double': '2 分割端末',
+            'workspace.layout.triple': '3 分割端末',
+            'workspace.layout.tripleWide': '3 列端末',
             'workspace.layout.quad': '4 分割端末',
             'workspace.layout.quadWide': '4 列端末',
             'workspace.emptySlot': '空のペイン',
@@ -632,6 +642,7 @@
             'terminal.connectionError': '接続エラー',
             'terminal.disconnected': '切断されました',
             'terminal.copySelection': '選択範囲をコピー',
+            'terminal.fitToDevice': 'このデバイスに合わせる',
             'files.showHidden': '隠しファイルを表示',
             'files.hideHidden': '隠しファイルを隠す',
             'files.upload': 'アップロード',
@@ -2005,7 +2016,8 @@
         title: 'RoamBench',
         motd: '',
         scrollback: 10000,
-        tmux: false
+        tmux: false,
+        clientIdleDetachMs: 0
     };
     const terminalEncoder = new TextEncoder();
 
@@ -2077,6 +2089,11 @@
     let fitTimer = null;
     let authRedirectActive = false;
     let memoryStatusTimer = null;
+    let terminalSyncTimer = null;
+    let terminalSyncInFlight = false;
+    let clientIdleTimer = null;
+    let clientIdleDetached = false;
+    let clientActivityLastAt = 0;
     let uploadHideTimer = null;
     let viewerLoadSequence = 0;
     let pptxViewerLibraryPromise = null;
@@ -2737,12 +2754,26 @@
         return getVisibleTerminalIdsForWorkspace(getActiveWorkspace());
     }
 
+    function getConnectableTerminalIds() {
+        var visibleIds = getVisibleTerminalIds();
+
+        if (isDesktopWorkspaceViewport()) {
+            return visibleIds;
+        }
+
+        if (state.activeId && visibleIds.indexOf(state.activeId) !== -1) {
+            return [state.activeId];
+        }
+
+        return visibleIds.length ? [visibleIds[0]] : [];
+    }
+
     function isTerminalViewVisible() {
         return document.getElementById('terminal-view').style.display !== 'none';
     }
 
     function isTerminalVisibleInActiveWorkspace(id) {
-        return getVisibleTerminalIds().indexOf(id) !== -1;
+        return getConnectableTerminalIds().indexOf(id) !== -1;
     }
 
     function ensureActiveTerminalVisible(preferredId) {
@@ -2773,6 +2804,85 @@
         });
     }
 
+    function clientLiveConnectionsAllowed() {
+        return Boolean(state.username) && !clientIdleDetached && isTerminalViewVisible();
+    }
+
+    function stopClientIdleTimer() {
+        if (clientIdleTimer) {
+            clearTimeout(clientIdleTimer);
+            clientIdleTimer = null;
+        }
+    }
+
+    function scheduleClientIdleTimer() {
+        var timeout = Number(state.uiConfig.clientIdleDetachMs) || 0;
+
+        stopClientIdleTimer();
+        if (!timeout || !state.username || clientIdleDetached) {
+            return;
+        }
+
+        clientIdleTimer = setTimeout(function() {
+            suspendClientLiveConnections();
+        }, timeout);
+    }
+
+    function suspendClientLiveConnections() {
+        if (!state.username) {
+            return;
+        }
+
+        clientIdleDetached = true;
+        stopClientIdleTimer();
+        stopMemoryStatusPolling();
+        stopTerminalMetadataPolling();
+        syncVisibleTerminalConnections();
+    }
+
+    function resumeClientLiveConnections() {
+        var wasDetached = clientIdleDetached;
+
+        if (document.hidden) {
+            return;
+        }
+
+        clientIdleDetached = false;
+        scheduleClientIdleTimer();
+
+        if (!state.username || !wasDetached) {
+            return;
+        }
+
+        startMemoryStatusPolling();
+        startTerminalMetadataPolling();
+        syncVisibleTerminalConnections();
+        scheduleFitActiveTerminal();
+    }
+
+    function handleClientActivity() {
+        var now = Date.now();
+
+        if (document.hidden) {
+            return;
+        }
+        if (!clientIdleDetached && now - clientActivityLastAt < 1000) {
+            return;
+        }
+
+        clientActivityLastAt = now;
+        resumeClientLiveConnections();
+    }
+
+    function handleClientVisibilityChange() {
+        if (document.hidden) {
+            scheduleClientIdleTimer();
+            return;
+        }
+
+        handleClientActivity();
+    }
+
     function detachTerminalSocket(id, terminalEntry) {
         if (!terminalEntry) {
             return;
@@ -2799,8 +2909,8 @@
     function syncVisibleTerminalConnections() {
         var desired = {};
 
-        if (isTerminalViewVisible() && state.appMode === 'terminal') {
-            getVisibleTerminalIds().forEach(function(id) {
+        if (clientLiveConnectionsAllowed() && state.appMode === 'terminal') {
+            getConnectableTerminalIds().forEach(function(id) {
                 desired[id] = true;
             });
         }
@@ -3153,6 +3263,9 @@
 
     function startMemoryStatusPolling() {
         stopMemoryStatusPolling();
+        if (!clientLiveConnectionsAllowed()) {
+            return;
+        }
         refreshMemoryStatus();
         memoryStatusTimer = setInterval(refreshMemoryStatus, 10000);
     }
@@ -3208,6 +3321,14 @@
         document.addEventListener('keydown', handleGlobalKeyDown);
         document.addEventListener('copy', handleDocumentCopy);
         document.addEventListener('paste', handleDocumentPaste);
+        document.addEventListener('visibilitychange', handleClientVisibilityChange);
+        window.addEventListener('focus', handleClientActivity);
+        window.addEventListener('pagehide', suspendClientLiveConnections);
+        document.addEventListener('pointermove', handleClientActivity, { passive: true });
+        document.addEventListener('pointerdown', handleClientActivity, { passive: true });
+        document.addEventListener('keydown', handleClientActivity, { passive: true });
+        document.addEventListener('wheel', handleClientActivity, { passive: true });
+        document.addEventListener('touchstart', handleClientActivity, { passive: true });
         if (document.getElementById('app-mode-terminal')) {
             document.getElementById('app-mode-terminal').addEventListener('click', function() {
                 setAppMode('terminal');
@@ -3246,6 +3367,7 @@
         syncViewportMetrics();
         applyEditorLayout();
         syncWorkspaceFileBrowserDefaults('resize');
+        syncVisibleTerminalConnections();
         scheduleFitActiveTerminal();
     }
 
@@ -3444,6 +3566,9 @@
         };
         terminal.scrollModeActive = terminal.tmuxScrollState.inMode;
         scheduleTerminalScrollbarSync(terminal);
+        if (Math.abs(Number(terminal.pendingScrollLines) || 0) >= 1) {
+            scheduleTerminalScrollFlush(terminal);
+        }
     }
 
     function resetTerminalScrollMode(terminal) {
@@ -3461,32 +3586,76 @@
         }
     }
 
-    function queueTerminalScrollLines(terminal, lineDelta) {
-        var nextLines;
+    function terminalVisibleLineCount(terminal) {
+        if (terminal && terminal.term && typeof terminal.term.rows === 'number') {
+            return Math.max(terminal.term.rows, 1);
+        }
+        return 1;
+    }
 
-        if (!terminal || !state.uiConfig.tmux || !terminal.ws || terminal.ws.readyState !== WebSocket.OPEN || !lineDelta) {
-            return false;
+    function getTerminalRowHeight(terminal) {
+        const rows = terminalVisibleLineCount(terminal);
+        const screen = terminal && terminal.surface ? terminal.surface.querySelector('.xterm-screen') : null;
+        const screenRect = screen ? screen.getBoundingClientRect() : null;
+        const surfaceRect = terminal && terminal.surface ? terminal.surface.getBoundingClientRect() : null;
+        const height = screenRect && screenRect.height > 0
+            ? screenRect.height
+            : (surfaceRect && surfaceRect.height > 0 ? surfaceRect.height : 0);
+
+        return height > 0 ? Math.max(1, height / rows) : 18;
+    }
+
+    function normalizeWheelScrollLines(terminal, event) {
+        var deltaY = event && typeof event.deltaY === 'number' ? event.deltaY : 0;
+
+        if (!deltaY) {
+            return 0;
         }
 
-        nextLines = Math.round(lineDelta);
-        if (!nextLines) {
-            return false;
+        if (event.deltaMode === 1) {
+            return deltaY;
+        }
+        if (event.deltaMode === 2) {
+            return deltaY * terminalVisibleLineCount(terminal);
         }
 
-        terminal.pendingScrollLines = (terminal.pendingScrollLines || 0) + nextLines;
+        return deltaY / getTerminalRowHeight(terminal);
+    }
 
-        if (terminal.scrollFlushTimer) {
-            return true;
+    function consumePendingTerminalScrollLines(terminal, maxAmount) {
+        var pending = terminal ? (Number(terminal.pendingScrollLines) || 0) : 0;
+        var lines;
+
+        if (Math.abs(pending) < 1) {
+            return 0;
+        }
+
+        lines = pending < 0 ? Math.ceil(pending) : Math.floor(pending);
+        if (maxAmount > 0) {
+            lines = Math.max(-maxAmount, Math.min(maxAmount, lines));
+        }
+        terminal.pendingScrollLines = pending - lines;
+        return lines;
+    }
+
+    function scheduleTerminalScrollFlush(terminal) {
+        if (!terminal || terminal.scrollFlushTimer || terminal.scrollStateAwaiting) {
+            return;
         }
 
         terminal.scrollFlushTimer = setTimeout(function() {
-            var lines = terminal.pendingScrollLines || 0;
+            var lines;
 
             terminal.scrollFlushTimer = null;
-            terminal.pendingScrollLines = 0;
+            if (terminal.scrollStateAwaiting) {
+                return;
+            }
+
+            lines = consumePendingTerminalScrollLines(terminal, 100);
             if (!lines) {
                 return;
             }
+
             if (sendTerminalControl(terminal, { type: 'scroll', lines: lines })) {
                 terminal.scrollStateAwaiting = true;
                 if (lines < 0 || terminal.scrollModeActive) {
@@ -3494,21 +3663,79 @@
                 }
             }
         }, 16);
-
-        return true;
     }
 
-    function queueTerminalScroll(terminal, deltaY) {
-        var stepCount;
-        var lineDelta;
+    function queueTerminalScrollLines(terminal, lineDelta) {
+        var nextLines;
 
-        if (!deltaY) {
+        if (!terminal || !state.uiConfig.tmux || !terminal.ws || terminal.ws.readyState !== WebSocket.OPEN || !lineDelta) {
             return false;
         }
 
-        stepCount = Math.max(1, Math.round(Math.abs(deltaY) / 60));
-        lineDelta = stepCount * 3 * (deltaY < 0 ? -1 : 1);
-        return queueTerminalScrollLines(terminal, lineDelta);
+        nextLines = Number(lineDelta) || 0;
+        if (!nextLines) {
+            return false;
+        }
+
+        terminal.pendingScrollLines = (terminal.pendingScrollLines || 0) + nextLines;
+        scheduleTerminalScrollFlush(terminal);
+        return true;
+    }
+
+    function scrollXtermByLines(terminal, lineDelta) {
+        var lines;
+
+        if (!terminal || !terminal.term || !lineDelta) {
+            return false;
+        }
+
+        terminal.pendingXtermScrollLines = (terminal.pendingXtermScrollLines || 0) + (Number(lineDelta) || 0);
+        lines = consumePendingTerminalXtermScrollLines(terminal);
+        if (!lines) {
+            return true;
+        }
+
+        if (typeof terminal.term.scrollLines === 'function') {
+            terminal.term.scrollLines(lines);
+            scheduleTerminalScrollbarSync(terminal);
+            return true;
+        }
+
+        return false;
+    }
+
+    function consumePendingTerminalXtermScrollLines(terminal) {
+        var pending = terminal ? (Number(terminal.pendingXtermScrollLines) || 0) : 0;
+        var lines;
+
+        if (Math.abs(pending) < 1) {
+            return 0;
+        }
+
+        lines = pending < 0 ? Math.ceil(pending) : Math.floor(pending);
+        terminal.pendingXtermScrollLines = pending - lines;
+        return lines;
+    }
+
+    function scrollTerminalByLines(terminal, lineDelta) {
+        let metrics;
+
+        if (!terminal || !lineDelta) {
+            return false;
+        }
+
+        if (state.uiConfig.tmux) {
+            metrics = getTerminalScrollMetrics(terminal);
+            if (lineDelta > 0 && metrics.viewportTop >= Math.max(metrics.maxTop - 1, 0)) {
+                clearTerminalScrollTarget(terminal);
+                resetTerminalScrollMode(terminal);
+                scheduleTerminalScrollbarSync(terminal);
+                return true;
+            }
+            return queueTerminalScrollLines(terminal, lineDelta);
+        }
+
+        return scrollXtermByLines(terminal, lineDelta);
     }
 
     function sendActiveTerminalSequence(sequence) {
@@ -3799,7 +4026,8 @@
                 ? raw.motd.trim()
                 : DEFAULT_UI_CONFIG.motd,
             scrollback: clampNumber(terminal && terminal.scrollback, 1, 200000, DEFAULT_UI_CONFIG.scrollback),
-            tmux: Boolean(terminal && terminal.tmux)
+            tmux: Boolean(terminal && terminal.tmux),
+            clientIdleDetachMs: clampNumber(terminal && terminal.clientIdleDetachMs, 0, 24 * 60 * 60 * 1000, DEFAULT_UI_CONFIG.clientIdleDetachMs)
         };
     }
 
@@ -4276,7 +4504,10 @@
     }
 
     function resetSessionState() {
+        stopClientIdleTimer();
+        clientIdleDetached = false;
         stopMemoryStatusPolling();
+        stopTerminalMetadataPolling();
         Object.keys(state.terminals).forEach(function(id) {
             closeTerminal(id, true, true);
         });
@@ -4321,6 +4552,8 @@
         showView('terminal');
         restoreEditorDrafts();
         startMemoryStatusPolling();
+        startTerminalMetadataPolling();
+        scheduleClientIdleTimer();
         document.dispatchEvent(new CustomEvent('roambench:auth', { detail: { authenticated: true, username: username } }));
     }
 
@@ -4534,7 +4767,11 @@
         var projectPanel = document.getElementById('project-panel');
         var terminalBtn = document.getElementById('app-mode-terminal');
         var projectBtn = document.getElementById('app-mode-project');
-        var isProjectMode = state.appMode === 'project';
+        var isProjectMode = !TERMINAL_ONLY_MODE && state.appMode === 'project';
+
+        if (TERMINAL_ONLY_MODE) {
+            state.appMode = 'terminal';
+        }
 
         if (terminalShell) {
             terminalShell.style.display = isProjectMode ? 'none' : 'flex';
@@ -4558,7 +4795,7 @@
     }
 
     function setAppMode(mode) {
-        var nextMode = mode === 'project' ? 'project' : 'terminal';
+        var nextMode = !TERMINAL_ONLY_MODE && mode === 'project' ? 'project' : 'terminal';
         if (state.appMode === nextMode) {
             renderAppMode();
             syncVisibleTerminalConnections();
@@ -4631,6 +4868,115 @@
         return getDefaultTerminalName(maxNumber + 1);
     }
 
+    function normalizeTerminalSessionList(sessions) {
+        const seen = {};
+
+        if (!Array.isArray(sessions)) {
+            return [];
+        }
+
+        return sessions.reduce(function(result, session) {
+            const id = session && typeof session.id === 'string' ? session.id.trim() : '';
+            const name = session && typeof session.name === 'string' ? session.name.trim() : '';
+
+            if (!id || seen[id]) {
+                return result;
+            }
+            seen[id] = true;
+            result.push({ id: id, name: name || null });
+            return result;
+        }, []);
+    }
+
+    function applyTerminalSessionList(sessions, options) {
+        const config = options || {};
+        const normalized = normalizeTerminalSessionList(sessions);
+        const nextIds = {};
+        let changed = false;
+        let removed = false;
+        const preferredId = config.preferredTerminalId || (normalized.length ? normalized[normalized.length - 1].id : state.activeId);
+
+        normalized.forEach(function(session) {
+            const entry = state.terminals[session.id];
+
+            nextIds[session.id] = true;
+            if (!entry) {
+                connectTerminal(session.id, session.name);
+                changed = true;
+                return;
+            }
+            if (session.name && entry.name !== session.name) {
+                entry.name = session.name;
+                changed = true;
+            }
+        });
+
+        if (config.removeMissing) {
+            Object.keys(state.terminals).forEach(function(id) {
+                if (!nextIds[id]) {
+                    closeTerminal(id, true, false);
+                    changed = true;
+                    removed = true;
+                }
+            });
+        }
+
+        if (config.reconcile || removed) {
+            reconcileWorkspacesAfterTerminalLoad(preferredId);
+            changed = true;
+        }
+
+        if (changed) {
+            renderTabBar();
+            renderActiveWorkspace();
+            syncWorkspaceFileBrowserDefaults(config.reconcile ? 'terminal-load' : 'terminal-sync');
+            scheduleFitActiveTerminal();
+        }
+
+        return normalized;
+    }
+
+    function stopTerminalMetadataPolling() {
+        if (terminalSyncTimer) {
+            clearInterval(terminalSyncTimer);
+            terminalSyncTimer = null;
+        }
+        terminalSyncInFlight = false;
+    }
+
+    function syncTerminalMetadata() {
+        const syncUsername = state.username;
+
+        if (terminalSyncInFlight || !syncUsername || state.loadingTerminals || !clientLiveConnectionsAllowed()) {
+            return;
+        }
+
+        terminalSyncInFlight = true;
+        fetchJSON('/api/terminals', undefined, { authRequired: true })
+            .then(function(sessions) {
+                if (state.username !== syncUsername || !Array.isArray(sessions)) {
+                    return;
+                }
+                applyTerminalSessionList(sessions, { removeMissing: true });
+            })
+            .catch(function(err) {
+                if (!isHandledAuthError(err) && window.console && typeof window.console.warn === 'function') {
+                    window.console.warn('terminal metadata sync failed', err);
+                }
+            })
+            .finally(function() {
+                terminalSyncInFlight = false;
+            });
+    }
+
+    function startTerminalMetadataPolling() {
+        stopTerminalMetadataPolling();
+        if (!state.username || !clientLiveConnectionsAllowed()) {
+            return;
+        }
+        terminalSyncTimer = setInterval(syncTerminalMetadata, TERMINAL_SYNC_INTERVAL_MS);
+    }
+
     function loadTerminals() {
         hydrateWorkspaceState()
             .then(function() {
@@ -4643,10 +4989,11 @@
                 }
 
                 state.loadingTerminals = true;
-                sessions.forEach(function(session) {
-                    connectTerminal(session.id, session.name);
+                applyTerminalSessionList(sessions, {
+                    reconcile: true,
+                    removeMissing: true,
+                    preferredTerminalId: sessions[sessions.length - 1].id
                 });
-                reconcileWorkspacesAfterTerminalLoad(sessions[sessions.length - 1].id);
                 state.loadingTerminals = false;
                 renderTabBar();
                 renderActiveWorkspace();
@@ -4892,7 +5239,7 @@
         entry.scrollbarSyncFrame = window.requestAnimationFrame(function() {
             entry.scrollbarSyncFrame = null;
             syncTerminalScrollbar(entry);
-            if (entry.scrollTargetTop != null) {
+            if (entry.scrollTargetTop != null && !(entry.touchScroll && entry.touchScroll.moved)) {
                 scheduleTerminalScrollTarget(entry);
             }
         });
@@ -4905,6 +5252,7 @@
         let trackHeight;
         let thumbHeight;
         let thumbTop;
+        let viewportTop;
 
         if (!track || !thumb) {
             return;
@@ -4922,8 +5270,11 @@
             ? Math.max(24, Math.round((metrics.visibleLines / metrics.totalLines) * trackHeight))
             : trackHeight;
         thumbHeight = Math.min(trackHeight, thumbHeight);
+        viewportTop = entry && entry.scrollTargetTop != null
+            ? Math.max(0, Math.min(metrics.maxTop, Math.round(entry.scrollTargetTop)))
+            : Math.min(metrics.viewportTop, metrics.maxTop);
         thumbTop = metrics.maxTop > 0
-            ? Math.round((Math.min(metrics.viewportTop, metrics.maxTop) / metrics.maxTop) * Math.max(trackHeight - thumbHeight, 0))
+            ? Math.round((viewportTop / metrics.maxTop) * Math.max(trackHeight - thumbHeight, 0))
             : 0;
 
         thumb.style.height = thumbHeight + 'px';
@@ -4936,6 +5287,7 @@
         let clampedTarget;
         let delta;
         let desiredScrollPosition;
+        let pendingLines;
 
         if (!entry || targetTop == null) {
             return;
@@ -4962,12 +5314,18 @@
             }
 
             desiredScrollPosition = Math.max(0, metrics.maxTop - clampedTarget);
-            delta = (metrics.scrollPosition || 0) - desiredScrollPosition;
+            pendingLines = Number(entry.pendingScrollLines) || 0;
+            delta = (metrics.scrollPosition || 0) - desiredScrollPosition - pendingLines;
         } else {
             delta = clampedTarget - Math.min(metrics.viewportTop, metrics.maxTop);
         }
 
         if (Math.abs(delta) <= 1) {
+            if (state.uiConfig.tmux && Math.abs(pendingLines || 0) >= 1) {
+                scheduleTerminalScrollFlush(entry);
+                scheduleTerminalScrollTarget(entry);
+                return;
+            }
             clearTerminalScrollTarget(entry);
             return;
         }
@@ -5021,6 +5379,134 @@
         scheduleTerminalScrollbarSync(entry);
     }
 
+    function getTerminalCurrentViewportTop(entry, metrics) {
+        if (!entry || !metrics) {
+            return 0;
+        }
+        if (entry.scrollTargetTop != null) {
+            return Math.max(0, Math.min(metrics.maxTop, Number(entry.scrollTargetTop) || 0));
+        }
+        return Math.max(0, Math.min(metrics.maxTop, metrics.viewportTop || 0));
+    }
+
+    function applyTerminalTouchScrollLines(entry, lineDelta) {
+        const metrics = getTerminalScrollMetrics(entry);
+        let currentTop;
+        let targetTop;
+        let effectiveDelta;
+
+        if (!entry || !lineDelta) {
+            return false;
+        }
+
+        if (!state.uiConfig.tmux) {
+            return scrollXtermByLines(entry, lineDelta);
+        }
+
+        currentTop = getTerminalCurrentViewportTop(entry, metrics);
+        if (lineDelta > 0 && currentTop >= Math.max(metrics.maxTop - 1, 0)) {
+            entry.scrollTargetTop = metrics.maxTop;
+            resetTerminalScrollMode(entry);
+            scheduleTerminalScrollbarSync(entry);
+            return true;
+        }
+
+        targetTop = Math.max(0, Math.min(metrics.maxTop, currentTop + lineDelta));
+        effectiveDelta = targetTop - currentTop;
+        entry.scrollTargetTop = targetTop;
+        scheduleTerminalScrollbarSync(entry);
+
+        if (Math.abs(effectiveDelta) < 1) {
+            return true;
+        }
+
+        return queueTerminalScrollLines(entry, effectiveDelta);
+    }
+
+    function scheduleTerminalTouchSettleSync(entry) {
+        if (!entry) {
+            return;
+        }
+
+        if (entry.touchScrollSettleTimer) {
+            clearTimeout(entry.touchScrollSettleTimer);
+        }
+        entry.touchScrollSettleTimer = setTimeout(function() {
+            entry.touchScrollSettleTimer = null;
+            flushTerminalScrollTarget(entry);
+            requestTerminalScrollState(entry);
+        }, 90);
+    }
+
+    function applyTerminalTouchScrollFrame(entry) {
+        const touch = entry ? entry.touchScroll : null;
+        const rowHeight = getTerminalRowHeight(entry);
+        let totalPixels;
+        let lineDeltaFloat;
+        let lineDelta;
+
+        if (!touch) {
+            return;
+        }
+
+        touch.frame = null;
+        totalPixels = (Number(touch.pendingPixelDelta) || 0) + (Number(touch.pixelRemainder) || 0);
+        touch.pendingPixelDelta = 0;
+
+        if (!totalPixels || rowHeight <= 0) {
+            return;
+        }
+
+        lineDeltaFloat = totalPixels / rowHeight;
+        lineDelta = lineDeltaFloat < 0 ? Math.ceil(lineDeltaFloat) : Math.floor(lineDeltaFloat);
+        touch.pixelRemainder = totalPixels - (lineDelta * rowHeight);
+
+        if (!lineDelta) {
+            scheduleTerminalScrollbarSync(entry);
+            return;
+        }
+
+        if (applyTerminalTouchScrollLines(entry, lineDelta)) {
+            markTerminalActive(entry);
+        }
+    }
+
+    function scheduleTerminalTouchScrollFrame(entry) {
+        const touch = entry ? entry.touchScroll : null;
+
+        if (!touch || touch.frame) {
+            return;
+        }
+
+        touch.frame = window.requestAnimationFrame(function() {
+            applyTerminalTouchScrollFrame(entry);
+        });
+    }
+
+    function cancelTerminalTouchScrollFrame(entry) {
+        const touch = entry ? entry.touchScroll : null;
+
+        if (!touch || !touch.frame) {
+            return;
+        }
+
+        window.cancelAnimationFrame(touch.frame);
+        touch.frame = null;
+    }
+
+    function clearTerminalTouchScroll(entry) {
+        if (!entry) {
+            return;
+        }
+
+        cancelTerminalTouchScrollFrame(entry);
+        entry.touchScroll = null;
+        if (entry.touchScrollSettleTimer) {
+            clearTimeout(entry.touchScrollSettleTimer);
+            entry.touchScrollSettleTimer = null;
+        }
+    }
+
     function beginTerminalScrollbarDrag(entry, event, fromThumb) {
         const thumb = entry && entry.scrollbarThumb;
         const thumbRect = thumb ? thumb.getBoundingClientRect() : null;
@@ -5066,6 +5552,10 @@
         if (entry && entry.scrollbarThumb) {
             entry.scrollbarThumb.classList.remove('is-dragging');
         }
+        if (entry) {
+            flushTerminalScrollTarget(entry);
+            requestTerminalScrollState(entry);
+        }
         if (entry && entry.scrollbar && entry.scrollbar.releasePointerCapture) {
             entry.scrollbar.releasePointerCapture(event.pointerId);
         }
@@ -5110,6 +5600,124 @@
         scheduleTerminalScrollbarSync(entry);
     }
 
+    function markTerminalActive(entry) {
+        if (!entry || getVisibleTerminalIds().indexOf(entry.id) === -1) {
+            return;
+        }
+
+        state.activeId = entry.id;
+        syncActiveTerminalPane();
+    }
+
+    function isTerminalScrollbarEventTarget(target) {
+        return Boolean(target && target.closest && target.closest('.terminal-scrollbar'));
+    }
+
+    function stopTerminalScrollEvent(event) {
+        event.preventDefault();
+        if (typeof event.stopImmediatePropagation === 'function') {
+            event.stopImmediatePropagation();
+        } else {
+            event.stopPropagation();
+        }
+    }
+
+    function handleTerminalWheel(entry, event) {
+        const lineDelta = normalizeWheelScrollLines(entry, event);
+
+        if (!entry || event.ctrlKey || event.metaKey || event.altKey) {
+            return;
+        }
+
+        stopTerminalScrollEvent(event);
+
+        if (!lineDelta) {
+            return;
+        }
+
+        if (scrollTerminalByLines(entry, lineDelta)) {
+            markTerminalActive(entry);
+        }
+    }
+
+    function beginTerminalTouchScroll(entry, event) {
+        const metrics = getTerminalScrollMetrics(entry);
+
+        if (!entry || event.pointerType !== 'touch' || isTerminalScrollbarEventTarget(event.target) || (event.isPrimary === false)) {
+            return;
+        }
+
+        clearTerminalTouchScroll(entry);
+        entry.touchScroll = {
+            pointerId: event.pointerId,
+            startY: event.clientY,
+            lastY: event.clientY,
+            moved: false,
+            pendingPixelDelta: 0,
+            pixelRemainder: 0,
+            frame: null
+        };
+        entry.scrollTargetTop = getTerminalCurrentViewportTop(entry, metrics);
+        markTerminalActive(entry);
+
+        if (entry.wrapper && entry.wrapper.setPointerCapture) {
+            try {
+                entry.wrapper.setPointerCapture(event.pointerId);
+            } catch (_) {
+                // The browser may reject capture if the pointer is already gone.
+            }
+        }
+    }
+
+    function handleTerminalTouchScroll(entry, event) {
+        const touch = entry ? entry.touchScroll : null;
+        const moveThreshold = 4;
+        let pixelDelta;
+
+        if (!touch || event.pointerId !== touch.pointerId || event.pointerType !== 'touch') {
+            return;
+        }
+
+        if (!touch.moved && Math.abs(event.clientY - touch.startY) >= moveThreshold) {
+            touch.moved = true;
+        }
+        if (!touch.moved) {
+            return;
+        }
+
+        pixelDelta = touch.lastY - event.clientY;
+        touch.lastY = event.clientY;
+        stopTerminalScrollEvent(event);
+
+        touch.pendingPixelDelta += pixelDelta;
+        scheduleTerminalTouchScrollFrame(entry);
+    }
+
+    function endTerminalTouchScroll(entry, event) {
+        const touch = entry ? entry.touchScroll : null;
+
+        if (!touch || event.pointerId !== touch.pointerId) {
+            return;
+        }
+
+        if (touch.moved) {
+            stopTerminalScrollEvent(event);
+            cancelTerminalTouchScrollFrame(entry);
+            applyTerminalTouchScrollFrame(entry);
+            flushTerminalScrollTarget(entry);
+            scheduleTerminalTouchSettleSync(entry);
+        }
+
+        if (entry.wrapper && entry.wrapper.releasePointerCapture) {
+            try {
+                entry.wrapper.releasePointerCapture(event.pointerId);
+            } catch (_) {
+                // Ignore release failures after browser-cancelled gestures.
+            }
+        }
+        entry.touchScroll = null;
+    }
+
     function connectTerminal(id, name) {
         if (state.terminals[id]) {
             return;
@@ -5144,6 +5752,8 @@
             tmuxScrollState: null,
             scrollTargetTop: null,
             scrollTargetTimer: null,
+            touchScroll: null,
+            touchScrollSettleTimer: null,
             fitAddon: fitAddon,
             wrapper: wrapper,
             surface: surface,
@@ -5156,37 +5766,28 @@
         attachTerminalScrollbar(t);
 
         wrapper.addEventListener('pointerdown', function() {
-            if (getVisibleTerminalIds().indexOf(id) !== -1) {
-                state.activeId = id;
-                syncActiveTerminalPane();
-            }
+            markTerminalActive(t);
         });
 
         wrapper.addEventListener('wheel', function(event) {
-            const metrics = getTerminalScrollMetrics(t);
-
-            if (event.ctrlKey || event.metaKey || event.altKey) {
-                return;
-            }
-            if (state.uiConfig.tmux && event.deltaY > 0 && metrics.viewportTop >= Math.max(metrics.maxTop - 1, 0)) {
-                clearTerminalScrollTarget(t);
-                resetTerminalScrollMode(t);
-                scheduleTerminalScrollbarSync(t);
-                event.preventDefault();
-                return;
-            }
-            if (!queueTerminalScroll(t, event.deltaY)) {
-                return;
-            }
-            if (getVisibleTerminalIds().indexOf(id) !== -1) {
-                state.activeId = id;
-                syncActiveTerminalPane();
-            }
-            event.preventDefault();
-        }, { passive: false });
+            handleTerminalWheel(t, event);
+        }, { passive: false, capture: true });
+        wrapper.addEventListener('pointerdown', function(event) {
+            beginTerminalTouchScroll(t, event);
+        }, { capture: true });
+        wrapper.addEventListener('pointermove', function(event) {
+            handleTerminalTouchScroll(t, event);
+        }, { passive: false, capture: true });
+        wrapper.addEventListener('pointerup', function(event) {
+            endTerminalTouchScroll(t, event);
+        }, { capture: true });
+        wrapper.addEventListener('pointercancel', function(event) {
+            endTerminalTouchScroll(t, event);
+        }, { capture: true });
 
         if (typeof term.onFocus === 'function') {
             term.onFocus(function() {
+                handleClientActivity();
                 if (getVisibleTerminalIds().indexOf(id) !== -1) {
                     state.activeId = id;
                     syncActiveTerminalPane();
@@ -5263,7 +5864,7 @@
         term.onResize(function(size) {
             scheduleTerminalScrollbarSync(t);
             if (t.ws && t.ws.readyState === WebSocket.OPEN) {
-                sendResize(t.ws, size.rows, size.cols);
+                sendResize(t.ws, size.rows, size.cols, false);
                 requestTerminalScrollState(t);
             }
         });
@@ -5292,7 +5893,8 @@
             terminalEntry.pendingScrollLines = 0;
             terminalEntry.scrollStateAwaiting = false;
             clearTerminalScrollTarget(terminalEntry);
-            if (!terminalEntry.desiredConnected || !isTerminalViewVisible() || !isTerminalVisibleInActiveWorkspace(id)) {
+            clearTerminalTouchScroll(terminalEntry);
+            if (!terminalEntry.desiredConnected || !clientLiveConnectionsAllowed() || !isTerminalVisibleInActiveWorkspace(id)) {
                 terminalEntry.detachRequested = true;
                 ws.close();
                 return;
@@ -5303,7 +5905,7 @@
             }
             scheduleFitActiveTerminal();
             scheduleTerminalScrollbarSync(terminalEntry);
-            sendResize(terminalEntry.ws, terminalEntry.term.rows, terminalEntry.term.cols);
+            sendResize(terminalEntry.ws, terminalEntry.term.rows, terminalEntry.term.cols, false);
             requestTerminalScrollState(terminalEntry);
         };
 
@@ -5345,11 +5947,12 @@
             terminalEntry.pendingScrollLines = 0;
             terminalEntry.scrollStateAwaiting = false;
             clearTerminalScrollTarget(terminalEntry);
+            clearTerminalTouchScroll(terminalEntry);
             if (terminalEntry.scrollFlushTimer) {
                 clearTimeout(terminalEntry.scrollFlushTimer);
                 terminalEntry.scrollFlushTimer = null;
             }
-            if (terminalEntry.detachRequested || !terminalEntry.desiredConnected || !isTerminalViewVisible() || !isTerminalVisibleInActiveWorkspace(id)) {
+            if (terminalEntry.detachRequested || !terminalEntry.desiredConnected || !clientLiveConnectionsAllowed() || !isTerminalVisibleInActiveWorkspace(id)) {
                 terminalEntry.detachRequested = false;
                 return;
             }
@@ -5364,7 +5967,7 @@
             shouldReconnectTerminal(id).then(function(shouldReconnect) {
                 var delay;
 
-                if (!state.terminals[id] || state.terminals[id].ws || !terminalEntry.desiredConnected || !isTerminalViewVisible() || !isTerminalVisibleInActiveWorkspace(id)) {
+                if (!state.terminals[id] || state.terminals[id].ws || !terminalEntry.desiredConnected || !clientLiveConnectionsAllowed() || !isTerminalVisibleInActiveWorkspace(id)) {
                     return;
                 }
 
@@ -5378,7 +5981,7 @@
                 terminalEntry.reconnectAttempts = (terminalEntry.reconnectAttempts || 0) + 1;
 
                 setTimeout(function() {
-                    if (state.terminals[id] && !state.terminals[id].ws && terminalEntry.desiredConnected && isTerminalViewVisible() && isTerminalVisibleInActiveWorkspace(id)) {
+                    if (state.terminals[id] && !state.terminals[id].ws && terminalEntry.desiredConnected && clientLiveConnectionsAllowed() && isTerminalVisibleInActiveWorkspace(id)) {
                         openTerminalSocket(id, terminalEntry, true);
                     }
                 }, delay);
@@ -5397,6 +6000,7 @@
             t.scrollFlushTimer = null;
         }
         clearTerminalScrollTarget(t);
+        clearTerminalTouchScroll(t);
         if (t.ws) {
             t.ws.close();
         }
@@ -5456,6 +6060,33 @@
         scheduleFitActiveTerminal();
     }
 
+    function fitTerminalToDevice(id) {
+        const entry = id ? state.terminals[id] : null;
+
+        if (!entry) {
+            return;
+        }
+
+        state.activeId = id;
+        syncActiveTerminalPane();
+
+        try {
+            entry.fitAddon.fit();
+        } catch (_) {
+            // Ignore transient fit errors while the layout is settling.
+        }
+
+        scheduleTerminalScrollbarSync(entry);
+        sendResize(entry.ws, entry.term.rows, entry.term.cols, true);
+        requestTerminalScrollState(entry);
+
+        try {
+            entry.term.focus();
+        } catch (_) {
+            // Ignore focus failures if xterm is still mounting.
+        }
+    }
+
     function fitActiveTerminal() {
         const visibleIds = getVisibleTerminalIds();
         let active;
@@ -5488,16 +6119,16 @@
         fitTimer = setTimeout(fitActiveTerminal, 40);
     }
 
-    function sendResize(ws, rows, cols) {
+    function sendResize(ws, rows, cols, force) {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'resize', rows: rows, cols: cols }));
+            ws.send(JSON.stringify({ type: 'resize', rows: rows, cols: cols, force: Boolean(force) }));
         }
     }
 
     function updateLayoutSwitchButtons() {
         var activeWorkspace = getActiveWorkspace();
 
-        ['1', '2', '4', '4w'].forEach(function(layout) {
+        ['1', '2', '3', '3w', '4', '4w'].forEach(function(layout) {
             var button = document.getElementById('layout-btn-' + layout);
             if (!button) {
                 return;
@@ -5560,6 +6191,7 @@
                 var select = document.createElement('select');
                 var actions = document.createElement('div');
                 var copyBtn = document.createElement('button');
+                var fitBtn = document.createElement('button');
                 var renameBtn = document.createElement('button');
                 var closeBtn = document.createElement('button');
                 var host = document.createElement('div');
@@ -5567,6 +6199,7 @@
 
                 pane.className = 'terminal-pane';
                 pane.dataset.slotIndex = String(slotIndex);
+                pane.dataset.terminalId = terminalId && state.terminals[terminalId] ? terminalId : '';
 
                 toolbar.className = 'terminal-pane-toolbar';
                 badge.className = 'terminal-pane-badge';
@@ -5629,6 +6262,24 @@
                     }
                 };
                 actions.appendChild(copyBtn);
+
+                fitBtn.className = 'terminal-pane-action';
+                fitBtn.type = 'button';
+                fitBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M16 3h3a2 2 0 0 1 2 2v3"></path><path d="M21 16v3a2 2 0 0 1-2 2h-3"></path><path d="M8 21H5a2 2 0 0 1-2-2v-3"></path><path d="M9 9h6v6H9z"></path></svg>';
+                fitBtn.title = t('terminal.fitToDevice');
+                fitBtn.setAttribute('aria-label', t('terminal.fitToDevice'));
+                fitBtn.disabled = !terminalId || !state.terminals[terminalId];
+                fitBtn.onpointerdown = function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                };
+                fitBtn.onclick = function(event) {
+                    event.stopPropagation();
+                    if (terminalId && state.terminals[terminalId]) {
+                        fitTerminalToDevice(terminalId);
+                    }
+                };
+                actions.appendChild(fitBtn);
 
                 renameBtn.className = 'terminal-pane-action';
                 renameBtn.type = 'button';
@@ -6705,10 +7356,18 @@
     }
 
     window.toggleFileBrowser = function() {
+        if (TERMINAL_ONLY_MODE) {
+            setFileBrowserOpen(false);
+            return;
+        }
         setFileBrowserOpen(!state.fileBrowserOpen, null, { userInitiated: true });
     };
 
     window.switchFileBrowserTab = function(tab) {
+        if (TERMINAL_ONLY_MODE) {
+            setFileBrowserOpen(false);
+            return;
+        }
         if (!state.fileBrowserOpen) {
             setFileBrowserOpen(true, tab, { userInitiated: true });
             return;
@@ -6810,6 +7469,13 @@
     }
 
     function syncWorkspaceFileBrowserDefaults(reason) {
+        if (TERMINAL_ONLY_MODE) {
+            state.fileBrowserOpen = false;
+            state.fileBrowserSingleDesktopDismissed = true;
+            syncFileBrowserContainerMode();
+            return;
+        }
+
         const activeWorkspace = getActiveWorkspace();
         const shouldDefaultOpen = isSinglePaneDesktopWorkspace(activeWorkspace);
         const wasEmbedded = Boolean(terminalContainer && terminalContainer.classList.contains('file-browser-embedded'));
@@ -6838,6 +7504,10 @@
     }
 
     function setFileBrowserOpen(open, preferredTab, options) {
+        if (TERMINAL_ONLY_MODE && open) {
+            open = false;
+        }
+
         const activeWorkspace = getActiveWorkspace();
         const inSinglePaneDesktop = isSinglePaneDesktopWorkspace(activeWorkspace);
         const config = options || {};
@@ -6949,6 +7619,9 @@
     }
 
     function loadDirectory(path) {
+        if (TERMINAL_ONLY_MODE) {
+            return;
+        }
         fetchJSON('/api/files?path=' + encodeURIComponent(path), undefined, { authRequired: true })
             .then(files => {
                 applyDirectoryListing(path, files);
@@ -11844,7 +12517,7 @@
     function connectNotificationWs() {
         if (notifWs) return;
         var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        var url = proto + '//' + location.host + (window.__ROAMBENCH_BASE_PATH__ || '') + '/api/notifications/ws';
+        var url = proto + '//' + location.host + withBasePath('/api/notifications/ws');
         try { notifWs = new WebSocket(url); } catch(e) { return; }
         notifWs.onmessage = function(event) {
             try {

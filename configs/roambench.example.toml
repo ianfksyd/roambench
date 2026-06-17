@@ -40,6 +40,7 @@ shell = "/bin/bash"
 max_sessions = 0          # 0 = no fixed session count cap
 scrollback = 10000       # tmux scrollback lines
 idle_timeout = "72h"     # kill idle sessions after this
+client_idle_detach = "0" # optional: detach browser bridges after client idle; 0 disables
 persist_max_bytes = 67108864  # total disk budget for remembered terminal metadata
 # persist_dir = "/home/your-user/.local/state/roambench/terminals"
 

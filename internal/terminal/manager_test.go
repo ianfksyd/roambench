@@ -19,7 +19,26 @@ func newTestManager(t *testing.T, cfg *config.TerminalConfig) *Manager {
 		cfg.PersistDir = t.TempDir()
 	}
 	mgr := NewManager(cfg)
+	mgr.Stop()
 	mgr.hasTmux = false
+	mgr.tmuxSessionExists = func(string) bool {
+		return false
+	}
+	mgr.tmuxSessionCreate = func(string, string, string) error {
+		return nil
+	}
+	mgr.tmuxSessionList = func() []tmuxSessionState {
+		return nil
+	}
+	mgr.mu.Lock()
+	mgr.sessions = make(map[string]*Session)
+	mgr.mu.Unlock()
+	if err := os.RemoveAll(mgr.persistDir); err != nil {
+		t.Fatalf("RemoveAll(%s) error: %v", mgr.persistDir, err)
+	}
+	if err := os.MkdirAll(mgr.persistDir, 0700); err != nil {
+		t.Fatalf("MkdirAll(%s) error: %v", mgr.persistDir, err)
+	}
 	return mgr
 }
 
@@ -288,6 +307,64 @@ func TestManagerLoadPersistedSessionsRestoresExistingTmuxSessions(t *testing.T) 
 	}
 }
 
+func TestManagerLoadPersistedSessionsRecreatesMissingTmuxSessions(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:           "/bin/sh",
+		MaxSessions:     0,
+		Scrollback:      1000,
+		IdleTimeout:     "72h",
+		PersistDir:      dir,
+		PersistMaxBytes: 64 << 20,
+	})
+
+	now := time.Now().UTC().Truncate(time.Second)
+	persisted := persistedSession{
+		ID:           "lt-recreate-me",
+		Name:         "Boot shell",
+		Username:     "ian",
+		WorkDir:      workDir,
+		CreatedAt:    now.Add(-10 * time.Minute),
+		LastActivity: now.Add(-2 * time.Minute),
+	}
+	if err := mgr.writePersistedSession(persisted); err != nil {
+		t.Fatalf("writePersistedSession error: %v", err)
+	}
+
+	mgr.mu.Lock()
+	mgr.sessions = make(map[string]*Session)
+	mgr.mu.Unlock()
+	created := map[string]bool{}
+	mgr.hasTmux = true
+	mgr.tmuxSessionExists = func(sessionID string) bool {
+		return created[sessionID]
+	}
+	mgr.tmuxSessionList = func() []tmuxSessionState {
+		return nil
+	}
+	mgr.tmuxSessionCreate = func(sessionID, username, gotWorkDir string) error {
+		if sessionID != persisted.ID || username != persisted.Username || gotWorkDir != workDir {
+			t.Fatalf("tmuxSessionCreate(%q, %q, %q), want %q, %q, %q", sessionID, username, gotWorkDir, persisted.ID, persisted.Username, workDir)
+		}
+		created[sessionID] = true
+		return nil
+	}
+
+	mgr.loadPersistedSessions()
+
+	sessions := mgr.ListSessions("ian")
+	if len(sessions) != 1 {
+		t.Fatalf("ListSessions length = %d, want 1", len(sessions))
+	}
+	if sessions[0].ID != persisted.ID || sessions[0].Name != persisted.Name {
+		t.Fatalf("restored session = %#v, want id %q name %q", sessions[0], persisted.ID, persisted.Name)
+	}
+	if !created[persisted.ID] {
+		t.Fatalf("tmux session %q was not recreated", persisted.ID)
+	}
+}
+
 func TestManagerLoadPersistedSessionsPrefersNewerWAL(t *testing.T) {
 	dir := t.TempDir()
 	baseWorkDir := t.TempDir()
@@ -457,6 +534,135 @@ func TestManagerAttachSessionForUserPrunesMissingTmuxSessions(t *testing.T) {
 	}
 	if _, err := os.Stat(mgr.persistedSessionPath("ian", session.ID)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("persisted session file still exists, stat err = %v", err)
+	}
+}
+
+func TestManagerAttachSessionForUserKeepsExistingTmuxAttachment(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	if err := exec.Command("tmux", "new-session", "-d", "-s", session.ID, "/bin/sh").Run(); err != nil {
+		t.Fatalf("tmux new-session error: %v", err)
+	}
+	defer exec.Command("tmux", "kill-session", "-t", session.ID).Run()
+
+	mgr.hasTmux = true
+	mgr.tmuxSessionExists = func(sessionID string) bool {
+		return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
+	}
+
+	existing := startSleepCommand(t)
+	existingDone := commandDone(existing)
+	mgr.mu.Lock()
+	mgr.sessions[session.ID].cmd = existing
+	mgr.mu.Unlock()
+
+	ptmx, cmd, err := mgr.AttachSessionForUser("ian", session.ID)
+	if err != nil {
+		t.Fatalf("AttachSessionForUser error: %v", err)
+	}
+	defer ptmx.Close()
+	defer func() {
+		if cmd != nil && cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+	}()
+
+	select {
+	case <-existingDone:
+		t.Fatal("existing tmux attachment command exited after another attach")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	existing.Process.Kill()
+	<-existingDone
+}
+
+func TestManagerAttachSessionForUserReplacesExistingNonTmuxAttachment(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	existing := startSleepCommand(t)
+	existingDone := commandDone(existing)
+	mgr.mu.Lock()
+	mgr.sessions[session.ID].cmd = existing
+	mgr.mu.Unlock()
+
+	ptmx, cmd, err := mgr.AttachSessionForUser("ian", session.ID)
+	if err != nil {
+		t.Fatalf("AttachSessionForUser error: %v", err)
+	}
+	defer ptmx.Close()
+	defer func() {
+		if cmd != nil && cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+	}()
+
+	select {
+	case <-existingDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("existing non-tmux attachment command was not replaced")
+	}
+}
+
+func TestManagerResizeSessionForUserControlsSharedTmuxResize(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	var calls []string
+	mgr.hasTmux = true
+	mgr.tmuxResizeWindow = func(sessionID string, rows, cols uint16) error {
+		calls = append(calls, sessionID)
+		if sessionID != session.ID {
+			t.Fatalf("tmuxResizeWindow sessionID = %q, want %q", sessionID, session.ID)
+		}
+		if rows != 31 || cols != 97 {
+			t.Fatalf("tmuxResizeWindow size = %dx%d, want 31x97", rows, cols)
+		}
+		return nil
+	}
+
+	if err := mgr.ResizeSessionForUser("ian", session.ID, 31, 97, false); err != nil {
+		t.Fatalf("ResizeSessionForUser unshared error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("tmuxResizeWindow calls after unshared resize = %d, want 0", len(calls))
+	}
+
+	if err := mgr.ResizeSessionForUser("ian", session.ID, 31, 97, true); err != nil {
+		t.Fatalf("ResizeSessionForUser shared error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("tmuxResizeWindow calls after shared resize = %d, want 1", len(calls))
 	}
 }
 
@@ -736,6 +942,14 @@ func startSleepCommand(t *testing.T) *exec.Cmd {
 		t.Fatalf("cmd.Start error: %v", err)
 	}
 	return cmd
+}
+
+func commandDone(cmd *exec.Cmd) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	return done
 }
 
 func waitForReaper(t *testing.T, done <-chan struct{}) {

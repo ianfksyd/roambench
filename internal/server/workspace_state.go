@@ -240,7 +240,7 @@ func normalizeWorkspaceStatePayload(state *workspaceStatePayload) {
 
 func normalizeWorkspaceLayout(layout string) string {
 	switch strings.TrimSpace(layout) {
-	case "1", "2", "4", "4w":
+	case "1", "2", "3", "3w", "4", "4w":
 		return strings.TrimSpace(layout)
 	default:
 		return "1"

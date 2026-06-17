@@ -152,6 +152,33 @@ func TestSecureHeadersDenyFramingByDefault(t *testing.T) {
 	}
 }
 
+func TestTerminalResizeSharedDecisionUsesAttachmentCountAndForce(t *testing.T) {
+	srv := &Server{terminalAttachCounts: make(map[string]int)}
+
+	srv.registerTerminalAttachment("ian", "lt-one")
+	if !srv.shouldResizeSharedTerminal("ian", "lt-one", false) {
+		t.Fatal("single attachment automatic resize should resize the shared tmux window")
+	}
+
+	srv.registerTerminalAttachment("ian", "lt-one")
+	if srv.shouldResizeSharedTerminal("ian", "lt-one", false) {
+		t.Fatal("multiple attachments automatic resize should not resize the shared tmux window")
+	}
+	if !srv.shouldResizeSharedTerminal("ian", "lt-one", true) {
+		t.Fatal("forced resize should resize the shared tmux window with multiple attachments")
+	}
+
+	srv.unregisterTerminalAttachment("ian", "lt-one")
+	if !srv.shouldResizeSharedTerminal("ian", "lt-one", false) {
+		t.Fatal("automatic resize should resize shared tmux window after count returns to one")
+	}
+
+	srv.unregisterTerminalAttachment("ian", "lt-one")
+	if got := srv.terminalAttachmentCount("ian", "lt-one"); got != 0 {
+		t.Fatalf("terminalAttachmentCount after unregister = %d, want 0", got)
+	}
+}
+
 func TestDownloadInlinePDFUsesExtensionCompatibleFramePolicy(t *testing.T) {
 	currentUser, err := user.Current()
 	if err != nil {

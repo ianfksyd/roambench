@@ -41,12 +41,13 @@ type AuthConfig struct {
 }
 
 type TerminalConfig struct {
-	Shell           string `toml:"shell"`
-	MaxSessions     int    `toml:"max_sessions"`
-	Scrollback      int    `toml:"scrollback"`
-	IdleTimeout     string `toml:"idle_timeout"`
-	PersistDir      string `toml:"persist_dir"`
-	PersistMaxBytes int64  `toml:"persist_max_bytes"`
+	Shell            string `toml:"shell"`
+	MaxSessions      int    `toml:"max_sessions"`
+	Scrollback       int    `toml:"scrollback"`
+	IdleTimeout      string `toml:"idle_timeout"`
+	ClientIdleDetach string `toml:"client_idle_detach"`
+	PersistDir       string `toml:"persist_dir"`
+	PersistMaxBytes  int64  `toml:"persist_max_bytes"`
 }
 
 type UIConfig struct {
@@ -69,11 +70,12 @@ func Defaults() *Config {
 			LockoutDuration:  "15m",
 		},
 		Terminal: TerminalConfig{
-			Shell:           "/bin/bash",
-			MaxSessions:     0,
-			Scrollback:      10000,
-			IdleTimeout:     "72h",
-			PersistMaxBytes: 64 << 20,
+			Shell:            "/bin/bash",
+			MaxSessions:      0,
+			Scrollback:       10000,
+			IdleTimeout:      "72h",
+			ClientIdleDetach: "0",
+			PersistMaxBytes:  64 << 20,
 		},
 		UI: UIConfig{
 			Title: "RoamBench",
@@ -123,6 +125,18 @@ func (c *TerminalConfig) GetIdleTimeout() time.Duration {
 	d, err := time.ParseDuration(c.IdleTimeout)
 	if err != nil {
 		return 72 * time.Hour
+	}
+	return d
+}
+
+func (c *TerminalConfig) GetClientIdleDetach() time.Duration {
+	raw := strings.TrimSpace(c.ClientIdleDetach)
+	if raw == "" || raw == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0
 	}
 	return d
 }
@@ -192,6 +206,16 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.Terminal.PersistMaxBytes < 0 {
 		return fmt.Errorf("terminal.persist_max_bytes must be 0 or greater")
+	}
+	clientIdleDetach := strings.TrimSpace(cfg.Terminal.ClientIdleDetach)
+	if clientIdleDetach != "" && clientIdleDetach != "0" {
+		duration, err := time.ParseDuration(clientIdleDetach)
+		if err != nil {
+			return fmt.Errorf("terminal.client_idle_detach must be a valid duration or 0")
+		}
+		if duration < 0 {
+			return fmt.Errorf("terminal.client_idle_detach must be 0 or greater")
+		}
 	}
 	return nil
 }

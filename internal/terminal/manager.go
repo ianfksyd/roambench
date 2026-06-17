@@ -110,6 +110,9 @@ type Manager struct {
 	cancel            context.CancelFunc
 	persistDir        string
 	tmuxSessionExists func(string) bool
+	tmuxSessionCreate func(sessionID, username, workDir string) error
+	tmuxSessionList   func() []tmuxSessionState
+	tmuxResizeWindow  func(sessionID string, rows, cols uint16) error
 }
 
 func NewManager(cfg *config.TerminalConfig) *Manager {
@@ -125,6 +128,9 @@ func NewManager(cfg *config.TerminalConfig) *Manager {
 			return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
 		},
 	}
+	m.tmuxSessionCreate = m.createTmuxSession
+	m.tmuxSessionList = m.listTmuxSessions
+	m.tmuxResizeWindow = resizeTmuxWindow
 	if m.hasTmux {
 		// Set global tmux defaults BEFORE any session is created so the
 		// first window of every session inherits the correct terminal type.
@@ -225,27 +231,12 @@ func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOp
 	m.mu.Unlock()
 
 	if m.hasTmux {
-		defaultCommand := tmuxShellCommand(m.cfg.Shell, homeDir)
-		cmdArgs := tmuxNewSessionArgs(id, defaultCommand, workDir)
-		cmd := exec.Command("tmux", cmdArgs...)
-		if workDir != "" {
-			cmd.Dir = workDir
-		}
-		cmd.Env = terminalCommandEnv(os.Environ(), homeDir)
-		if err := cmd.Run(); err != nil {
+		if err := m.tmuxSessionCreate(id, username, workDir); err != nil {
 			m.mu.Lock()
 			delete(m.sessions, id)
 			m.mu.Unlock()
 			return SessionInfo{}, fmt.Errorf("tmux new-session: %w", err)
 		}
-		m.configureTmuxTerminal(id, defaultCommand)
-		if m.cfg.Scrollback > 0 {
-			exec.Command("tmux", "set-option", "-t", id, "history-limit", strconv.Itoa(m.cfg.Scrollback)).Run()
-		}
-		// Disable status bar and mouse mode for web use — mouse mode
-		// captures click/drag events which breaks xterm.js text selection.
-		exec.Command("tmux", "set-option", "-t", id, "status", "off").Run()
-		exec.Command("tmux", "set-option", "-t", id, "mouse", "off").Run()
 	}
 
 	if err := m.persistSession(id); err != nil {
@@ -258,6 +249,29 @@ func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOp
 	info := session.Info
 	m.mu.Unlock()
 	return info, nil
+}
+
+func (m *Manager) createTmuxSession(sessionID, username, workDir string) error {
+	homeDir := lookupHomeDir(username)
+	defaultCommand := tmuxShellCommand(m.cfg.Shell, homeDir)
+	cmdArgs := tmuxNewSessionArgs(sessionID, defaultCommand, workDir)
+	cmd := exec.Command("tmux", cmdArgs...)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+	cmd.Env = terminalCommandEnv(os.Environ(), homeDir)
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	m.configureTmuxTerminal(sessionID, defaultCommand)
+	if m.cfg.Scrollback > 0 {
+		exec.Command("tmux", "set-option", "-t", sessionID, "history-limit", strconv.Itoa(m.cfg.Scrollback)).Run()
+	}
+	// Disable status bar and mouse mode for web use; mouse mode captures
+	// click and drag events that xterm.js needs for text selection.
+	exec.Command("tmux", "set-option", "-t", sessionID, "status", "off").Run()
+	exec.Command("tmux", "set-option", "-t", sessionID, "mouse", "off").Run()
+	return nil
 }
 
 func (m *Manager) sessionForUser(username, sessionID string) (*Session, error) {
@@ -286,16 +300,18 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 		return nil, nil, ErrNotFound
 	}
 
-	m.mu.Lock()
-	if session.ptyFile != nil {
-		session.ptyFile.Close()
-		session.ptyFile = nil
+	if !m.hasTmux {
+		m.mu.Lock()
+		if session.ptyFile != nil {
+			session.ptyFile.Close()
+			session.ptyFile = nil
+		}
+		if session.cmd != nil && session.cmd.Process != nil {
+			session.cmd.Process.Kill()
+		}
+		session.cmd = nil
+		m.mu.Unlock()
 	}
-	if session.cmd != nil && session.cmd.Process != nil {
-		session.cmd.Process.Kill()
-	}
-	session.cmd = nil
-	m.mu.Unlock()
 
 	var cmd *exec.Cmd
 	homeDir := lookupHomeDir(session.Username)
@@ -324,8 +340,10 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 	pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 120})
 
 	m.mu.Lock()
-	session.cmd = cmd
-	session.ptyFile = ptmx
+	if !m.hasTmux {
+		session.cmd = cmd
+		session.ptyFile = ptmx
+	}
 	session.LastActivity = time.Now()
 	session.dirty = true
 	m.mu.Unlock()
@@ -375,7 +393,7 @@ func (m *Manager) reapAttachedCommand(sessionID string, cmd *exec.Cmd, ptyFile *
 	return done
 }
 
-func (m *Manager) ResizeSessionForUser(username, sessionID string, rows, cols uint16) error {
+func (m *Manager) ResizeSessionForUser(username, sessionID string, rows, cols uint16, resizeShared bool) error {
 	session, err := m.sessionForUser(username, sessionID)
 	if err != nil {
 		return err
@@ -385,9 +403,11 @@ func (m *Manager) ResizeSessionForUser(username, sessionID string, rows, cols ui
 		pty.Setsize(session.ptyFile, &pty.Winsize{Rows: rows, Cols: cols})
 	}
 
-	if m.hasTmux {
-		exec.Command("tmux", "resize-window", "-t", sessionID,
-			"-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows)).Run()
+	if m.hasTmux && resizeShared {
+		if m.tmuxResizeWindow == nil {
+			m.tmuxResizeWindow = resizeTmuxWindow
+		}
+		_ = m.tmuxResizeWindow(sessionID, rows, cols)
 	}
 
 	m.TouchSessionForUser(username, sessionID)
@@ -623,6 +643,7 @@ func (m *Manager) configureTmuxTerminal(sessionID, defaultCommand string) {
 	exec.Command("tmux", "set-environment", "-t", sessionID, "TERM", terminalClientTerm).Run()
 	exec.Command("tmux", "set-environment", "-t", sessionID, "COLORTERM", terminalColorDepth).Run()
 	exec.Command("tmux", "set-option", "-t", sessionID, "default-command", defaultCommand).Run()
+	setTmuxManualWindowSize(sessionID)
 	// Disable mouse mode so xterm.js handles selection/copy natively
 	exec.Command("tmux", "set-option", "-t", sessionID, "mouse", "off").Run()
 	exec.Command("tmux", "set-option", "-t", sessionID, "set-titles", "off").Run()
@@ -634,11 +655,21 @@ func (m *Manager) reconcileTmuxSession(sessionID, homeDir string) {
 	exec.Command("tmux", "set-option", "-t", sessionID, "default-terminal", terminalClientTerm).Run()
 	exec.Command("tmux", "set-environment", "-t", sessionID, "TERM", terminalClientTerm).Run()
 	exec.Command("tmux", "set-environment", "-t", sessionID, "COLORTERM", terminalColorDepth).Run()
+	setTmuxManualWindowSize(sessionID)
 	exec.Command("tmux", "set-option", "-t", sessionID, "mouse", "off").Run()
 	exec.Command("tmux", "set-option", "-t", sessionID, "set-titles", "off").Run()
 	exec.Command("tmux", "set-environment", "-t", sessionID, "HOME", homeDir).Run()
 	m.ensureTmuxFeature(terminalClientTerm, "RGB")
 	m.ensureTmuxFeature("screen."+terminalClientTerm, "RGB")
+}
+
+func setTmuxManualWindowSize(sessionID string) {
+	exec.Command("tmux", "set-window-option", "-t", sessionID, "window-size", "manual").Run()
+}
+
+func resizeTmuxWindow(sessionID string, rows, cols uint16) error {
+	return exec.Command("tmux", "resize-window", "-t", sessionID,
+		"-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows)).Run()
 }
 
 func (m *Manager) ensureTmuxFeature(term, feature string) {
@@ -1079,9 +1110,15 @@ func (m *Manager) loadPersistedSessions() {
 			m.removePersistedSession(data.Username, data.ID)
 			continue
 		}
+		homeDir := lookupHomeDir(data.Username)
+		workDir := resolveSessionWorkDir(data.WorkDir, homeDir)
 		if !m.tmuxSessionExists(data.ID) {
-			m.removePersistedSession(data.Username, data.ID)
-			continue
+			if m.tmuxSessionCreate == nil {
+				m.tmuxSessionCreate = m.createTmuxSession
+			}
+			if err := m.tmuxSessionCreate(data.ID, data.Username, workDir); err != nil {
+				continue
+			}
 		}
 		if selectedFromWAL {
 			if err := m.writePersistedSession(data); err != nil {
@@ -1101,7 +1138,7 @@ func (m *Manager) loadPersistedSessions() {
 					CreatedAt: data.CreatedAt,
 				},
 				Username:     data.Username,
-				WorkDir:      resolveSessionWorkDir(data.WorkDir, lookupHomeDir(data.Username)),
+				WorkDir:      workDir,
 				LastActivity: data.LastActivity,
 			}
 		}
@@ -1187,7 +1224,10 @@ func (m *Manager) loadOrphanTmuxSessions() {
 	}
 
 	idleTimeout := m.cfg.GetIdleTimeout()
-	for _, state := range m.listTmuxSessions() {
+	if m.tmuxSessionList == nil {
+		m.tmuxSessionList = m.listTmuxSessions
+	}
+	for _, state := range m.tmuxSessionList() {
 		if !strings.HasPrefix(state.ID, "lt-") {
 			continue
 		}

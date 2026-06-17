@@ -2250,6 +2250,20 @@ button.tab-action:focus-visible {
     grid-template-rows: minmax(0, 1fr);
 }
 
+.terminal-grid[data-layout="3"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.terminal-grid[data-layout="3"] .terminal-pane:first-child {
+    grid-row: 1 / span 2;
+}
+
+.terminal-grid[data-layout="3w"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr);
+}
+
 .terminal-grid[data-layout="4"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: repeat(2, minmax(0, 1fr));
@@ -2381,12 +2395,16 @@ button.tab-action:focus-visible {
     position: absolute;
     inset: 0;
     display: block;
+    touch-action: none;
+    overscroll-behavior: contain;
 }
 
 .terminal-surface {
     position: absolute;
     /* Keep the last columns clear of the custom scrollbar track. */
     inset: 0 16px 0 0;
+    touch-action: none;
+    overscroll-behavior: contain;
 }
 
 .terminal-scrollbar {
@@ -2397,6 +2415,7 @@ button.tab-action:focus-visible {
     width: 14px;
     background: rgba(255, 255, 255, 0.04);
     border-left: 1px solid rgba(255, 255, 255, 0.04);
+    touch-action: none;
 }
 
 .terminal-scrollbar-thumb {
@@ -2409,11 +2428,28 @@ button.tab-action:focus-visible {
     background: rgba(154, 208, 255, 0.38);
     cursor: pointer;
     transition: background 0.12s ease;
+    will-change: top, height;
 }
 
 .terminal-scrollbar:hover .terminal-scrollbar-thumb,
 .terminal-scrollbar-thumb.is-dragging {
     background: rgba(154, 208, 255, 0.58);
+}
+
+@media (pointer: coarse) {
+    .terminal-surface {
+        right: 24px;
+    }
+
+    .terminal-scrollbar {
+        width: 22px;
+    }
+
+    .terminal-scrollbar-thumb {
+        left: 4px;
+        right: 4px;
+        min-height: 44px;
+    }
 }
 
 .terminal-pane-placeholder {
@@ -4350,6 +4386,7 @@ button.tab-action:focus-visible {
         padding: 0 6px;
     }
 
+    #layout-btn-3w,
     #layout-btn-4w,
     #terminal-max-btn {
         display: none;
@@ -4411,17 +4448,29 @@ button.tab-action:focus-visible {
         padding: 0 4px;
     }
 
+    .terminal-grid[data-layout="2"],
+    .terminal-grid[data-layout="3"],
+    .terminal-grid[data-layout="3w"],
     .terminal-grid[data-layout="4"],
     .terminal-grid[data-layout="4w"] {
-        grid-template-columns: minmax(0, 1fr);
-        grid-auto-rows: minmax(260px, 1fr);
+        display: block;
     }
-}
 
-@media (max-width: 980px) and (orientation: portrait) {
-    .terminal-grid[data-layout="2"] {
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: repeat(2, minmax(0, 1fr));
+    .terminal-grid[data-layout="2"] .terminal-pane,
+    .terminal-grid[data-layout="3"] .terminal-pane,
+    .terminal-grid[data-layout="3w"] .terminal-pane,
+    .terminal-grid[data-layout="4"] .terminal-pane,
+    .terminal-grid[data-layout="4w"] .terminal-pane {
+        display: none;
+        height: 100%;
+    }
+
+    .terminal-grid[data-layout="2"] .terminal-pane.active,
+    .terminal-grid[data-layout="3"] .terminal-pane.active,
+    .terminal-grid[data-layout="3w"] .terminal-pane.active,
+    .terminal-grid[data-layout="4"] .terminal-pane.active,
+    .terminal-grid[data-layout="4w"] .terminal-pane.active {
+        display: flex;
     }
 }
 

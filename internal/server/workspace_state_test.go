@@ -32,10 +32,12 @@ func TestWorkspaceStateRouteRoundTripsPersistedViews(t *testing.T) {
 
 	srv := NewServer(cfg, nil, sessions, nil, nil)
 	putReq := httptest.NewRequest(http.MethodPut, "/api/workspace-state", strings.NewReader(`{
-		"activeWorkspaceId":"view-2",
+		"activeWorkspaceId":"view-4",
 		"workspaces":[
 			{"id":"view-1","layout":"2","terminalIds":["term-1","term-2"],"name":"Main","labelNumber":3},
-			{"id":"view-2","layout":"4w","terminalIds":["term-3","","",""],"name":"Ops","labelNumber":7}
+			{"id":"view-2","layout":"4w","terminalIds":["term-3","","",""],"name":"Ops","labelNumber":7},
+			{"id":"view-3","layout":"3","terminalIds":["term-4","term-5","term-6",""],"name":"Stacked","labelNumber":8},
+			{"id":"view-4","layout":"3w","terminalIds":["term-7","term-8","term-9",""],"name":"Columns","labelNumber":9}
 		]
 	}`))
 	putReq.Header.Set("Content-Type", "application/json")
@@ -62,14 +64,20 @@ func TestWorkspaceStateRouteRoundTripsPersistedViews(t *testing.T) {
 	if err := json.NewDecoder(getRec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Decode error: %v", err)
 	}
-	if resp.ActiveWorkspaceID != "view-2" {
-		t.Fatalf("ActiveWorkspaceID = %q, want %q", resp.ActiveWorkspaceID, "view-2")
+	if resp.ActiveWorkspaceID != "view-4" {
+		t.Fatalf("ActiveWorkspaceID = %q, want %q", resp.ActiveWorkspaceID, "view-4")
 	}
-	if len(resp.Workspaces) != 2 {
-		t.Fatalf("len(Workspaces) = %d, want %d", len(resp.Workspaces), 2)
+	if len(resp.Workspaces) != 4 {
+		t.Fatalf("len(Workspaces) = %d, want %d", len(resp.Workspaces), 4)
 	}
 	if resp.Workspaces[0].Layout != "2" {
 		t.Fatalf("Workspaces[0].Layout = %q, want %q", resp.Workspaces[0].Layout, "2")
+	}
+	if resp.Workspaces[2].Layout != "3" {
+		t.Fatalf("Workspaces[2].Layout = %q, want %q", resp.Workspaces[2].Layout, "3")
+	}
+	if resp.Workspaces[3].Layout != "3w" {
+		t.Fatalf("Workspaces[3].Layout = %q, want %q", resp.Workspaces[3].Layout, "3w")
 	}
 	if got := len(resp.Workspaces[0].TerminalIDs); got != 4 {
 		t.Fatalf("len(Workspaces[0].TerminalIDs) = %d, want %d", got, 4)
@@ -82,6 +90,9 @@ func TestWorkspaceStateRouteRoundTripsPersistedViews(t *testing.T) {
 	}
 	if resp.Workspaces[1].LabelNumber != 7 {
 		t.Fatalf("Workspaces[1].LabelNumber = %d, want %d", resp.Workspaces[1].LabelNumber, 7)
+	}
+	if resp.Workspaces[3].LabelNumber != 9 {
+		t.Fatalf("Workspaces[3].LabelNumber = %d, want %d", resp.Workspaces[3].LabelNumber, 9)
 	}
 	if resp.UpdatedAt == "" {
 		t.Fatal("UpdatedAt = empty, want non-empty timestamp")

@@ -31,6 +31,7 @@ shell = "/bin/bash"
 max_sessions = 0
 scrollback = 10000
 idle_timeout = "72h"
+client_idle_detach = "0"
 persist_max_bytes = 67108864
 
 [ui]
