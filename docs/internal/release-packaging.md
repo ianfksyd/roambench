@@ -7,7 +7,7 @@ This guide covers the minimum packaging flow for GitHub releases.
 Run this from the repo root:
 
 ```bash
-make release-packages TAG=v0.3.2
+make release-packages TAG=v0.4.1
 ```
 
 The command builds Linux `amd64` and `arm64` release bundles under `dist/releases/`.
@@ -41,7 +41,7 @@ Each archive contains:
 
 That means:
 
-- `TAG=v0.3.2` produces a binary that reports `RoamBench v0.3.2`
+- `TAG=v0.4.1` produces a binary that reports `RoamBench v0.4.1`
 - local `make build` uses `git describe` output when available
 
 ## Publish Sequence
@@ -63,5 +63,5 @@ bash scripts/install-roambench.sh vX.Y.Z /usr/local/bin
 - if you need a different output path, call the script directly:
 
 ```bash
-scripts/package-roambench-release.sh --tag v0.3.2 --output-dir /tmp/roambench-release-assets
+scripts/package-roambench-release.sh --tag v0.4.1 --output-dir /tmp/roambench-release-assets
 ```

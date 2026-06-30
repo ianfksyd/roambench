@@ -6,6 +6,17 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-19
+
+### Added
+
+- `roambench-agent` standalone CLI for hook integration
+- Agent-as-tool support for tools with `kind: agent` that wait for external callback
+- Failure recovery with auto-retry on transient errors and checkpoint creation when retries are exhausted
+- Health monitor coverage for phase timeout, stall detection, and agent tool run timeout watchdogs
+- Scheduled execution for periodic tool runs on active task phases
+- Dashboard agent activity view for running and waiting tool runs
+
 ## [0.4.0] - 2026-04-19
 
 ### Added

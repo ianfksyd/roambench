@@ -8,13 +8,15 @@ Suggested:
 
 - `roambench`
 
-Current repo name can stay `roambench-web` until the code-level rename is complete.
+Current public repo:
+
+- `ianfksyd/roambench`
 
 ## Repository Description
 
 Recommended short description:
 
-`RoamBench is a terminal-first self-hosted remote workbench with tmux persistence, 1 / 2 / 4 workspaces, file tools, and lightweight editing.`
+`Self-hosted tmux workbench for long-running terminal and AI coding sessions.`
 
 Shorter alternative:
 
@@ -22,17 +24,17 @@ Shorter alternative:
 
 More explicit alternative:
 
-`RoamBench is a self-hosted remote workbench for vibe coding, split-view CLI workflows, long-running tasks, and lightweight edits from desktop or phone.`
+`RoamBench is a self-hosted web workbench for persistent tmux sessions, split-view CLI workflows, lightweight file edits, and AI coding agents.`
 
 ## Repository Tagline
 
 Recommended slogan for README top, release subtitle, or social preview:
 
-`Reconnect to Codex, Claude Code, and other terminal-first coding workflows from your phone.`
+`Keep long-running terminal and AI coding sessions alive. Reconnect from anywhere.`
 
 Recommended subtitle:
 
-`A compact self-hosted workbench for 2 / 4-pane CLI workflows, persistent tmux sessions, and lightweight remote edits from desktop or phone.`
+`A compact self-hosted workbench for persistent tmux sessions, 2 / 4-pane CLI workflows, lightweight remote edits, and browser-based supervision from desktop or phone.`
 
 Chinese version:
 
@@ -54,7 +56,7 @@ Japanese short version:
 
 Recommended one-paragraph pitch:
 
-`RoamBench sits between SSH and a full browser IDE. It keeps the high-value parts of remote work close at hand: persistent terminals, 2 / 4-pane workspaces, file access, copy and lightweight editing, and quick control over terminal-first tools such as openclaw, Codex, Claude Code, Kimi-CLI, and OpenCode.`
+`RoamBench sits between SSH and a full browser IDE. It keeps the high-value parts of remote terminal work close at hand: persistent tmux-backed sessions, 2 / 4-pane workspaces, file access, lightweight editing, and browser-based supervision for terminal-first tools such as Codex, Claude Code, Kimi-CLI, OpenCode, and ordinary long-running scripts.`
 
 ## Suggested Topics
 

@@ -9,20 +9,25 @@
   </picture>
 </p>
 
-> Start, supervise, and resume long-running AI agent work from anywhere.
+> A small self-hosted web workbench for long-running terminal and AI coding sessions.
 
-RoamBench is a self-hosted workbench for developers who run multiple AI coding agents across long tasks. It keeps your terminal sessions alive, lets you reconnect from any device, and gives you just enough file tooling to stay productive without dragging in a full browser IDE.
+RoamBench sits between SSH and a full browser IDE. It gives you persistent `tmux`-backed terminals, `1 / 2 / 4` pane workspaces, lightweight file tools, and a browser UI you can reopen from a laptop or phone.
 
-## The Problem It Solves
+It is built for developers who run terminal-first tools such as Codex, Claude Code, OpenCode, Kimi-CLI, or ordinary long-running scripts on a remote machine and want to supervise them without keeping one laptop open all day.
 
-When you run Codex, Claude Code, OpenCode, Kimi-CLI, or similar terminal-first tools on a remote machine, you hit a recurring set of problems:
+## What You Get
 
-- sessions die when you close the laptop or switch devices
-- multiple agents running in parallel are hard to track
-- long tasks that span hours or days need reconnection without losing state
-- you need to check output, inspect files, or make small fixes from a phone
+- Keep terminal sessions alive with `tmux`, even when the browser disconnects.
+- Reopen the same split terminal workspace from another browser or device.
+- Run multiple CLI agents side by side without turning your server into a full IDE host.
+- Inspect files, preview documents/images, and make small edits next to the terminal.
+- Stay single-user and self-hosted, with password or PAM auth plus optional IP allowlisting.
 
-RoamBench solves these by providing a lightweight web layer over `tmux` that keeps everything alive and accessible.
+## Who It Is For
+
+RoamBench is useful if you already live in terminals and want a small remote control surface for long-running work.
+
+It is not trying to replace VS Code, Cursor, or a full cloud IDE. It is also not a multi-user team platform. The product boundary is intentionally narrow: persistent terminals, split workspaces, file access, and enough project control to keep agent work observable.
 
 ## Why Not SSH Or A Browser IDE
 
@@ -47,6 +52,46 @@ Desktop workspace with `4` terminals for long-running agent and CLI tasks:
 Mobile reconnect to the same workspace:
 
 ![RoamBench mobile screenshot](docs/screenshot-mobile.jpg)
+
+## Install From GitHub Releases
+
+Download the latest release archive from:
+
+- [github.com/ianfksyd/roambench/releases/latest](https://github.com/ianfksyd/roambench/releases/latest)
+
+The Linux release archives include:
+
+- `roambench`
+- `README.md`
+- `LICENSE`
+- `roambench.example.toml`
+- `roambench.quickstart.toml`
+- `roambench.service`
+
+Installer script for Linux hosts with `curl`, `jq`, `sha256sum`, and `tar`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ianfksyd/roambench/main/scripts/install-roambench.sh | bash -s -- latest "$HOME/.local/bin"
+```
+
+Then start with the trusted local/LAN quickstart:
+
+```bash
+APP_BIN="$HOME/.local/bin/roambench"
+curl -fsSLo roambench.toml https://raw.githubusercontent.com/ianfksyd/roambench/main/configs/roambench.quickstart.toml
+"$APP_BIN" --password-hash
+export ROAMBENCH_USER="$(whoami)"
+export ROAMBENCH_PASSWORD_HASH='<paste the generated hash>'
+"$APP_BIN" --config roambench.toml
+```
+
+Open the configured server address in your browser.
+
+Quickstart notes:
+
+- `roambench.quickstart.toml` is optimized for getting a local/LAN demo running quickly.
+- It enables insecure HTTP and disables IP filtering.
+- For anything exposed beyond a trusted network, use the full setup and deployment hardening docs.
 
 ## Current Capabilities
 
@@ -73,15 +118,24 @@ Mobile reconnect to the same workspace:
 - reconnect to long-running agent sessions from another device, including your phone
 - watch scripts, data jobs, and long-running CLI tasks without babysitting SSH
 
+### Project Control Foundation
+
+- runbook phases for plan, implement, test, and review style workflows
+- auto-progression from one phase to the next when registered tools pass
+- extensible tool registry for commands such as `go test`, `npm test`, `cargo test`, or `pytest`
+- agent-neutral HTTP API and `roambench-agent` CLI for task lookup, artifact submission, and human checkpoints
+- failure recovery, health monitoring, scheduled execution, and global agent activity visibility
+- terminal notification monitoring through OSC escape sequences and browser notifications
+
 ### General
 
 - lightweight, low-overhead behavior intended to stay responsive on modest self-hosted machines
 - live memory indicator in the header
 - interface language switching for English, Simplified Chinese, and Japanese
 
-## Roadmap: Toward A Project Control Layer
+## Roadmap: Project Control Layer
 
-RoamBench today provides the execution layer: persistent terminals, multi-pane workspaces, and file tools. The next major evolution is adding a **project control layer** on top of this foundation, so that managing complex multi-agent work becomes structured rather than ad-hoc.
+RoamBench started as an execution layer: persistent terminals, multi-pane workspaces, and file tools. The next direction is expanding the **project control layer** on top of that foundation, so complex multi-agent work becomes structured rather than ad-hoc.
 
 Planned direction:
 
@@ -104,7 +158,7 @@ For the full design discussion, see [`docs/project-control-discussions/`](docs/p
 
 Without `tmux`, RoamBench still runs, but terminal session persistence is reduced.
 
-## Fast Path
+## Build From Source Fast Path
 
 Fastest setup for trusted local or LAN testing:
 
@@ -181,7 +235,7 @@ go test ./...
 Release bundles for GitHub Releases:
 
 ```bash
-make release-packages TAG=v0.3.2
+make release-packages TAG=v0.4.1
 ```
 
 PAM build:
