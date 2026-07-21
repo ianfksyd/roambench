@@ -17,6 +17,7 @@ type Config struct {
 	Auth     AuthConfig     `toml:"auth"`
 	Terminal TerminalConfig `toml:"terminal"`
 	UI       UIConfig       `toml:"ui"`
+	Telegram TelegramConfig `toml:"telegram"`
 }
 
 type ServerConfig struct {
@@ -67,6 +68,16 @@ type UIConfig struct {
 	MOTD  string `toml:"motd"`
 }
 
+type TelegramConfig struct {
+	Enabled         bool   `toml:"enabled"`
+	BotToken        string `toml:"bot_token"`
+	ChatID          string `toml:"chat_id"`
+	Mode            string `toml:"mode"`
+	WebhookURL      string `toml:"webhook_url"`
+	WebhookSecret   string `toml:"webhook_secret"`
+	PollingInterval string `toml:"polling_interval"`
+}
+
 func Defaults() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -90,6 +101,11 @@ func Defaults() *Config {
 		},
 		UI: UIConfig{
 			Title: "RoamBench",
+		},
+		Telegram: TelegramConfig{
+			Enabled:         false,
+			Mode:            "polling",
+			PollingInterval: "10s",
 		},
 	}
 }
@@ -231,5 +247,59 @@ func Validate(cfg *Config) error {
 	if resources.SessionIOWeight < 0 || resources.SessionIOWeight > 10000 {
 		return fmt.Errorf("terminal.resources.session_io_weight must be 0 or between 1 and 10000")
 	}
+	if err := cfg.Telegram.Validate(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (c *TelegramConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(c.BotToken) == "" {
+		return fmt.Errorf("telegram.bot_token is required when telegram is enabled")
+	}
+	if strings.TrimSpace(c.ChatID) == "" {
+		return fmt.Errorf("telegram.chat_id is required when telegram is enabled")
+	}
+	mode := c.GetMode()
+	if mode != "polling" && mode != "webhook" {
+		return fmt.Errorf("telegram.mode must be 'polling' or 'webhook'")
+	}
+	if mode == "webhook" {
+		if strings.TrimSpace(c.WebhookURL) == "" {
+			return fmt.Errorf("telegram.webhook_url is required when telegram.mode is webhook")
+		}
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.WebhookURL)), "https://") {
+			return fmt.Errorf("telegram.webhook_url must use HTTPS")
+		}
+	}
+	if _, err := c.GetPollingInterval(); err != nil {
+		return fmt.Errorf("telegram.polling_interval: %w", err)
+	}
+	return nil
+}
+
+func (c *TelegramConfig) GetMode() string {
+	mode := strings.TrimSpace(strings.ToLower(c.Mode))
+	if mode == "" {
+		return "polling"
+	}
+	return mode
+}
+
+func (c *TelegramConfig) GetPollingInterval() (time.Duration, error) {
+	raw := strings.TrimSpace(c.PollingInterval)
+	if raw == "" {
+		return 10 * time.Second, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, err
+	}
+	if d < 1*time.Second {
+		return 1 * time.Second, nil
+	}
+	return d, nil
 }

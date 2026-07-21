@@ -35,3 +35,10 @@ persist_max_bytes = 67108864
 
 [ui]
 title = "RoamBench"
+
+# [telegram]
+# enabled = false
+# bot_token = "YOUR_BOT_TOKEN"
+# chat_id = "YOUR_CHAT_ID"
+# mode = "polling"
+# polling_interval = "10s"

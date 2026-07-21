@@ -60,3 +60,12 @@ session_io_weight = 80
 [ui]
 title = "RoamBench"
 # motd = "Welcome to my server"
+
+# [telegram]
+# enabled = false
+# bot_token = "YOUR_BOT_TOKEN"
+# chat_id = "YOUR_CHAT_ID"
+# mode = "polling"          # "polling" (default) or "webhook"
+# polling_interval = "10s"
+# # webhook_url = "https://example.com/api/telegram/webhook/SECRET"
+# # webhook_secret = "YOUR_WEBHOOK_SECRET"

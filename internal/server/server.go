@@ -22,6 +22,7 @@ import (
 	"github.com/ianf339/roambench/internal/controlplane"
 	"github.com/ianf339/roambench/internal/filebrowser"
 	"github.com/ianf339/roambench/internal/systemstats"
+	"github.com/ianf339/roambench/internal/telegram"
 	"github.com/ianf339/roambench/internal/terminal"
 	"github.com/ianf339/roambench/web"
 )
@@ -61,6 +62,15 @@ func (h *notificationHub) broadcast(n terminal.OSCNotification) {
 	}
 }
 
+func (h *notificationHub) subscribeFunc(fn func(terminal.OSCNotification)) {
+	ch := h.subscribe()
+	go func() {
+		for n := range ch {
+			fn(n)
+		}
+	}()
+}
+
 type Server struct {
 	cfg             *config.Config
 	authProv        auth.AuthProvider
@@ -73,6 +83,13 @@ type Server struct {
 	controlPlane    *controlplane.Repository
 	controlPlaneErr error
 	notifHub        *notificationHub
+
+	telegramClient     *telegram.Client
+	telegramDispatcher *telegram.Dispatcher
+	telegramHandler    *telegram.ReplyHandler
+	telegramCtx        context.Context
+	telegramCancel     context.CancelFunc
+
 	mux             *http.ServeMux
 	upgrader        websocket.Upgrader
 	httpServer      *http.Server
@@ -128,6 +145,13 @@ func NewServer(
 			}
 		})
 	}
+	s.telegramCtx, s.telegramCancel = context.WithCancel(context.Background())
+	if cfg.Telegram.Enabled {
+		if err := s.initTelegram(); err != nil {
+			log.Printf("telegram init error: %v", err)
+		}
+	}
+
 	s.upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
@@ -140,7 +164,10 @@ func NewServer(
 			if err != nil {
 				return false
 			}
-			return sameOriginHost(u.Host, r.Host, u.Scheme, isSecureRequest(r, cfg.Server.TrustProxy))
+			if sameOriginHost(u.Host, r.Host, u.Scheme, isSecureRequest(r, cfg.Server.TrustProxy)) {
+				return true
+			}
+			return cfg.Server.AllowAllIPs
 		},
 	}
 	s.registerRoutes()
@@ -206,6 +233,77 @@ func (s *Server) registerRoutes() {
 		}
 		staticFS.ServeHTTP(w, r)
 	}))
+}
+
+func (s *Server) initTelegram() error {
+	cfg := &s.cfg.Telegram
+	client, err := telegram.NewClient(cfg.BotToken, cfg.ChatID, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	s.telegramClient = client
+
+	username := s.cfg.Auth.SingleUser
+	mapping := telegram.NewMessageMapping(24 * time.Hour)
+	s.telegramDispatcher = telegram.NewDispatcher(client, mapping)
+	s.telegramHandler = telegram.NewReplyHandler(client, mapping, s.terminals, username)
+
+	s.notifHub.subscribeFunc(func(n terminal.OSCNotification) {
+		var sessions []terminal.SessionInfo
+		if s.terminals != nil {
+			sessions = s.terminals.ListSessions(username)
+		}
+		s.telegramDispatcher.Dispatch(n, sessions)
+	})
+
+	if cfg.GetMode() == "webhook" {
+		secret := strings.TrimSpace(cfg.WebhookSecret)
+		if secret == "" {
+			log.Printf("telegram webhook_secret is empty; using webhook URL path alone for authentication is not recommended")
+		}
+		if err := client.SetWebhook(cfg.WebhookURL, secret); err != nil {
+			return fmt.Errorf("set telegram webhook: %w", err)
+		}
+		webhookPath := "/api/telegram/webhook/" + secret
+		s.mux.HandleFunc(webhookPath, s.handleTelegramWebhook)
+		log.Printf("telegram webhook registered at %s", webhookPath)
+	} else {
+		interval, err := cfg.GetPollingInterval()
+		if err != nil {
+			return err
+		}
+		go telegram.StartPoller(s.telegramCtx, client, s.telegramHandler, interval, mapping)
+		log.Printf("telegram polling started every %s", interval)
+	}
+	return nil
+}
+
+func (s *Server) handleTelegramWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	secret := strings.TrimSpace(s.cfg.Telegram.WebhookSecret)
+	if secret != "" {
+		if got := strings.TrimSpace(r.Header.Get("X-Telegram-Bot-Api-Secret-Token")); got != secret {
+			if got == "" {
+				got = strings.TrimPrefix(r.URL.Path, "/api/telegram/webhook/")
+			}
+			if got != secret {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+	}
+	var update telegram.Update
+	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if s.telegramHandler != nil {
+		s.telegramHandler.HandleUpdate(update)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) basePath() string {
@@ -325,6 +423,9 @@ func (s *Server) startInteractionLifecycle() {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.telegramCancel != nil {
+		s.telegramCancel()
+	}
 	if s.lifecycleCancel != nil {
 		s.lifecycleCancel()
 		s.lifecycleWG.Wait()

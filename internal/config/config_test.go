@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateRejectsNonPositiveScrollback(t *testing.T) {
@@ -95,4 +97,70 @@ func TestValidateRejectsInvalidTerminalResourceControls(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTelegramConfigValidate(t *testing.T) {
+	t.Run("disabled is always valid", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Telegram.Enabled = false
+		cfg.Telegram.BotToken = ""
+		cfg.Telegram.ChatID = ""
+		if err := cfg.Telegram.Validate(); err != nil {
+			t.Fatalf("Validate error = %v, want nil", err)
+		}
+	})
+
+	t.Run("enabled requires token and chat", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Telegram.Enabled = true
+		if err := cfg.Telegram.Validate(); err == nil {
+			t.Fatal("Validate error = nil, want failure for missing token and chat_id")
+		}
+		cfg.Telegram.BotToken = "token"
+		if err := cfg.Telegram.Validate(); err == nil {
+			t.Fatal("Validate error = nil, want failure for missing chat_id")
+		}
+		cfg.Telegram.ChatID = "123"
+		if err := cfg.Telegram.Validate(); err != nil {
+			t.Fatalf("Validate error = %v, want nil", err)
+		}
+	})
+
+	t.Run("webhook requires HTTPS URL", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Telegram.Enabled = true
+		cfg.Telegram.BotToken = "token"
+		cfg.Telegram.ChatID = "123"
+		cfg.Telegram.Mode = "webhook"
+		if err := cfg.Telegram.Validate(); err == nil {
+			t.Fatal("Validate error = nil, want failure for missing webhook_url")
+		}
+		cfg.Telegram.WebhookURL = "http://example.com/webhook"
+		if err := cfg.Telegram.Validate(); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+			t.Fatalf("Validate error = %v, want HTTPS failure", err)
+		}
+		cfg.Telegram.WebhookURL = "https://example.com/webhook"
+		if err := cfg.Telegram.Validate(); err != nil {
+			t.Fatalf("Validate error = %v, want nil", err)
+		}
+	})
+
+	t.Run("polling interval clamps to minimum", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Telegram.PollingInterval = "100ms"
+		d, err := cfg.Telegram.GetPollingInterval()
+		if err != nil {
+			t.Fatalf("GetPollingInterval error = %v", err)
+		}
+		if d != 1*time.Second {
+			t.Fatalf("GetPollingInterval() = %v, want 1s", d)
+		}
+	})
+
+	t.Run("default mode is polling", func(t *testing.T) {
+		cfg := TelegramConfig{}
+		if got := cfg.GetMode(); got != "polling" {
+			t.Fatalf("GetMode() = %q, want polling", got)
+		}
+	})
 }

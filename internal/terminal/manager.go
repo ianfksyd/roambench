@@ -572,6 +572,62 @@ func (m *Manager) TouchSessionForUser(username, sessionID string) {
 	session.dirty = true
 }
 
+// SendKeys writes text into a terminal session as if it were typed.
+// If withEnter is true, an additional Return key is sent afterwards.
+// In tmux mode the session remains alive even without an active WebSocket.
+// In plain pty mode the command can only be injected while a client is attached.
+func (m *Manager) SendKeys(username, sessionID, text string, withEnter bool) error {
+	session, err := m.sessionForUser(username, sessionID)
+	if err != nil {
+		return err
+	}
+	if m.pruneMissingTmuxSession(sessionID) {
+		return ErrNotFound
+	}
+
+	if m.hasTmux {
+		if err := m.tmuxSendKeys(sessionID, text, false); err != nil {
+			return err
+		}
+		if withEnter {
+			if err := m.tmuxSendKeys(sessionID, "Enter", true); err != nil {
+				return err
+			}
+		}
+		m.TouchSessionForUser(username, sessionID)
+		return nil
+	}
+
+	m.mu.Lock()
+	ptyFile := session.ptyFile
+	m.mu.Unlock()
+	if ptyFile == nil {
+		return errors.New("terminal is not currently attached; install tmux for persistent command injection")
+	}
+	if _, err := ptyFile.Write([]byte(text)); err != nil {
+		return fmt.Errorf("write to pty: %w", err)
+	}
+	if withEnter {
+		if _, err := ptyFile.Write([]byte("\r")); err != nil {
+			return fmt.Errorf("write return to pty: %w", err)
+		}
+	}
+	m.TouchSessionForUser(username, sessionID)
+	return nil
+}
+
+func (m *Manager) tmuxSendKeys(sessionID, text string, keyName bool) error {
+	args := []string{"send-keys", "-t", sessionID}
+	if !keyName {
+		args = append(args, "-l")
+	}
+	args = append(args, text)
+	if output, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys: %w (%s)", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func (m *Manager) tmuxPaneInCopyMode(sessionID string) bool {
 	output, err := exec.Command("tmux", "display-message", "-p", "-t", sessionID, "#{pane_in_mode}").Output()
 	if err != nil {
