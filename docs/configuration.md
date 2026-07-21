@@ -150,6 +150,47 @@ Important behavior:
 - `title` controls the main app title
 - `motd` is available for lightweight UI messaging
 
+## Telegram
+
+```toml
+[telegram]
+enabled = false
+bot_token = "YOUR_BOT_TOKEN"
+chat_id = "YOUR_CHAT_ID"
+mode = "polling"          # "polling" or "webhook"
+polling_interval = "10s"
+# webhook_url = "https://example.com/api/telegram/webhook/SECRET"
+# webhook_secret = "YOUR_WEBHOOK_SECRET"
+```
+
+Telegram integration forwards terminal OSC notifications to a Telegram chat and lets you reply to those messages to inject commands back into the matching terminal session.
+
+### Setup
+
+1. Create a bot with Telegram's `@BotFather` and copy the bot token.
+2. Send the bot a message, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser.
+3. Look for `"chat": { "id": 123456789 }` and copy the numeric `id` as `chat_id`.
+
+### Modes
+
+`mode` can be either `polling` or `webhook`:
+
+- **polling** (default): RoamBench periodically fetches updates from Telegram. This works behind NAT and does not require a public HTTPS endpoint.
+- **webhook**: Telegram pushes updates to your server. You must set `webhook_url` to a public HTTPS URL and `webhook_secret` to a random secret that Telegram will include in each request for authentication.
+
+### Important behavior
+
+- `bot_token` and `chat_id` are required when `enabled = true`.
+- `chat_id` must be numeric.
+- `webhook_url` must use HTTPS.
+- `polling_interval` clamps to a minimum of `1s`.
+- The mapping from Telegram message to terminal session expires after 24 hours.
+
+### Requirements for command replies
+
+- Install `tmux` so terminal sessions persist while no browser is connected. Without tmux, command injection only works when a client is actively attached to the session.
+- `auth.single_user` must match the Unix account running the RoamBench process.
+
 ## Environment Variables
 
 RoamBench currently recognizes:
