@@ -2502,6 +2502,225 @@ button.tab-action:focus-visible {
     opacity: 0.45;
 }
 
+/* Mobile-friendly terminal composer */
+.terminal-pane-action.terminal-composer-toggle.active {
+    background: rgba(86, 156, 214, 0.18);
+    color: var(--primary);
+}
+
+.terminal-pane-host .terminal-wrapper.composer-active {
+    touch-action: auto;
+    overscroll-behavior: contain;
+}
+
+.terminal-wrapper.composer-active .terminal-surface,
+.terminal-wrapper.composer-active .terminal-scrollbar {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.terminal-composer-view[hidden] {
+    display: none !important;
+}
+
+.terminal-composer-view {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    color: var(--text);
+    background: #101010;
+    touch-action: auto;
+}
+
+.terminal-composer-header {
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(255, 255, 255, 0.035);
+    flex-shrink: 0;
+}
+
+.terminal-composer-name {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.terminal-composer-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-dim);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.terminal-composer-status::before {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    content: '';
+}
+
+.terminal-composer-status.is-connected {
+    color: var(--success);
+}
+
+.terminal-composer-status.is-connecting {
+    color: #dcdcaa;
+}
+
+.terminal-composer-status.is-disconnected {
+    color: var(--text-dim);
+}
+
+.terminal-composer-output {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    white-space: pre;
+    font-variant-ligatures: none;
+    tab-size: 8;
+    outline: none;
+    cursor: text;
+    touch-action: pan-x pan-y;
+    user-select: text;
+    -webkit-overflow-scrolling: touch;
+    -webkit-user-select: text;
+}
+
+.terminal-composer-output:focus-visible {
+    box-shadow: inset 0 0 0 1px rgba(86, 156, 214, 0.65);
+}
+
+.terminal-composer-spacer {
+    width: 1px;
+    min-height: 0;
+    pointer-events: none;
+}
+
+.terminal-composer-lines {
+    width: max-content;
+    min-width: 100%;
+}
+
+.terminal-composer-line {
+    width: max-content;
+    min-width: 100%;
+    padding: 0 12px;
+    white-space: pre;
+}
+
+.terminal-composer-run {
+    white-space: pre;
+}
+
+.terminal-composer-run-blink {
+    animation: terminalComposerAnsiBlink 1s step-end infinite;
+}
+
+.terminal-composer-run-cursor {
+    color: var(--terminal-composer-cursor-accent) !important;
+    background: var(--terminal-composer-cursor) !important;
+    box-shadow: inset 0 0 0 1px var(--terminal-composer-cursor);
+}
+
+.terminal-composer-run-cursor-blink {
+    animation: terminalComposerCursorBlink 1s step-end infinite;
+}
+
+.terminal-composer-form {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--surface);
+    flex-shrink: 0;
+}
+
+.terminal-composer-input {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 64px;
+    max-height: 30vh;
+    resize: vertical;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    outline: none;
+    color: var(--text);
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 16px;
+    line-height: 1.4;
+    touch-action: manipulation;
+}
+
+.terminal-composer-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.18);
+}
+
+.terminal-composer-send {
+    min-width: 70px;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 9px;
+    color: #ffffff;
+    background: var(--primary);
+    font-size: 14px;
+    font-weight: 650;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.terminal-composer-send:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.terminal-composer-view .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+@keyframes terminalComposerAnsiBlink {
+    0%, 49% { visibility: visible; }
+    50%, 100% { visibility: hidden; }
+}
+
+@keyframes terminalComposerCursorBlink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+}
+
 /* Extra Keys */
 .extra-keys {
     display: none;
@@ -2514,6 +2733,9 @@ button.tab-action:focus-visible {
 }
 
 .extra-keys button {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
     background: var(--surface2);
     border: 1px solid var(--border);
     color: var(--text);
@@ -2525,6 +2747,8 @@ button.tab-action:focus-visible {
     cursor: pointer;
     min-width: 36px;
     min-height: 36px;
+    overflow: visible;
+    white-space: nowrap;
 }
 
 .extra-keys button:active {

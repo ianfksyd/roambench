@@ -215,6 +215,15 @@
             'terminal.disconnected': 'disconnected',
             'terminal.copySelection': 'Copy Selection',
             'terminal.fitToDevice': 'Fit terminal to this device',
+            'terminal.composerOpen': 'Open mobile-friendly input',
+            'terminal.composerClose': 'Return to terminal',
+            'terminal.composerOutput': 'Terminal output',
+            'terminal.composerInput': 'Terminal input',
+            'terminal.composerPlaceholder': 'Type, swipe, or dictate text...',
+            'terminal.composerSend': 'Send',
+            'terminal.composerConnected': 'Connected',
+            'terminal.composerConnecting': 'Connecting...',
+            'terminal.composerDisconnected': 'Disconnected',
             'files.showHidden': 'Show Hidden',
             'files.hideHidden': 'Hide Hidden',
             'files.upload': 'Upload',
@@ -429,6 +438,15 @@
             'terminal.disconnected': '已断开连接',
             'terminal.copySelection': '复制选中内容',
             'terminal.fitToDevice': '适配到此设备',
+            'terminal.composerOpen': '打开移动端友好输入',
+            'terminal.composerClose': '返回终端',
+            'terminal.composerOutput': '终端输出',
+            'terminal.composerInput': '终端输入',
+            'terminal.composerPlaceholder': '输入、滑行输入或语音输入...',
+            'terminal.composerSend': '发送',
+            'terminal.composerConnected': '已连接',
+            'terminal.composerConnecting': '正在连接...',
+            'terminal.composerDisconnected': '已断开连接',
             'files.showHidden': '显示隐藏文件',
             'files.hideHidden': '不显示隐藏文件',
             'files.upload': '上传',
@@ -643,6 +661,15 @@
             'terminal.disconnected': '切断されました',
             'terminal.copySelection': '選択範囲をコピー',
             'terminal.fitToDevice': 'このデバイスに合わせる',
+            'terminal.composerOpen': 'モバイル向け入力を開く',
+            'terminal.composerClose': '端末に戻る',
+            'terminal.composerOutput': '端末出力',
+            'terminal.composerInput': '端末入力',
+            'terminal.composerPlaceholder': '入力、スワイプ、または音声入力...',
+            'terminal.composerSend': '送信',
+            'terminal.composerConnected': '接続済み',
+            'terminal.composerConnecting': '接続中...',
+            'terminal.composerDisconnected': '切断済み',
             'files.showHidden': '隠しファイルを表示',
             'files.hideHidden': '隠しファイルを隠す',
             'files.upload': 'アップロード',
@@ -2020,6 +2047,7 @@
         clientIdleDetachMs: 0
     };
     const terminalEncoder = new TextEncoder();
+    const terminalComposerAPI = window.RoamBenchTerminalComposer;
 
     const state = {
         username: '',
@@ -2904,6 +2932,7 @@
             terminalEntry.connecting = false;
             terminalEntry.detachRequested = false;
         }
+        updateTerminalComposerChrome(terminalEntry);
     }
 
     function syncVisibleTerminalConnections() {
@@ -3743,9 +3772,7 @@
         if (!sendTerminalSequence(terminal, sequence)) {
             return false;
         }
-        if (terminal.term) {
-            terminal.term.focus();
-        }
+        focusTerminalInteraction(terminal);
         return true;
     }
 
@@ -3770,7 +3797,7 @@
     }
 
     function getTerminalSelectionText(terminal) {
-        if (!terminal || !terminal.term) {
+        if (!terminal || !terminal.term || terminal.composerMode) {
             return getPageSelectionText();
         }
         return getTermClipboardCopyText(terminal.term) || getPageSelectionText();
@@ -4001,6 +4028,263 @@
         document.getElementById('ctrl-btn').classList.toggle('active', active);
     }
 
+    function focusTerminalInteraction(terminal) {
+        if (!terminal) {
+            return;
+        }
+
+        if (terminal.composerMode && terminal.composerInput) {
+            try {
+                terminal.composerInput.focus({ preventScroll: true });
+            } catch (_) {
+                terminal.composerInput.focus();
+            }
+            return;
+        }
+
+        if (terminal.term) {
+            try {
+                terminal.term.focus();
+            } catch (_) {
+                // Ignore focus failures while xterm is being remounted.
+            }
+        }
+    }
+
+    function terminalControlSequenceForCharacter(character) {
+        const value = String(character || '');
+        const code = value.length ? value.charCodeAt(0) : 0;
+
+        if (code >= 97 && code <= 122) {
+            return String.fromCharCode(code - 96);
+        }
+        if (code >= 65 && code <= 90) {
+            return String.fromCharCode(code - 64);
+        }
+        return '';
+    }
+
+    function updateTerminalComposerChrome(entry) {
+        let statusKey = 'terminal.composerDisconnected';
+        let statusClass = 'is-disconnected';
+        const connected = Boolean(entry && entry.ws && entry.ws.readyState === WebSocket.OPEN);
+
+        if (!entry || !entry.composerRoot) {
+            return;
+        }
+
+        if (connected) {
+            statusKey = 'terminal.composerConnected';
+            statusClass = 'is-connected';
+        } else if (entry.connecting) {
+            statusKey = 'terminal.composerConnecting';
+            statusClass = 'is-connecting';
+        }
+
+        entry.composerName.textContent = entry.name;
+        entry.composerStatus.textContent = t(statusKey);
+        entry.composerStatus.className = 'terminal-composer-status ' + statusClass;
+        entry.composerOutput.setAttribute('aria-label', t('terminal.composerOutput'));
+        entry.composerInputLabel.textContent = t('terminal.composerInput');
+        entry.composerInput.placeholder = t('terminal.composerPlaceholder');
+        entry.composerInput.setAttribute('aria-label', t('terminal.composerInput'));
+        entry.composerSend.textContent = t('terminal.composerSend');
+        entry.composerSend.disabled = !connected;
+        entry.composerRoot.dataset.connectionState = statusClass.slice(3);
+        entry.wrapper.classList.toggle('composer-active', Boolean(entry.composerMode));
+        entry.composerRoot.hidden = !entry.composerMode;
+
+        if (terminalGrid) {
+            terminalGrid.querySelectorAll('[data-terminal-composer-id]').forEach(function(button) {
+                if (button.dataset.terminalComposerId !== entry.id) {
+                    return;
+                }
+                button.classList.toggle('active', Boolean(entry.composerMode));
+                button.setAttribute('aria-pressed', entry.composerMode ? 'true' : 'false');
+                button.title = t(entry.composerMode ? 'terminal.composerClose' : 'terminal.composerOpen');
+                button.setAttribute('aria-label', button.title);
+            });
+        }
+    }
+
+    function submitTerminalComposer(entry) {
+        let payload;
+        let bracketedPasteMode = false;
+
+        if (!entry || !entry.composerInput || !terminalComposerAPI) {
+            return false;
+        }
+        if (!entry.ws || entry.ws.readyState !== WebSocket.OPEN) {
+            updateTerminalComposerChrome(entry);
+            return false;
+        }
+
+        try {
+            bracketedPasteMode = Boolean(entry.term && entry.term.modes && entry.term.modes.bracketedPasteMode);
+        } catch (_) {
+            bracketedPasteMode = false;
+        }
+
+        payload = terminalComposerAPI.buildSubmissionPayload(entry.composerInput.value, bracketedPasteMode);
+        if (!sendTerminalSequence(entry, payload)) {
+            updateTerminalComposerChrome(entry);
+            return false;
+        }
+
+        entry.composerDraft = '';
+        entry.composerInput.value = '';
+        setCtrlActive(false);
+        if (entry.composerRenderer) {
+            entry.composerRenderer.followOutput = true;
+            entry.composerRenderer.schedule(true);
+        }
+        focusTerminalInteraction(entry);
+        return true;
+    }
+
+    function createTerminalComposerView(entry) {
+        const root = document.createElement('section');
+        const header = document.createElement('div');
+        const name = document.createElement('span');
+        const status = document.createElement('span');
+        const output = document.createElement('div');
+        const topSpacer = document.createElement('div');
+        const linesHost = document.createElement('div');
+        const bottomSpacer = document.createElement('div');
+        const form = document.createElement('form');
+        const label = document.createElement('label');
+        const input = document.createElement('textarea');
+        const send = document.createElement('button');
+
+        root.className = 'terminal-composer-view';
+        root.hidden = true;
+        header.className = 'terminal-composer-header';
+        name.className = 'terminal-composer-name';
+        status.className = 'terminal-composer-status is-disconnected';
+        status.setAttribute('aria-live', 'polite');
+        header.appendChild(name);
+        header.appendChild(status);
+
+        output.className = 'terminal-composer-output';
+        output.tabIndex = 0;
+        output.setAttribute('role', 'log');
+        output.setAttribute('aria-live', 'off');
+        topSpacer.className = 'terminal-composer-spacer';
+        linesHost.className = 'terminal-composer-lines';
+        bottomSpacer.className = 'terminal-composer-spacer';
+        output.appendChild(topSpacer);
+        output.appendChild(linesHost);
+        output.appendChild(bottomSpacer);
+
+        form.className = 'terminal-composer-form';
+        label.className = 'sr-only';
+        label.htmlFor = 'terminal-composer-input-' + entry.id;
+        input.id = label.htmlFor;
+        input.className = 'terminal-composer-input';
+        input.name = 'terminal-composer-input';
+        input.rows = 3;
+        input.spellcheck = true;
+        input.autocomplete = 'on';
+        input.setAttribute('autocorrect', 'on');
+        input.setAttribute('autocapitalize', 'sentences');
+        input.setAttribute('inputmode', 'text');
+        input.setAttribute('enterkeyhint', 'enter');
+        send.className = 'terminal-composer-send';
+        send.type = 'submit';
+        form.appendChild(label);
+        form.appendChild(input);
+        form.appendChild(send);
+
+        root.appendChild(header);
+        root.appendChild(output);
+        root.appendChild(form);
+        entry.wrapper.appendChild(root);
+
+        entry.composerRoot = root;
+        entry.composerName = name;
+        entry.composerStatus = status;
+        entry.composerOutput = output;
+        entry.composerInputLabel = label;
+        entry.composerInput = input;
+        entry.composerSend = send;
+
+        input.addEventListener('input', function() {
+            entry.composerDraft = input.value;
+        });
+        input.addEventListener('keydown', function(event) {
+            let controlSequence;
+
+            if (event.isComposing) {
+                return;
+            }
+            if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === 'Enter') {
+                event.preventDefault();
+                submitTerminalComposer(entry);
+                return;
+            }
+            if (!state.ctrlActive || event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) {
+                return;
+            }
+
+            controlSequence = terminalControlSequenceForCharacter(event.key);
+            if (!controlSequence) {
+                return;
+            }
+            event.preventDefault();
+            if (sendTerminalSequence(entry, controlSequence)) {
+                setCtrlActive(false);
+            }
+            focusTerminalInteraction(entry);
+        });
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            submitTerminalComposer(entry);
+        });
+
+        if (terminalComposerAPI) {
+            entry.composerRenderer = terminalComposerAPI.createRenderer({
+                term: entry.term,
+                output: output,
+                linesHost: linesHost,
+                topSpacer: topSpacer,
+                bottomSpacer: bottomSpacer,
+                getSettings: function() {
+                    return state.terminalSettings;
+                },
+                isActive: function() {
+                    return Boolean(entry.composerMode && entry.composerRoot && entry.composerRoot.isConnected);
+                },
+                window: window
+            });
+        }
+
+        updateTerminalComposerChrome(entry);
+    }
+
+    function setTerminalComposerMode(id, active) {
+        const entry = id ? state.terminals[id] : null;
+
+        if (!entry || !entry.composerRoot) {
+            return;
+        }
+
+        state.activeId = id;
+        entry.composerMode = Boolean(active);
+        updateTerminalComposerChrome(entry);
+        syncActiveTerminalPane();
+        if (entry.composerRenderer) {
+            entry.composerRenderer.setActive(entry.composerMode);
+        }
+        scheduleFitActiveTerminal();
+
+        window.requestAnimationFrame(function() {
+            if (!state.terminals[id] || state.terminals[id] !== entry) {
+                return;
+            }
+            focusTerminalInteraction(entry);
+        });
+    }
+
     function setLoginError(message) {
         const errorEl = document.getElementById('login-error');
         errorEl.textContent = message || '';
@@ -4198,6 +4482,9 @@
             entry.term.options.cursorBlink = settings.cursorBlink;
             entry.term.options.scrollback = state.uiConfig.scrollback;
             entry.term.options.theme = buildTerminalTheme(settings);
+            if (entry.composerRenderer) {
+                entry.composerRenderer.refreshTheme();
+            }
         });
 
         syncTerminalSettingsPreview();
@@ -4907,6 +5194,7 @@
             }
             if (session.name && entry.name !== session.name) {
                 entry.name = session.name;
+                updateTerminalComposerChrome(entry);
                 changed = true;
             }
         });
@@ -5625,7 +5913,7 @@
     function handleTerminalWheel(entry, event) {
         const lineDelta = normalizeWheelScrollLines(entry, event);
 
-        if (!entry || event.ctrlKey || event.metaKey || event.altKey) {
+        if (!entry || event.ctrlKey || event.metaKey || event.altKey || (event.target && event.target.closest && event.target.closest('.terminal-composer-view'))) {
             return;
         }
 
@@ -5643,7 +5931,7 @@
     function beginTerminalTouchScroll(entry, event) {
         const metrics = getTerminalScrollMetrics(entry);
 
-        if (!entry || event.pointerType !== 'touch' || isTerminalScrollbarEventTarget(event.target) || (event.isPrimary === false)) {
+        if (!entry || event.pointerType !== 'touch' || isTerminalScrollbarEventTarget(event.target) || (event.target && event.target.closest && event.target.closest('.terminal-composer-view')) || (event.isPrimary === false)) {
             return;
         }
 
@@ -5757,6 +6045,9 @@
             fitAddon: fitAddon,
             wrapper: wrapper,
             surface: surface,
+            composerMode: false,
+            composerDraft: '',
+            composerRenderer: null,
             name: name && name.trim ? name.trim() : name
         };
         if (!t.name) {
@@ -5764,6 +6055,7 @@
         }
         state.terminals[id] = t;
         attachTerminalScrollbar(t);
+        createTerminalComposerView(t);
 
         wrapper.addEventListener('pointerdown', function() {
             markTerminalActive(t);
@@ -5886,6 +6178,7 @@
         terminalEntry.connecting = true;
         terminalEntry.detachRequested = false;
         terminalEntry.ws = ws;
+        updateTerminalComposerChrome(terminalEntry);
 
         ws.onopen = function() {
             terminalEntry.connecting = false;
@@ -5894,6 +6187,7 @@
             terminalEntry.scrollStateAwaiting = false;
             clearTerminalScrollTarget(terminalEntry);
             clearTerminalTouchScroll(terminalEntry);
+            updateTerminalComposerChrome(terminalEntry);
             if (!terminalEntry.desiredConnected || !clientLiveConnectionsAllowed() || !isTerminalVisibleInActiveWorkspace(id)) {
                 terminalEntry.detachRequested = true;
                 ws.close();
@@ -5932,6 +6226,7 @@
 
         ws.onerror = function() {
             terminalEntry.term.write('\r\n\x1b[31m[' + t('terminal.connectionError') + ']\x1b[0m\r\n');
+            updateTerminalComposerChrome(terminalEntry);
         };
 
         ws.onclose = function(event) {
@@ -5948,6 +6243,7 @@
             terminalEntry.scrollStateAwaiting = false;
             clearTerminalScrollTarget(terminalEntry);
             clearTerminalTouchScroll(terminalEntry);
+            updateTerminalComposerChrome(terminalEntry);
             if (terminalEntry.scrollFlushTimer) {
                 clearTimeout(terminalEntry.scrollFlushTimer);
                 terminalEntry.scrollFlushTimer = null;
@@ -6001,6 +6297,10 @@
         }
         clearTerminalScrollTarget(t);
         clearTerminalTouchScroll(t);
+        if (t.composerRenderer) {
+            t.composerRenderer.dispose();
+            t.composerRenderer = null;
+        }
         if (t.ws) {
             t.ws.close();
         }
@@ -6080,11 +6380,7 @@
         sendResize(entry.ws, entry.term.rows, entry.term.cols, true);
         requestTerminalScrollState(entry);
 
-        try {
-            entry.term.focus();
-        } catch (_) {
-            // Ignore focus failures if xterm is still mounting.
-        }
+        focusTerminalInteraction(entry);
     }
 
     function fitActiveTerminal() {
@@ -6105,7 +6401,7 @@
         });
 
         active = getActiveTerminal();
-        if (active && document.activeElement !== editorTextarea) {
+        if (active && !active.composerMode && document.activeElement !== editorTextarea) {
             try {
                 active.term.focus();
             } catch (_) {
@@ -6172,6 +6468,9 @@
             if (entry && entry.wrapper && entry.wrapper.parentNode !== terminalDock) {
                 terminalDock.appendChild(entry.wrapper);
             }
+            if (entry) {
+                updateTerminalComposerChrome(entry);
+            }
         });
 
         terminalGrid.innerHTML = '';
@@ -6192,6 +6491,7 @@
                 var actions = document.createElement('div');
                 var copyBtn = document.createElement('button');
                 var fitBtn = document.createElement('button');
+                var composerBtn = document.createElement('button');
                 var renameBtn = document.createElement('button');
                 var closeBtn = document.createElement('button');
                 var host = document.createElement('div');
@@ -6258,7 +6558,11 @@
                     if (terminalId && state.terminals[terminalId]) {
                         state.activeId = terminalId;
                         syncActiveTerminalPane();
-                        copyTerminalSelection(state.terminals[terminalId].term, false);
+                        if (state.terminals[terminalId].composerMode) {
+                            writeClipboardText(getPageSelectionText());
+                        } else {
+                            copyTerminalSelection(state.terminals[terminalId].term, false);
+                        }
                     }
                 };
                 actions.appendChild(copyBtn);
@@ -6280,6 +6584,31 @@
                     }
                 };
                 actions.appendChild(fitBtn);
+
+                composerBtn.className = 'terminal-pane-action terminal-composer-toggle';
+                composerBtn.type = 'button';
+                composerBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3.5" width="16" height="17" rx="2.5"></rect><path d="M7.5 8.5h9"></path><path d="M7.5 12h1M11.5 12h1M15.5 12h1"></path><path d="M8 15.5h8"></path></svg>';
+                composerBtn.dataset.terminalComposerId = terminalId || '';
+                composerBtn.title = t(terminalId && state.terminals[terminalId] && state.terminals[terminalId].composerMode ? 'terminal.composerClose' : 'terminal.composerOpen');
+                composerBtn.setAttribute('aria-label', composerBtn.title);
+                composerBtn.setAttribute('aria-pressed', terminalId && state.terminals[terminalId] && state.terminals[terminalId].composerMode ? 'true' : 'false');
+                composerBtn.disabled = !terminalId || !state.terminals[terminalId];
+                composerBtn.classList.toggle('active', Boolean(terminalId && state.terminals[terminalId] && state.terminals[terminalId].composerMode));
+                composerBtn.onpointerdown = function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                };
+                composerBtn.onclick = function(event) {
+                    var entry;
+
+                    event.stopPropagation();
+                    if (!terminalId || !state.terminals[terminalId]) {
+                        return;
+                    }
+                    entry = state.terminals[terminalId];
+                    setTerminalComposerMode(terminalId, !entry.composerMode);
+                };
+                actions.appendChild(composerBtn);
 
                 renameBtn.className = 'terminal-pane-action';
                 renameBtn.type = 'button';
@@ -6971,6 +7300,7 @@
         }, { authRequired: true })
             .then(function() {
                 terminal.name = trimmed;
+                updateTerminalComposerChrome(terminal);
                 renderTabBar();
                 renderActiveWorkspace();
             })
@@ -6991,11 +7321,13 @@
 
         const keyMap = {
             tab: '\t',
+            ctrlC: '\x03',
             esc: '\x1b',
             pipe: '|',
             tilde: '~',
             slash: '/',
             dash: '-',
+            plan: '/plan',
             up: '\x1b[A',
             down: '\x1b[B',
             left: '\x1b[D',
@@ -7004,12 +7336,19 @@
 
         const seq = keyMap[key];
         if (seq && sendTerminalSequence(terminal, seq)) {
-            terminal.term.focus();
+            if (key === 'ctrlC') {
+                setCtrlActive(false);
+            }
+            focusTerminalInteraction(terminal);
         }
     };
 
     window.toggleCtrl = function() {
         setCtrlActive(!state.ctrlActive);
+        const terminal = getActiveTerminal();
+        if (terminal && terminal.composerMode) {
+            focusTerminalInteraction(terminal);
+        }
     };
 
     // ========== File Browser ==========

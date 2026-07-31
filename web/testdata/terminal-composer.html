@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Terminal composer renderer test</title>
+<style>
+    #output { width: 320px; height: 96px; overflow: auto; }
+    #lines { width: max-content; min-width: 100%; }
+    .terminal-composer-line { white-space: pre; }
+</style>
+<body data-result="pending">
+<div id="output"><div id="top"></div><div id="lines"></div><div id="bottom"></div></div>
+<script src="../js/terminal-composer.js"></script>
+<script>
+(function() {
+    'use strict';
+
+    const settings = {
+        foreground: '#dddddd',
+        background: '#101010',
+        cursor: '#ffffff',
+        cursorBlink: false,
+        fontFamily: 'monospace',
+        fontSize: 14,
+        ansi: {
+            black: '#000000', red: '#aa0000', green: '#00aa00', yellow: '#aa5500',
+            blue: '#0000aa', magenta: '#aa00aa', cyan: '#00aaaa', white: '#aaaaaa',
+            brightBlack: '#555555', brightRed: '#ff5555', brightGreen: '#55ff55',
+            brightYellow: '#ffff55', brightBlue: '#5555ff', brightMagenta: '#ff55ff',
+            brightCyan: '#55ffff', brightWhite: '#ffffff'
+        }
+    };
+
+    function cell(chars, foreground, bold) {
+        return {
+            getChars: function() { return chars; },
+            getWidth: function() { return 1; },
+            getFgColor: function() { return foreground == null ? 0 : foreground; },
+            getBgColor: function() { return 0; },
+            isFgDefault: function() { return foreground == null; },
+            isFgRGB: function() { return false; },
+            isFgPalette: function() { return foreground != null; },
+            isBgDefault: function() { return true; },
+            isBgRGB: function() { return false; },
+            isBgPalette: function() { return false; },
+            isBold: function() { return Boolean(bold); },
+            isDim: function() { return false; },
+            isItalic: function() { return false; },
+            isUnderline: function() { return false; },
+            isBlink: function() { return false; },
+            isInverse: function() { return false; },
+            isInvisible: function() { return false; },
+            isStrikethrough: function() { return false; },
+            isOverline: function() { return false; }
+        };
+    }
+
+    function line(cells) {
+        return {
+            length: cells.length,
+            getCell: function(index) { return cells[index]; }
+        };
+    }
+
+    const bufferLines = [
+        line([cell('R', 1, true), cell('e', 1, true), cell('d', 1, true)]),
+        line([cell('$'), cell(' ')])
+    ];
+    const terminal = {
+        buffer: {
+            active: {
+                length: bufferLines.length,
+                baseY: 0,
+                cursorY: 1,
+                cursorX: 1,
+                getLine: function(index) { return bufferLines[index]; }
+            },
+            onBufferChange: function() { return { dispose: function() {} }; }
+        },
+        onWriteParsed: function() { return { dispose: function() {} }; },
+        onResize: function() { return { dispose: function() {} }; }
+    };
+    const output = document.getElementById('output');
+    const lines = document.getElementById('lines');
+    const renderer = window.RoamBenchTerminalComposer.createRenderer({
+        term: terminal,
+        output: output,
+        linesHost: lines,
+        topSpacer: document.getElementById('top'),
+        bottomSpacer: document.getElementById('bottom'),
+        getSettings: function() { return settings; },
+        isActive: function() { return true; },
+        window: window
+    });
+
+    renderer.setActive(true);
+    renderer.render(true);
+
+    const firstRun = lines.querySelector('.terminal-composer-run');
+    const passed = lines.children.length === 2 &&
+        lines.textContent.indexOf('Red') !== -1 &&
+        firstRun && firstRun.style.color === 'rgb(255, 85, 85)' &&
+        Boolean(lines.querySelector('.terminal-composer-run-cursor'));
+
+    document.body.dataset.result = passed ? 'pass' : 'fail';
+    renderer.dispose();
+}());
+</script>
+</body>
+</html>

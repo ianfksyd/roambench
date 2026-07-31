@@ -206,11 +206,13 @@
         <div class="extra-keys" id="extra-keys">
             <button onclick="sendKey('tab')">Tab</button>
             <button id="ctrl-btn" onclick="toggleCtrl()">Ctrl</button>
+            <button onclick="sendKey('ctrlC')" title="Interrupt">Ctrl+C</button>
             <button onclick="sendKey('esc')">Esc</button>
             <button onclick="sendKey('pipe')">|</button>
             <button onclick="sendKey('tilde')">~</button>
             <button onclick="sendKey('slash')">/</button>
             <button onclick="sendKey('dash')">-</button>
+            <button onclick="sendKey('plan')">/plan</button>
             <button onclick="sendKey('up')">&#x2191;</button>
             <button onclick="sendKey('down')">&#x2193;</button>
             <button onclick="sendKey('left')">&#x2190;</button>
@@ -630,6 +632,7 @@
 
     <script src="__ROAMBENCH_BASE_PATH__/vendor/xterm/xterm.min.js"></script>
     <script src="__ROAMBENCH_BASE_PATH__/vendor/xterm/xterm-addon-fit.min.js"></script>
+    <script src="__ROAMBENCH_BASE_PATH__/js/terminal-composer.js"></script>
     <script src="__ROAMBENCH_BASE_PATH__/js/app.js"></script>
 </body>
 </html>

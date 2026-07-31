@@ -343,6 +343,27 @@ func TestStaticFaviconIsServed(t *testing.T) {
 	}
 }
 
+func TestStaticTerminalComposerAssetIsServed(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+
+	srv := NewServer(cfg, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/js/terminal-composer.js", nil)
+	rec := httptest.NewRecorder()
+
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /js/terminal-composer.js status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "javascript") {
+		t.Fatalf("Content-Type = %q, want javascript", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "RoamBenchTerminalComposer") {
+		t.Fatalf("body missing terminal composer export: %q", body)
+	}
+}
+
 func TestBasePathRedirectsRootAndServesPrefixedAssets(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Server.AllowAllIPs = true
@@ -378,6 +399,9 @@ func TestBasePathRedirectsRootAndServesPrefixedAssets(t *testing.T) {
 	}
 	if !strings.Contains(body, `src="/home/ian/js/app.js"`) {
 		t.Fatalf("index missing prefixed app.js src: %q", body)
+	}
+	if !strings.Contains(body, `src="/home/ian/js/terminal-composer.js"`) {
+		t.Fatalf("index missing prefixed terminal composer src: %q", body)
 	}
 
 	faviconReq := httptest.NewRequest(http.MethodGet, "/home/ian/favicon.svg", nil)
