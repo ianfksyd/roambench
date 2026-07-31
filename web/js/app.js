@@ -4065,6 +4065,16 @@
         return '';
     }
 
+    function shouldDefaultTerminalComposer() {
+        return Boolean(
+            terminalComposerAPI &&
+            typeof terminalComposerAPI.shouldDefaultComposer === 'function' &&
+            terminalComposerAPI.shouldDefaultComposer(function(query) {
+                return window.matchMedia(query);
+            })
+        );
+    }
+
     function updateTerminalComposerChrome(entry) {
         let statusKey = 'terminal.composerDisconnected';
         let statusClass = 'is-disconnected';
@@ -6199,7 +6209,7 @@
             fitAddon: fitAddon,
             wrapper: wrapper,
             surface: surface,
-            composerMode: false,
+            composerMode: shouldDefaultTerminalComposer(),
             composerDraft: '',
             composerRenderer: null,
             composerHistoryTerminal: null,
@@ -6220,6 +6230,10 @@
         state.terminals[id] = t;
         attachTerminalScrollbar(t);
         createTerminalComposerView(t);
+        if (t.composerMode && t.composerRenderer) {
+            t.composerRenderer.setActive(true);
+            scheduleTerminalComposerHistory(t, true);
+        }
         if (typeof term.onWriteParsed === 'function') {
             t.composerHistoryLiveDisposable = term.onWriteParsed(function() {
                 scheduleTerminalComposerHistory(t, false);

@@ -20,6 +20,18 @@
     ];
     const COLOR_CUBE_STEPS = [0, 95, 135, 175, 215, 255];
     const RENDER_OVERSCAN_ROWS = 24;
+    const MOBILE_COMPOSER_MEDIA_QUERY = '(max-width: 980px)';
+
+    function shouldDefaultComposer(matchMedia) {
+        if (typeof matchMedia !== 'function') {
+            return false;
+        }
+        try {
+            return Boolean(matchMedia(MOBILE_COMPOSER_MEDIA_QUERY).matches);
+        } catch (_) {
+            return false;
+        }
+    }
 
     function byteHex(value) {
         return Math.max(0, Math.min(255, Number(value) || 0)).toString(16).padStart(2, '0');
@@ -492,6 +504,7 @@
         packedRGBToHex: packedRGBToHex,
         terminalCellStyle: terminalCellStyle,
         buildLineRuns: buildLineRuns,
+        shouldDefaultComposer: shouldDefaultComposer,
         normalizeTerminalInput: normalizeTerminalInput,
         buildSubmissionPayload: buildSubmissionPayload,
         createRenderer: createRenderer

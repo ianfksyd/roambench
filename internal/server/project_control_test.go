@@ -18,6 +18,16 @@ import (
 	"github.com/ianf339/roambench/internal/terminal"
 )
 
+func cleanupProjectControlTerminalManager(t *testing.T, manager *terminal.Manager, username string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, session := range manager.ListSessions(username) {
+			_ = manager.KillSessionForUser(username, session.ID)
+		}
+		manager.Stop()
+	})
+}
+
 func testProjectControlServer(t *testing.T) (*Server, string, *auth.SessionManager) {
 	t.Helper()
 	cfg := config.Defaults()
@@ -1136,7 +1146,7 @@ func TestProjectControlStartReadOnlyPhaseCreatesLogicalSessionWithoutAttach(t *t
 	}
 
 	termMgr := terminal.NewManager(&cfg.Terminal)
-	defer termMgr.Stop()
+	cleanupProjectControlTerminalManager(t, termMgr, "ian")
 	srv := NewServer(cfg, nil, sessions, termMgr, nil)
 
 	startReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_phase","phaseId":"plan"}`))
@@ -1226,7 +1236,7 @@ func TestProjectControlStartWritePhaseCreatesAttachableTerminalSession(t *testin
 	}
 
 	termMgr := terminal.NewManager(&cfg.Terminal)
-	defer termMgr.Stop()
+	cleanupProjectControlTerminalManager(t, termMgr, "ian")
 	srv := NewServer(cfg, nil, sessions, termMgr, nil)
 
 	task := projectControlTask{ID: projectControlTaskPanelID, RowVersion: 1}
@@ -3834,7 +3844,7 @@ func TestProjectControlTaskReplayIncludesLiveSessionAndRuntimeEvents(t *testing.
 	}
 
 	termMgr := terminal.NewManager(&cfg.Terminal)
-	defer termMgr.Stop()
+	cleanupProjectControlTerminalManager(t, termMgr, "ian")
 	if _, err := termMgr.CreateSession("ian"); err != nil {
 		t.Fatalf("Create terminal session error: %v", err)
 	}
@@ -3905,7 +3915,7 @@ func TestProjectControlStoreSurvivesTerminalManagerStartup(t *testing.T) {
 	}
 
 	termMgr := terminal.NewManager(&cfg.Terminal)
-	defer termMgr.Stop()
+	cleanupProjectControlTerminalManager(t, termMgr, "ian")
 	restarted := NewServer(cfg, nil, sessions, termMgr, nil)
 	getReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
 	getReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})

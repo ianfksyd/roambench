@@ -128,3 +128,11 @@ test('normalizes multiline input and adds bracketed paste before the final Retur
     );
     assert.equal(composer.buildSubmissionPayload('', true), '\r');
 });
+
+test('defaults composer on for mobile-width viewports only', () => {
+    assert.equal(composer.shouldDefaultComposer((query) => ({
+        matches: query === '(max-width: 980px)'
+    })), true);
+    assert.equal(composer.shouldDefaultComposer(() => ({ matches: false })), false);
+    assert.equal(composer.shouldDefaultComposer(null), false);
+});
