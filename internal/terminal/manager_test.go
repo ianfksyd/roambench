@@ -115,6 +115,76 @@ func TestManagerSessionOwnership(t *testing.T) {
 	}
 }
 
+func TestManagerCaptureHistoryForUser(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	var captureCalls int
+	mgr.hasTmux = true
+	mgr.tmuxSessionExists = func(sessionID string) bool {
+		return sessionID == session.ID
+	}
+	mgr.tmuxPaneSize = func(sessionID string) (int, int, error) {
+		if sessionID != session.ID {
+			t.Fatalf("tmuxPaneSize session = %q, want %q", sessionID, session.ID)
+		}
+		return 132, 41, nil
+	}
+	mgr.tmuxCapturePane = func(sessionID string) ([]byte, error) {
+		captureCalls++
+		if sessionID != session.ID {
+			t.Fatalf("tmuxCapturePane session = %q, want %q", sessionID, session.ID)
+		}
+		return []byte("old line\n\x1b[31mred line\x1b[0m\n"), nil
+	}
+
+	snapshot, err := mgr.CaptureHistoryForUser("ian", session.ID)
+	if err != nil {
+		t.Fatalf("CaptureHistoryForUser error: %v", err)
+	}
+	if snapshot.Columns != 132 || snapshot.Rows != 41 {
+		t.Fatalf("snapshot size = %dx%d, want 132x41", snapshot.Columns, snapshot.Rows)
+	}
+	if got, want := string(snapshot.Data), "old line\n\x1b[31mred line\x1b[0m\n"; got != want {
+		t.Fatalf("snapshot data = %q, want %q", got, want)
+	}
+	if captureCalls != 1 {
+		t.Fatalf("capture calls = %d, want 1", captureCalls)
+	}
+
+	if _, err := mgr.CaptureHistoryForUser("someone-else", session.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("CaptureHistoryForUser other user error = %v, want %v", err, ErrForbidden)
+	}
+	if captureCalls != 1 {
+		t.Fatalf("capture calls after forbidden request = %d, want 1", captureCalls)
+	}
+}
+
+func TestManagerCaptureHistoryWithoutTmux(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		MaxSessions: 10,
+		IdleTimeout: "1h",
+	})
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+
+	if _, err := mgr.CaptureHistoryForUser("ian", session.ID); !errors.Is(err, ErrHistoryUnavailable) {
+		t.Fatalf("CaptureHistoryForUser error = %v, want %v", err, ErrHistoryUnavailable)
+	}
+}
+
 func TestManagerCreateSessionWithOptionsPersistsWorkDir(t *testing.T) {
 	mgr := newTestManager(t, &config.TerminalConfig{
 		Shell:       "/bin/sh",

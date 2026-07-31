@@ -436,6 +436,43 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	username := GetUsername(r)
 
+	if strings.HasSuffix(id, "/history") {
+		sessionID := strings.TrimSuffix(id, "/history")
+		if sessionID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session ID"})
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		snapshot, err := s.terminals.CaptureHistoryForUser(username, sessionID)
+		if err != nil {
+			status := http.StatusInternalServerError
+			switch {
+			case errors.Is(err, terminal.ErrNotFound), errors.Is(err, terminal.ErrForbidden):
+				status = http.StatusNotFound
+			case errors.Is(err, terminal.ErrHistoryUnavailable):
+				status = http.StatusConflict
+			}
+			if status == http.StatusInternalServerError {
+				log.Printf("terminal history capture error for %s/%s: %v", username, sessionID, err)
+			}
+			writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("X-Terminal-Columns", strconv.Itoa(snapshot.Columns))
+		w.Header().Set("X-Terminal-Rows", strconv.Itoa(snapshot.Rows))
+		w.Header().Set("Content-Length", strconv.Itoa(len(snapshot.Data)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(snapshot.Data)
+		return
+	}
+
 	if strings.HasSuffix(id, "/rename") {
 		sessionID := strings.TrimSuffix(id, "/rename")
 		if sessionID == "" {

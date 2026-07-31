@@ -9,6 +9,7 @@
 </style>
 <body data-result="pending">
 <div id="output"><div id="top"></div><div id="lines"></div><div id="bottom"></div></div>
+<script src="../vendor/xterm/xterm.min.js"></script>
 <script src="../js/terminal-composer.js"></script>
 <script>
 (function() {
@@ -96,13 +97,40 @@
     renderer.render(true);
 
     const firstRun = lines.querySelector('.terminal-composer-run');
-    const passed = lines.children.length === 2 &&
+    const initialPassed = lines.children.length === 2 &&
         lines.textContent.indexOf('Red') !== -1 &&
         firstRun && firstRun.style.color === 'rgb(255, 85, 85)' &&
         Boolean(lines.querySelector('.terminal-composer-run-cursor'));
+    const historyTerminal = new Terminal({
+        cols: 40,
+        rows: 2,
+        scrollback: 20,
+        convertEol: true,
+        cursorBlink: false,
+        disableStdin: true
+    });
 
-    document.body.dataset.result = passed ? 'pass' : 'fail';
-    renderer.dispose();
+    const capturedRows = [
+        '\x1b[31moldest\x1b[0m' + ' '.repeat(34),
+        'middle' + ' '.repeat(34),
+        'latest' + ' '.repeat(34)
+    ].join('\n');
+
+    historyTerminal.write(capturedRows, function() {
+        renderer.setTerminal(historyTerminal, { showCursor: false });
+        renderer.followOutput = false;
+        output.scrollTop = 0;
+        renderer.render(true);
+
+        const historyPassed = historyTerminal.buffer.active.length === 3 &&
+            lines.textContent.indexOf('oldest') !== -1 &&
+            lines.textContent.indexOf('middle') !== -1 &&
+            !lines.querySelector('.terminal-composer-run-cursor');
+
+        document.body.dataset.result = initialPassed && historyPassed ? 'pass' : 'fail';
+        renderer.dispose();
+        historyTerminal.dispose();
+    });
 }());
 </script>
 </body>

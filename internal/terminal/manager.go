@@ -26,6 +26,7 @@ var (
 	ErrMaxSessions            = errors.New("maximum number of sessions reached")
 	ErrNotFound               = errors.New("session not found")
 	ErrForbidden              = errors.New("session access denied")
+	ErrHistoryUnavailable     = errors.New("terminal history is unavailable")
 	defaultTerminalNameRegexp = regexp.MustCompile(`(?i)^Term (\d+)$`)
 )
 
@@ -76,6 +77,12 @@ type ScrollState struct {
 	PaneHeight     int
 }
 
+type HistorySnapshot struct {
+	Data    []byte
+	Columns int
+	Rows    int
+}
+
 type persistedSession struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
@@ -113,6 +120,8 @@ type Manager struct {
 	tmuxSessionCreate func(sessionID, username, workDir string) error
 	tmuxSessionList   func() []tmuxSessionState
 	tmuxResizeWindow  func(sessionID string, rows, cols uint16) error
+	tmuxCapturePane   func(sessionID string) ([]byte, error)
+	tmuxPaneSize      func(sessionID string) (int, int, error)
 }
 
 func NewManager(cfg *config.TerminalConfig) *Manager {
@@ -131,6 +140,8 @@ func NewManager(cfg *config.TerminalConfig) *Manager {
 	m.tmuxSessionCreate = m.createTmuxSession
 	m.tmuxSessionList = m.listTmuxSessions
 	m.tmuxResizeWindow = resizeTmuxWindow
+	m.tmuxCapturePane = captureTmuxPane
+	m.tmuxPaneSize = tmuxPaneSize
 	if m.hasTmux {
 		// Set global tmux defaults BEFORE any session is created so the
 		// first window of every session inherits the correct terminal type.
@@ -487,6 +498,62 @@ func (m *Manager) ScrollStateForUser(username, sessionID string) (ScrollState, e
 		ScrollPosition: parseTmuxInt(parts[2]),
 		PaneHeight:     max(parseTmuxInt(parts[3]), terminalDefaultRows),
 	}, nil
+}
+
+// CaptureHistoryForUser returns the complete retained tmux pane history and
+// current screen with ANSI attributes preserved. The session ownership check
+// happens before any tmux command is run.
+func (m *Manager) CaptureHistoryForUser(username, sessionID string) (HistorySnapshot, error) {
+	if _, err := m.sessionForUser(username, sessionID); err != nil {
+		return HistorySnapshot{}, err
+	}
+	if !m.hasTmux {
+		return HistorySnapshot{}, ErrHistoryUnavailable
+	}
+	if m.pruneMissingTmuxSession(sessionID) {
+		return HistorySnapshot{}, ErrNotFound
+	}
+
+	capturePane := m.tmuxCapturePane
+	if capturePane == nil {
+		capturePane = captureTmuxPane
+	}
+	paneSize := m.tmuxPaneSize
+	if paneSize == nil {
+		paneSize = tmuxPaneSize
+	}
+
+	columns, rows, err := paneSize(sessionID)
+	if err != nil {
+		return HistorySnapshot{}, fmt.Errorf("tmux pane size: %w", err)
+	}
+	data, err := capturePane(sessionID)
+	if err != nil {
+		return HistorySnapshot{}, fmt.Errorf("tmux capture pane: %w", err)
+	}
+
+	return HistorySnapshot{
+		Data:    data,
+		Columns: max(columns, 1),
+		Rows:    max(rows, 1),
+	}, nil
+}
+
+func captureTmuxPane(sessionID string) ([]byte, error) {
+	return exec.Command("tmux", "capture-pane", "-p", "-e", "-N", "-S", "-", "-E", "-", "-t", sessionID).Output()
+}
+
+func tmuxPaneSize(sessionID string) (int, int, error) {
+	output, err := exec.Command("tmux", "display-message", "-p", "-t", sessionID, "#{pane_width}|#{pane_height}").Output()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	parts := strings.Split(strings.TrimSpace(string(output)), "|")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("unexpected tmux pane size output: %q", strings.TrimSpace(string(output)))
+	}
+	return parseTmuxInt(parts[0]), parseTmuxInt(parts[1]), nil
 }
 
 func (m *Manager) TouchSessionForUser(username, sessionID string) {

@@ -11,10 +11,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/ianf339/roambench/internal/auth"
@@ -703,6 +705,106 @@ func TestHandleTerminalWebSocketClosesWithSessionUnavailableReason(t *testing.T)
 		if closeErr.Text != terminalCloseReasonSessionUnavailable {
 			t.Fatalf("close reason = %q, want %q", closeErr.Text, terminalCloseReasonSessionUnavailable)
 		}
+	}
+}
+
+func TestHandleTerminalHistoryReturnsOwnedTmuxSnapshot(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current error: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+	cfg.Auth.SingleUser = currentUser.Username
+	cfg.Terminal.PersistDir = t.TempDir()
+	cfg.Terminal.Scrollback = 100
+
+	sessions, err := auth.NewSessionManager(&cfg.Auth)
+	if err != nil {
+		t.Fatalf("NewSessionManager error: %v", err)
+	}
+	defer sessions.Stop()
+
+	ownerToken, err := sessions.CreateSession(currentUser.Username)
+	if err != nil {
+		t.Fatalf("CreateSession token error: %v", err)
+	}
+	otherToken, err := sessions.CreateSession(currentUser.Username + "-other")
+	if err != nil {
+		t.Fatalf("CreateSession other token error: %v", err)
+	}
+
+	termMgr := terminal.NewManager(&cfg.Terminal)
+	defer termMgr.Stop()
+	session, err := termMgr.CreateSession(currentUser.Username)
+	if err != nil {
+		t.Fatalf("CreateSession terminal error: %v", err)
+	}
+	defer termMgr.KillSessionForUser(currentUser.Username, session.ID)
+
+	command := "i=1; while [ $i -le 80 ]; do printf 'history-%03d\\n' $i; i=$((i+1)); done; printf '\\033[31mhistory-marker\\033[0m\\n'"
+	if err := exec.Command("tmux", "send-keys", "-t", session.ID, command, "Enter").Run(); err != nil {
+		t.Fatalf("tmux send-keys error: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		snapshot, captureErr := termMgr.CaptureHistoryForUser(currentUser.Username, session.ID)
+		if captureErr == nil && bytes.Contains(snapshot.Data, []byte("history-marker")) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("history marker did not appear before deadline; last error: %v", captureErr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	srv := NewServer(cfg, nil, sessions, termMgr, filebrowser.New())
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+session.ID+"/history", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: ownerToken})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET terminal history status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q, want application/octet-stream", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if rec.Header().Get("X-Terminal-Columns") == "" || rec.Header().Get("X-Terminal-Rows") == "" {
+		t.Fatalf("missing terminal dimensions: columns=%q rows=%q", rec.Header().Get("X-Terminal-Columns"), rec.Header().Get("X-Terminal-Rows"))
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("history-marker")) {
+		t.Fatalf("history response does not contain marker: %q", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("history-001")) {
+		t.Fatalf("history response does not include output older than the visible pane")
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("\x1b[31m")) {
+		t.Fatalf("history response does not preserve ANSI color attributes")
+	}
+
+	forbiddenReq := httptest.NewRequest(http.MethodGet, "/api/terminals/"+session.ID+"/history", nil)
+	forbiddenReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: otherToken})
+	forbiddenRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(forbiddenRec, forbiddenReq)
+	if forbiddenRec.Code != http.StatusNotFound {
+		t.Fatalf("GET terminal history as other user status = %d, want %d", forbiddenRec.Code, http.StatusNotFound)
+	}
+
+	methodReq := httptest.NewRequest(http.MethodPost, "/api/terminals/"+session.ID+"/history", nil)
+	methodReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: ownerToken})
+	methodRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(methodRec, methodReq)
+	if methodRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST terminal history status = %d, want %d", methodRec.Code, http.StatusMethodNotAllowed)
 	}
 }
 

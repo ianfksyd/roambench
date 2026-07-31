@@ -2048,6 +2048,7 @@
     };
     const terminalEncoder = new TextEncoder();
     const terminalComposerAPI = window.RoamBenchTerminalComposer;
+    const TERMINAL_COMPOSER_HISTORY_REFRESH_MS = 1000;
 
     const state = {
         username: '',
@@ -4142,6 +4143,148 @@
         return true;
     }
 
+    function disposeTerminalComposerHistory(entry, restoreLocalBuffer) {
+        if (!entry) {
+            return;
+        }
+
+        entry.composerHistoryGeneration = (entry.composerHistoryGeneration || 0) + 1;
+        if (entry.composerHistoryTimer) {
+            clearTimeout(entry.composerHistoryTimer);
+            entry.composerHistoryTimer = null;
+        }
+        if (entry.composerHistoryController) {
+            entry.composerHistoryController.abort();
+            entry.composerHistoryController = null;
+        }
+        entry.composerHistoryInFlight = false;
+        entry.composerHistoryDirty = false;
+        entry.composerHistoryLoaded = false;
+        entry.composerHistoryUnavailable = false;
+
+        if (restoreLocalBuffer !== false && entry.composerRenderer && entry.term) {
+            entry.composerRenderer.setTerminal(entry.term, { showCursor: true });
+        }
+        if (entry.composerHistoryTerminal) {
+            entry.composerHistoryTerminal.dispose();
+            entry.composerHistoryTerminal = null;
+        }
+    }
+
+    function createTerminalComposerHistoryParser(columns, rows) {
+        const options = getTerminalOptions();
+
+        options.cols = clampNumber(columns, 2, 1000, 80);
+        options.rows = clampNumber(rows, 1, 1000, 24);
+        options.convertEol = true;
+        options.cursorBlink = false;
+        options.disableStdin = true;
+        return new Terminal(options);
+    }
+
+    function scheduleTerminalComposerHistory(entry, immediate) {
+        let delay;
+        let elapsed;
+
+        if (!entry || !entry.composerMode || !state.uiConfig.tmux || entry.composerHistoryUnavailable) {
+            return;
+        }
+
+        entry.composerHistoryDirty = true;
+        if (entry.composerHistoryLoaded && entry.composerRenderer && !entry.composerRenderer.followOutput) {
+            return;
+        }
+        if (entry.composerHistoryInFlight || entry.composerHistoryTimer) {
+            return;
+        }
+
+        elapsed = Date.now() - (entry.composerHistoryLastRequestAt || 0);
+        delay = immediate ? 0 : Math.max(0, TERMINAL_COMPOSER_HISTORY_REFRESH_MS - elapsed);
+        entry.composerHistoryTimer = setTimeout(function() {
+            entry.composerHistoryTimer = null;
+            refreshTerminalComposerHistory(entry);
+        }, delay);
+    }
+
+    async function refreshTerminalComposerHistory(entry) {
+        let generation;
+        let controller;
+        let response;
+        let parser = null;
+
+        if (!entry || !entry.composerMode || !state.uiConfig.tmux || entry.composerHistoryUnavailable || entry.composerHistoryInFlight) {
+            return;
+        }
+
+        generation = (entry.composerHistoryGeneration || 0) + 1;
+        controller = new AbortController();
+        entry.composerHistoryGeneration = generation;
+        entry.composerHistoryController = controller;
+        entry.composerHistoryInFlight = true;
+        entry.composerHistoryDirty = false;
+        entry.composerHistoryLastRequestAt = Date.now();
+
+        try {
+            response = await fetchAPI('/api/terminals/' + encodeURIComponent(entry.id) + '/history', {
+                cache: 'no-store',
+                signal: controller.signal
+            }, { authRequired: true });
+
+            if (!response.ok) {
+                if (response.status === 404 || response.status === 409) {
+                    entry.composerHistoryUnavailable = true;
+                }
+                throw new Error('terminal history request failed with status ' + response.status);
+            }
+
+            const columns = response.headers.get('X-Terminal-Columns');
+            const rows = response.headers.get('X-Terminal-Rows');
+            const payload = new Uint8Array(await response.arrayBuffer());
+
+            if (!entry.composerMode || entry.composerHistoryGeneration !== generation || controller.signal.aborted) {
+                return;
+            }
+
+            parser = createTerminalComposerHistoryParser(columns, rows);
+            await new Promise(function(resolve) {
+                parser.write(payload, resolve);
+            });
+
+            if (!entry.composerMode || entry.composerHistoryGeneration !== generation || controller.signal.aborted) {
+                parser.dispose();
+                parser = null;
+                return;
+            }
+
+            const previousParser = entry.composerHistoryTerminal;
+            entry.composerHistoryTerminal = parser;
+            entry.composerHistoryLoaded = true;
+            parser = null;
+            if (entry.composerRenderer) {
+                entry.composerRenderer.setTerminal(entry.composerHistoryTerminal, { showCursor: false });
+            }
+            if (previousParser) {
+                previousParser.dispose();
+            }
+        } catch (error) {
+            if (parser) {
+                parser.dispose();
+            }
+            if (error && error.name !== 'AbortError') {
+                console.warn('Unable to load complete terminal history:', error);
+            }
+        } finally {
+            if (entry.composerHistoryGeneration !== generation) {
+                return;
+            }
+            entry.composerHistoryController = null;
+            entry.composerHistoryInFlight = false;
+            if (entry.composerHistoryDirty && entry.composerMode && (!entry.composerRenderer || entry.composerRenderer.followOutput)) {
+                scheduleTerminalComposerHistory(entry, false);
+            }
+        }
+    }
+
     function createTerminalComposerView(entry) {
         const root = document.createElement('section');
         const header = document.createElement('div');
@@ -4254,6 +4397,11 @@
                 isActive: function() {
                     return Boolean(entry.composerMode && entry.composerRoot && entry.composerRoot.isConnected);
                 },
+                onFollowOutputChange: function(following) {
+                    if (following && entry.composerHistoryDirty) {
+                        scheduleTerminalComposerHistory(entry, true);
+                    }
+                },
                 window: window
             });
         }
@@ -4270,10 +4418,16 @@
 
         state.activeId = id;
         entry.composerMode = Boolean(active);
+        if (!entry.composerMode) {
+            disposeTerminalComposerHistory(entry, true);
+        }
         updateTerminalComposerChrome(entry);
         syncActiveTerminalPane();
         if (entry.composerRenderer) {
             entry.composerRenderer.setActive(entry.composerMode);
+        }
+        if (entry.composerMode) {
+            scheduleTerminalComposerHistory(entry, true);
         }
         scheduleFitActiveTerminal();
 
@@ -6048,6 +6202,16 @@
             composerMode: false,
             composerDraft: '',
             composerRenderer: null,
+            composerHistoryTerminal: null,
+            composerHistoryController: null,
+            composerHistoryTimer: null,
+            composerHistoryGeneration: 0,
+            composerHistoryLastRequestAt: 0,
+            composerHistoryInFlight: false,
+            composerHistoryDirty: false,
+            composerHistoryLoaded: false,
+            composerHistoryUnavailable: false,
+            composerHistoryLiveDisposable: null,
             name: name && name.trim ? name.trim() : name
         };
         if (!t.name) {
@@ -6056,6 +6220,11 @@
         state.terminals[id] = t;
         attachTerminalScrollbar(t);
         createTerminalComposerView(t);
+        if (typeof term.onWriteParsed === 'function') {
+            t.composerHistoryLiveDisposable = term.onWriteParsed(function() {
+                scheduleTerminalComposerHistory(t, false);
+            });
+        }
 
         wrapper.addEventListener('pointerdown', function() {
             markTerminalActive(t);
@@ -6297,6 +6466,11 @@
         }
         clearTerminalScrollTarget(t);
         clearTerminalTouchScroll(t);
+        disposeTerminalComposerHistory(t, false);
+        if (t.composerHistoryLiveDisposable) {
+            t.composerHistoryLiveDisposable.dispose();
+            t.composerHistoryLiveDisposable = null;
+        }
         if (t.composerRenderer) {
             t.composerRenderer.dispose();
             t.composerRenderer = null;

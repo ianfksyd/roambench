@@ -220,13 +220,15 @@
         this.bottomSpacer = options.bottomSpacer;
         this.getSettings = options.getSettings;
         this.isActive = options.isActive;
+        this.onFollowOutputChange = options.onFollowOutputChange;
         this.window = options.window || window;
         this.document = this.output.ownerDocument;
         this.followOutput = true;
         this.renderFrame = 0;
         this.forceRender = false;
         this.selectionDeferred = false;
-        this.disposables = [];
+        this.showCursor = true;
+        this.termDisposables = [];
         this.resizeObserver = null;
 
         this.handleScroll = this.handleScroll.bind(this);
@@ -235,15 +237,7 @@
         this.output.addEventListener('scroll', this.handleScroll, { passive: true });
         this.document.addEventListener('selectionchange', this.handleSelectionChange);
 
-        if (this.term && typeof this.term.onWriteParsed === 'function') {
-            this.disposables.push(this.term.onWriteParsed(this.schedule.bind(this, false)));
-        }
-        if (this.term && typeof this.term.onResize === 'function') {
-            this.disposables.push(this.term.onResize(this.schedule.bind(this, true)));
-        }
-        if (this.term && this.term.buffer && typeof this.term.buffer.onBufferChange === 'function') {
-            this.disposables.push(this.term.buffer.onBufferChange(this.handleBufferChange));
-        }
+        this.bindTerminal(this.term);
         if (typeof this.window.ResizeObserver === 'function') {
             this.resizeObserver = new this.window.ResizeObserver(this.schedule.bind(this, true));
             this.resizeObserver.observe(this.output);
@@ -276,8 +270,47 @@
     RichTerminalRenderer.prototype.handleScroll = function() {
         const distance = this.output.scrollHeight - this.output.clientHeight - this.output.scrollTop;
         const lineHeight = this.getLineHeight();
+        const wasFollowing = this.followOutput;
 
         this.followOutput = distance <= (lineHeight * 2);
+        if (wasFollowing !== this.followOutput && typeof this.onFollowOutputChange === 'function') {
+            this.onFollowOutputChange(this.followOutput);
+        }
+        this.schedule(false);
+    };
+
+    RichTerminalRenderer.prototype.disposeTerminalBindings = function() {
+        this.termDisposables.forEach(function(disposable) {
+            if (disposable && typeof disposable.dispose === 'function') {
+                disposable.dispose();
+            }
+        });
+        this.termDisposables = [];
+    };
+
+    RichTerminalRenderer.prototype.bindTerminal = function(term) {
+        this.disposeTerminalBindings();
+        this.term = term;
+
+        if (this.term && typeof this.term.onWriteParsed === 'function') {
+            this.termDisposables.push(this.term.onWriteParsed(this.schedule.bind(this, false)));
+        }
+        if (this.term && typeof this.term.onResize === 'function') {
+            this.termDisposables.push(this.term.onResize(this.schedule.bind(this, true)));
+        }
+        if (this.term && this.term.buffer && typeof this.term.buffer.onBufferChange === 'function') {
+            this.termDisposables.push(this.term.buffer.onBufferChange(this.handleBufferChange));
+        }
+    };
+
+    RichTerminalRenderer.prototype.setTerminal = function(term, options) {
+        const settings = options || {};
+
+        if (!term) {
+            return;
+        }
+        this.bindTerminal(term);
+        this.showCursor = settings.showCursor !== false;
         this.schedule(false);
     };
 
@@ -390,8 +423,8 @@
         const firstVisible = Math.max(0, Math.floor(projectedScrollTop / lineHeight));
         const start = Math.max(0, firstVisible - RENDER_OVERSCAN_ROWS);
         const end = Math.min(totalLines, Math.ceil((projectedScrollTop + viewportHeight) / lineHeight) + RENDER_OVERSCAN_ROWS);
-        const cursorRow = buffer ? (Number(buffer.baseY) || 0) + (Number(buffer.cursorY) || 0) : -1;
-        const cursorColumn = buffer ? Number(buffer.cursorX) || 0 : -1;
+        const cursorRow = this.showCursor && buffer ? (Number(buffer.baseY) || 0) + (Number(buffer.cursorY) || 0) : -1;
+        const cursorColumn = this.showCursor && buffer ? Number(buffer.cursorX) || 0 : -1;
         const fragment = this.document.createDocumentFragment();
 
         if (!this.isActive()) {
@@ -438,12 +471,7 @@
         }
         this.output.removeEventListener('scroll', this.handleScroll);
         this.document.removeEventListener('selectionchange', this.handleSelectionChange);
-        this.disposables.forEach(function(disposable) {
-            if (disposable && typeof disposable.dispose === 'function') {
-                disposable.dispose();
-            }
-        });
-        this.disposables = [];
+        this.disposeTerminalBindings();
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
             this.resizeObserver = null;
