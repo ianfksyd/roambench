@@ -7502,6 +7502,7 @@
             slash: '/',
             dash: '-',
             plan: '/plan',
+            compact: '/compact',
             up: '\x1b[A',
             down: '\x1b[B',
             left: '\x1b[D',
