@@ -436,8 +436,12 @@
         }
 
         this.applyTheme();
-        this.topSpacer.style.height = (start * lineHeight) + 'px';
-        this.bottomSpacer.style.height = (Math.max(0, totalLines - end) * lineHeight) + 'px';
+        // Keep the scroll surface height stable while rows are virtualized.
+        // Changing spacers above the viewport during touch momentum can make
+        // mobile scroll anchoring accelerate all the way to either endpoint.
+        this.topSpacer.style.height = (totalLines * lineHeight) + 'px';
+        this.bottomSpacer.style.height = '0px';
+        this.linesHost.style.top = (start * lineHeight) + 'px';
 
         for (let row = start; row < end; row += 1) {
             const line = buffer.getLine(row);

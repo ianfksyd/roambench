@@ -3,8 +3,8 @@
 <meta charset="utf-8">
 <title>Terminal composer renderer test</title>
 <style>
-    #output { width: 320px; height: 96px; overflow: auto; }
-    #lines { width: max-content; min-width: 100%; }
+    #output { position: relative; width: 320px; height: 96px; overflow: auto; overflow-anchor: none; }
+    #lines { position: absolute; top: 0; left: 0; width: max-content; min-width: 100%; overflow-anchor: none; }
     .terminal-composer-line { white-space: pre; }
 </style>
 <body data-result="pending">
@@ -104,17 +104,17 @@
     const historyTerminal = new Terminal({
         cols: 40,
         rows: 2,
-        scrollback: 20,
+        scrollback: 600,
         convertEol: true,
         cursorBlink: false,
         disableStdin: true
     });
 
-    const capturedRows = [
-        '\x1b[31moldest\x1b[0m' + ' '.repeat(34),
-        'middle' + ' '.repeat(34),
-        'latest' + ' '.repeat(34)
-    ].join('\n');
+    const capturedRows = Array.from({ length: 500 }, function(_, index) {
+        const label = index === 0 ? 'oldest' : 'history-' + String(index).padStart(3, '0');
+        const content = index === 0 ? '\x1b[31m' + label + '\x1b[0m' : label;
+        return content + ' '.repeat(40 - label.length);
+    }).join('\n');
 
     historyTerminal.write(capturedRows, function() {
         renderer.setTerminal(historyTerminal, { showCursor: false });
@@ -122,12 +122,25 @@
         output.scrollTop = 0;
         renderer.render(true);
 
-        const historyPassed = historyTerminal.buffer.active.length === 3 &&
+        const historyPassed = historyTerminal.buffer.active.length === 500 &&
             lines.textContent.indexOf('oldest') !== -1 &&
-            lines.textContent.indexOf('middle') !== -1 &&
             !lines.querySelector('.terminal-composer-run-cursor');
+        const stableSurfaceHeight = document.getElementById('top').style.height;
+        const middleScrollTop = Math.floor((output.scrollHeight - output.clientHeight) / 2);
+        const scrollTargets = [middleScrollTop, middleScrollTop - 700, middleScrollTop + 350, middleScrollTop - 120];
+        const positionsPassed = scrollTargets.every(function(targetScrollTop) {
+            output.scrollTop = targetScrollTop;
+            renderer.handleScroll();
+            renderer.render(true);
+            return Math.abs(output.scrollTop - targetScrollTop) <= 1;
+        });
 
-        document.body.dataset.result = initialPassed && historyPassed ? 'pass' : 'fail';
+        const stableScrollPassed = positionsPassed &&
+            document.getElementById('top').style.height === stableSurfaceHeight &&
+            document.getElementById('bottom').style.height === '0px' &&
+            parseFloat(lines.style.top) > 0;
+
+        document.body.dataset.result = initialPassed && historyPassed && stableScrollPassed ? 'pass' : 'fail';
         renderer.dispose();
         historyTerminal.dispose();
     });

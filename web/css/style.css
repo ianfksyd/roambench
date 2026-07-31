@@ -2594,6 +2594,7 @@ button.tab-action:focus-visible {
     min-width: 0;
     min-height: 0;
     overflow: auto;
+    overflow-anchor: none;
     overscroll-behavior: contain;
     white-space: pre;
     font-variant-ligatures: none;
@@ -2613,12 +2614,17 @@ button.tab-action:focus-visible {
 .terminal-composer-spacer {
     width: 1px;
     min-height: 0;
+    overflow-anchor: none;
     pointer-events: none;
 }
 
 .terminal-composer-lines {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: max-content;
     min-width: 100%;
+    overflow-anchor: none;
 }
 
 .terminal-composer-line {
