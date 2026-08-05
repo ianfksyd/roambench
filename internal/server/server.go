@@ -75,6 +75,8 @@ type Server struct {
 	mux             *http.ServeMux
 	upgrader        websocket.Upgrader
 	httpServer      *http.Server
+	lifecycleCancel context.CancelFunc
+	lifecycleWG     sync.WaitGroup
 }
 
 func NewServer(
@@ -104,9 +106,24 @@ func NewServer(
 	}
 	if s.controlPlaneErr == nil {
 		s.projectControl.controlPlane = s.controlPlane
+		if _, err := s.controlPlane.ExpireDueInteractions(context.Background(), cfg.Auth.SingleUser, time.Now().UTC()); err != nil {
+			s.controlPlaneErr = err
+		}
+	}
+	if s.controlPlaneErr == nil {
 		if err := s.runPendingTaskProjections(context.Background(), cfg.Auth.SingleUser); err != nil {
 			log.Printf("task projection recovery deferred: %v", err)
 		}
+	}
+	if terminals != nil {
+		terminals.SetSessionEndedHandler(func(username, sessionID string) {
+			if s.controlPlane == nil || s.controlPlaneErr != nil {
+				return
+			}
+			if _, err := s.controlPlane.CancelPendingInteractionsForSession(context.Background(), username, sessionID, terminalCloseReasonSessionEnded); err != nil {
+				log.Printf("cancel interactions for ended session %s/%s: %v", username, sessionID, err)
+			}
+		})
 	}
 	s.upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -262,6 +279,7 @@ func (s *Server) basePathHandler(next http.Handler) http.Handler {
 
 func (s *Server) Start() error {
 	go s.projectControl.runHealthMonitor(s.cfg.Auth.SingleUser, s.notifHub)
+	s.startInteractionLifecycle()
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
 	handler := recoverer(requestLogger(ipAllowlist(s.cfg, secureHeaders(s.cfg, s.basePathHandler(s.mux)))))
@@ -279,7 +297,35 @@ func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
+func (s *Server) startInteractionLifecycle() {
+	if s.controlPlane == nil || s.controlPlaneErr != nil || s.lifecycleCancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.lifecycleCancel = cancel
+	s.lifecycleWG.Add(1)
+	go func() {
+		defer s.lifecycleWG.Done()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				if _, err := s.controlPlane.ExpireDueInteractions(ctx, s.cfg.Auth.SingleUser, now.UTC()); err != nil && !errors.Is(err, context.Canceled) {
+					log.Printf("interaction expiry sweep deferred: %v", err)
+				}
+			}
+		}
+	}()
+}
+
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.lifecycleCancel != nil {
+		s.lifecycleCancel()
+		s.lifecycleWG.Wait()
+	}
 	var httpErr error
 	if s.httpServer != nil {
 		httpErr = s.httpServer.Shutdown(ctx)
@@ -500,6 +546,13 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
+		}
+		if s.controlPlane != nil && s.controlPlaneErr == nil {
+			if _, err := s.controlPlane.CancelPendingInteractionsForSession(r.Context(), username, id, terminalCloseReasonSessionEnded); err != nil {
+				log.Printf("cancel interactions for ended session %s/%s: %v", username, id, err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "terminal ended but pending interactions could not be cancelled"})
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "killed"})
 	default:
@@ -943,6 +996,11 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 				if s.terminals.ConsumeAttachReplacementForUser(username, sessionID, ptmx) {
 					closeReason = terminalCloseReasonAttachedElsewhere
 					closeMessage = "\r\n[attached in another view]\r\n"
+				}
+				if closeReason == terminalCloseReasonSessionEnded && s.controlPlane != nil && s.controlPlaneErr == nil {
+					if _, cancelErr := s.controlPlane.CancelPendingInteractionsForSession(context.Background(), username, sessionID, terminalCloseReasonSessionEnded); cancelErr != nil {
+						log.Printf("cancel interactions for ended session %s/%s: %v", username, sessionID, cancelErr)
+					}
 				}
 				wsMu.Lock()
 				conn.WriteMessage(websocket.TextMessage, []byte(closeMessage))

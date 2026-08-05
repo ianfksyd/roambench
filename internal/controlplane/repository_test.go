@@ -330,3 +330,40 @@ func TestWaitReturnsResolutionAndCancelSurvivesReopen(t *testing.T) {
 		t.Fatalf("persisted status = %q, want cancelled", persisted.Status)
 	}
 }
+
+func TestResponseAfterExpiryClosesInteractionInsteadOfResolvingIt(t *testing.T) {
+	repo, err := Open(filepath.Join(t.TempDir(), "control-plane.sqlite"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer repo.Close()
+	request := testPermissionRequest()
+	request.VendorRequestID = "expired-response"
+	request.ExpiresAt = time.Now().UTC().Add(-time.Minute)
+	created, err := repo.CreateInteraction(context.Background(), request)
+	if err != nil {
+		t.Fatalf("CreateInteraction: %v", err)
+	}
+
+	_, _, err = repo.Respond(context.Background(), "ian", created.RequestID, RespondInput{
+		Action: "approve_once", Actor: "ian", DeviceID: "phone", ExpectedRowVersion: 1,
+		IdempotencyKey: "late-response", InputHash: "sha256:abc",
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("late Respond error = %v, want ErrConflict", err)
+	}
+	interaction, err := repo.GetInteraction(context.Background(), "ian", created.RequestID)
+	if err != nil {
+		t.Fatalf("GetInteraction: %v", err)
+	}
+	if interaction.Status != "expired" || interaction.FinalAction != "expire" || interaction.RowVersion != 2 {
+		t.Fatalf("interaction after late response = %#v, want expired/expire/2", interaction)
+	}
+	responses, err := repo.ListResponses(context.Background(), "ian", created.RequestID)
+	if err != nil {
+		t.Fatalf("ListResponses: %v", err)
+	}
+	if len(responses) != 0 {
+		t.Fatalf("responses after expiry = %d, want 0", len(responses))
+	}
+}

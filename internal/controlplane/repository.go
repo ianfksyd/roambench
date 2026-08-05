@@ -168,6 +168,8 @@ CREATE TABLE IF NOT EXISTS interactions (
   UNIQUE(username, checkpoint_id)
 );
 CREATE INDEX IF NOT EXISTS interactions_pending_idx ON interactions(username, status, created_at);
+CREATE INDEX IF NOT EXISTS interactions_expiry_idx ON interactions(username, status, expires_at);
+CREATE INDEX IF NOT EXISTS interactions_session_idx ON interactions(username, session_id, status);
 CREATE TABLE IF NOT EXISTS responses (
   response_id TEXT PRIMARY KEY,
   request_id TEXT NOT NULL UNIQUE REFERENCES interactions(request_id) ON DELETE CASCADE,
@@ -262,6 +264,7 @@ CREATE TABLE IF NOT EXISTS task_projections (
 CREATE INDEX IF NOT EXISTS task_projections_pending_idx ON task_projections(username,state,created_at);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, CURRENT_TIMESTAMP);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, CURRENT_TIMESTAMP);
 `
 
 func Open(path string) (*Repository, error) {
@@ -393,6 +396,9 @@ func (r *Repository) GetInteraction(ctx context.Context, username, requestID str
 }
 
 func (r *Repository) ListPendingInteractions(ctx context.Context, username string, limit int) ([]Interaction, error) {
+	if _, err := r.ExpireDueInteractions(ctx, username, time.Now().UTC()); err != nil {
+		return nil, err
+	}
 	return r.listInteractions(ctx, username, "pending", limit)
 }
 
@@ -480,6 +486,16 @@ func (r *Repository) Respond(ctx context.Context, username, requestID string, in
 	if err != nil {
 		return Response{}, false, err
 	}
+	now := time.Now().UTC()
+	if interaction.Status == "pending" && !interaction.ExpiresAt.IsZero() && !interaction.ExpiresAt.After(now) {
+		if _, err := expireInteractionTx(ctx, tx, username, interaction, now); err != nil {
+			return Response{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return Response{}, false, err
+		}
+		return Response{}, false, fmt.Errorf("%w: interaction expired before response", ErrConflict)
+	}
 	if interaction.Status != "pending" || interaction.RowVersion != input.ExpectedRowVersion {
 		return Response{}, false, fmt.Errorf("%w: interaction is %s at row version %d", ErrConflict, interaction.Status, interaction.RowVersion)
 	}
@@ -490,7 +506,6 @@ func (r *Repository) Respond(ctx context.Context, username, requestID string, in
 		return Response{}, false, err
 	}
 
-	now := time.Now().UTC()
 	response := Response{
 		ResponseID: newID("response"), RequestID: requestID, CheckpointID: interaction.CheckpointID,
 		Action: input.Action, SelectedOptionIDs: append([]string(nil), input.SelectedOptionIDs...), Feedback: input.Feedback,
@@ -602,6 +617,109 @@ func (r *Repository) CancelInteractionIdempotent(ctx context.Context, username, 
 	return interaction, nil
 }
 
+func (r *Repository) ExpireDueInteractions(ctx context.Context, username string, now time.Time) ([]Interaction, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, fmt.Errorf("%w: username is required", ErrValidation)
+	}
+	now = now.UTC()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, interactionSelect+` WHERE username=? AND status='pending' AND expires_at IS NOT NULL ORDER BY created_at`, username)
+	if err != nil {
+		return nil, err
+	}
+	var due []Interaction
+	for rows.Next() {
+		interaction, scanErr := scanInteraction(rows)
+		if scanErr != nil {
+			rows.Close()
+			return nil, scanErr
+		}
+		if !interaction.ExpiresAt.IsZero() && !interaction.ExpiresAt.After(now) {
+			due = append(due, interaction)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var expired []Interaction
+	for _, interaction := range due {
+		updated, err := expireInteractionTx(ctx, tx, username, interaction, now)
+		if err != nil {
+			return nil, err
+		}
+		if updated.RequestID != "" {
+			expired = append(expired, updated)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return expired, nil
+}
+
+func (r *Repository) CancelPendingInteractionsForSession(ctx context.Context, username, sessionID, reason string) ([]Interaction, error) {
+	username = strings.TrimSpace(username)
+	sessionID = strings.TrimSpace(sessionID)
+	reason = strings.TrimSpace(reason)
+	if username == "" || sessionID == "" {
+		return nil, fmt.Errorf("%w: username and session ID are required", ErrValidation)
+	}
+	now := time.Now().UTC()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, interactionSelect+` WHERE username=? AND session_id=? AND status='pending' ORDER BY created_at`, username, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	var pending []Interaction
+	for rows.Next() {
+		interaction, scanErr := scanInteraction(rows)
+		if scanErr != nil {
+			rows.Close()
+			return nil, scanErr
+		}
+		pending = append(pending, interaction)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var cancelled []Interaction
+	for _, interaction := range pending {
+		result, err := tx.ExecContext(ctx, `UPDATE interactions SET status='cancelled',final_action='cancel',resolved_at=?,row_version=row_version+1 WHERE username=? AND request_id=? AND status='pending' AND row_version=?`,
+			formatTime(now), username, interaction.RequestID, interaction.RowVersion)
+		if err != nil {
+			return nil, err
+		}
+		affected, _ := result.RowsAffected()
+		if affected != 1 {
+			continue
+		}
+		if err := insertAudit(ctx, tx, username, interaction.RequestID, "interaction.cancelled", "session_lifecycle", reason, now); err != nil {
+			return nil, err
+		}
+		if err := insertOutbox(ctx, tx, username, interaction.RequestID, "interaction.cancelled", map[string]string{"reason": reason, "sessionId": sessionID}, now); err != nil {
+			return nil, err
+		}
+		updated, err := getInteractionTx(ctx, tx, username, interaction.RequestID)
+		if err != nil {
+			return nil, err
+		}
+		cancelled = append(cancelled, updated)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return cancelled, nil
+}
+
 func (r *Repository) WaitInteraction(ctx context.Context, username, requestID string, timeout time.Duration) (Interaction, error) {
 	if timeout <= 0 || timeout > 30*time.Second {
 		timeout = 30 * time.Second
@@ -614,6 +732,12 @@ func (r *Repository) WaitInteraction(ctx context.Context, username, requestID st
 		interaction, err := r.GetInteraction(ctx, username, requestID)
 		if err != nil {
 			return Interaction{}, err
+		}
+		if interaction.Status == "pending" && !interaction.ExpiresAt.IsZero() && !interaction.ExpiresAt.After(time.Now().UTC()) {
+			if _, err := r.ExpireDueInteractions(ctx, username, time.Now().UTC()); err != nil {
+				return Interaction{}, err
+			}
+			continue
 		}
 		if interaction.Status != "pending" {
 			return interaction, nil
@@ -787,6 +911,27 @@ func validateResponse(interaction Interaction, input RespondInput) error {
 		}
 	}
 	return nil
+}
+
+func expireInteractionTx(ctx context.Context, tx *sql.Tx, username string, interaction Interaction, now time.Time) (Interaction, error) {
+	result, err := tx.ExecContext(ctx, `UPDATE interactions SET status='expired',final_action='expire',resolved_at=?,row_version=row_version+1 WHERE username=? AND request_id=? AND status='pending' AND row_version=?`,
+		formatTime(now), username, interaction.RequestID, interaction.RowVersion)
+	if err != nil {
+		return Interaction{}, err
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		return Interaction{}, nil
+	}
+	if err := insertAudit(ctx, tx, username, interaction.RequestID, "interaction.expired", "expiry_worker", "Interaction reached expiresAt.", now); err != nil {
+		return Interaction{}, err
+	}
+	if err := insertOutbox(ctx, tx, username, interaction.RequestID, "interaction.expired", map[string]interface{}{
+		"requestId": interaction.RequestID, "expiresAt": interaction.ExpiresAt,
+	}, now); err != nil {
+		return Interaction{}, err
+	}
+	return getInteractionTx(ctx, tx, username, interaction.RequestID)
 }
 
 func insertAudit(ctx context.Context, tx *sql.Tx, username, requestID, eventType, actor, detail string, now time.Time) error {

@@ -2,13 +2,13 @@
 
 日期：2026-08-05
 状态：实施中
-范围：Interaction/Decision Gateway 第一至第五切片
+范围：Interaction/Decision Gateway 第一至第六切片
 
 ## 当前结论
 
 阶段 1 的新请求闭环、旧审批事实迁移、durable Task projector 和运行时 Checkpoint 单一事实源已经建立。当前代码可以让 Adapter 创建结构化 Interaction，由另一个已登录浏览器作答，并让 Adapter 通过读取或最长 30 秒的有限长轮询取得最终结果。决定、审计、outbox 和待投影记录在同一 SQLite 事务中提交；并发作答最多一个成功。
 
-这不是阶段 1 完成声明。历史 Checkpoint/Decision 会在启动时从 JSON/WAL 幂等导入 SQLite，原文件保留只读迁移前备份，JSON 中的审批数组随后清空。运行期间旧 Project Control 路径创建、解决或过期 Checkpoint 时，会先把事实和 outbox 写入 SQLite，再保存不含审批数组的 JSON Task 投影；下一次旧路径变更会先从 SQLite 恢复兼容投影。决定后的 Task 更新由可恢复 projector 执行。Interaction 创建、响应和 cancel 均已有持久化幂等语义。自动 expiry/session cancel 和故障注入仍未完成；完成前不进入阶段 2。
+这不是阶段 1 完成声明。历史 Checkpoint/Decision 会在启动时从 JSON/WAL 幂等导入 SQLite，原文件保留只读迁移前备份，JSON 中的审批数组随后清空。运行期间旧 Project Control 路径创建、解决或过期 Checkpoint 时，会先把事实和 outbox 写入 SQLite，再保存不含审批数组的 JSON Task 投影；下一次旧路径变更会先从 SQLite 恢复兼容投影。决定后的 Task 更新由可恢复 projector 执行。Interaction 创建、响应、expiry 和 session cancel 均已有持久化终态语义。空状态 fixture 和事务故障注入仍未完成；完成前不进入阶段 2。
 
 ## 已完成
 
@@ -45,6 +45,11 @@
 - Interaction 创建和 cancel 在各自业务事务内保存规范化请求 hash 与原始 Interaction JSON；业务提交和幂等结果不会部分成功。
 - 同 key、同 payload 在服务重启后仍返回第一次 HTTP 结果；同 key、不同 payload 返回 conflict。
 - 创建幂等重放返回第一次创建时的 pending/row version 1 快照，不会被资源后来 resolved 或 cancelled 的当前状态替换。
+- 到达 `expires_at` 的 pending Interaction 会原子转为 expired、写入 `interaction.expired` audit/outbox，并把 row version 增加一次。
+- 服务启动时先恢复停机期间到期的请求；运行期间每秒扫描一次，pending list 和 wait 也会主动收敛到期状态。
+- 手机响应事务会再次检查截止时间；截止时间后的响应不能抢在 expiry 之后形成 Decision。
+- terminal manager 提供 session-ended 生命周期回调；HTTP 删除、空闲清理、存储上限清理和 tmux 消失均会取消该 session 的 pending Interaction。
+- session cancel 和手机决定通过 pending/row-version 条件更新竞争；已 resolved、expired 或 cancelled 的终态不会被覆盖。
 
 ## 已验证行为
 
@@ -70,12 +75,15 @@
 - Interaction 创建后即使资源随后取消，重启后的同 key 重试仍返回第一次 `201` 的原始 pending 快照。
 - cancel 在重启后使用同 key、同 payload 重试返回第一次 `200` 结果，不重复状态迁移。
 - 创建摘要或取消原因改变但复用原 key 时返回 HTTP `409`。
+- 截止时间后的手机响应返回 conflict，Interaction 变为 expired/row version 2，且不产生 Response。
+- 请求在服务停机期间到期后，首次重启生成一次 `interaction.expired` outbox；再次重启不重复事件。
+- terminal session 结束后，同 session 的 pending Interaction 变为 cancelled，已经批准的 Interaction 保持 resolved。
+- terminal manager 直接清理 session 时同样触发取消，不依赖 HTTP DELETE 路径。
 
 ## 尚未完成的阶段 1 门槛
 
-1. 增加 expiry 和 session-ended 自动取消处理。
-2. 补齐空状态 fixture，并对 migration、projector 和事务故障执行 fault-injection，证明失败时没有部分 audit/outbox。
+1. 补齐空状态 fixture，并对 migration、projector 和事务故障执行 fault-injection，证明失败时没有部分 audit/outbox。
 
 ## 下一切片
 
-下一切片实现 expiry 和 session-ended 自动取消：到期请求必须原子转为终态并产生一次 outbox；session 结束只能取消仍为 pending 的请求，不能覆盖已经形成的手机决定。随后补空状态 fixture 和 fault-injection，满足全部退出条件后才把阶段 1 标记为完成。
+下一切片是阶段 1 收尾：补空数据库/空 JSON fixture，并对创建、响应、expiry、session cancel、迁移和 Task projector 做 fault-injection。每个故障点都要证明事务回滚后没有孤立 audit/outbox、重启可以恢复或安全重试。退出条件全部满足后，再审查是否把阶段 1 标记为完成。

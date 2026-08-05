@@ -108,9 +108,16 @@ type Manager struct {
 	hasTmux           bool
 	mu                sync.Mutex
 	sessions          map[string]*Session
+	sessionEnded      func(username, sessionID string)
 	cancel            context.CancelFunc
 	persistDir        string
 	tmuxSessionExists func(string) bool
+}
+
+func (m *Manager) SetSessionEndedHandler(handler func(username, sessionID string)) {
+	m.mu.Lock()
+	m.sessionEnded = handler
+	m.mu.Unlock()
 }
 
 func NewManager(cfg *config.TerminalConfig) *Manager {
@@ -597,6 +604,7 @@ func (m *Manager) KillSessionForUser(username, sessionID string) error {
 func (m *Manager) KillSession(sessionID string) error {
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
+	handler := m.sessionEnded
 	if ok {
 		delete(m.sessions, sessionID)
 	}
@@ -618,6 +626,9 @@ func (m *Manager) KillSession(sessionID string) error {
 	}
 
 	m.removePersistedSession(session.Username, sessionID)
+	if handler != nil {
+		handler(session.Username, sessionID)
+	}
 	return nil
 }
 
