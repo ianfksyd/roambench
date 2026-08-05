@@ -1,0 +1,42 @@
+{
+  "fixtureVersion": 1,
+  "vendor": "codex",
+  "protocol": "app-server-jsonrpc-v2",
+  "minimumSupportedVersion": "codex-cli 0.146.0",
+  "capturedVersion": "codex-cli 0.146.0",
+  "sourceUrl": "https://developers.openai.com/codex/app-server/",
+  "validationLevel": "locally-generated-json-schema",
+  "messages": [
+    {
+      "direction": "vendor_to_adapter",
+      "kind": "request",
+      "transport": "jsonrpc-stdio",
+      "correlationId": "101",
+      "payload": {
+        "id": 101,
+        "method": "item/commandExecution/requestApproval",
+        "params": {
+          "threadId": "thread_fixture_001",
+          "turnId": "turn_fixture_001",
+          "itemId": "item_fixture_001",
+          "command": "git status --short",
+          "cwd": "/workspace/project",
+          "reason": "Inspect the working tree before continuing",
+          "startedAtMs": 1785866400000
+        }
+      }
+    },
+    {
+      "direction": "adapter_to_vendor",
+      "kind": "response",
+      "transport": "jsonrpc-stdio",
+      "correlationId": "101",
+      "payload": {
+        "id": 101,
+        "result": {
+          "decision": "accept"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "fixtureVersion": 1,
+  "vendor": "kimi",
+  "protocol": "wire-jsonrpc-1.10",
+  "minimumSupportedVersion": "Kimi Code CLI 1.25.0 / Wire 1.6",
+  "capturedVersion": "not installed locally; official Wire 1.10 documentation",
+  "sourceUrl": "https://moonshotai.github.io/kimi-cli/en/customization/wire-mode.html",
+  "validationLevel": "official-documentation-not-locally-executed",
+  "messages": [
+    {
+      "direction": "vendor_to_adapter",
+      "kind": "request",
+      "transport": "jsonrpc-stdio",
+      "correlationId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "request",
+        "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        "params": {
+          "type": "ApprovalRequest",
+          "payload": {
+            "id": "approval-fixture-001",
+            "tool_call_id": "tool-fixture-001",
+            "sender": "Shell",
+            "action": "run shell command",
+            "description": "Run command `git status --short`",
+            "display": [],
+            "source_kind": "foreground_turn",
+            "source_id": null,
+            "agent_id": null,
+            "subagent_type": null,
+            "source_description": "Main agent"
+          }
+        }
+      }
+    },
+    {
+      "direction": "adapter_to_vendor",
+      "kind": "response",
+      "transport": "jsonrpc-stdio",
+      "correlationId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        "result": {
+          "request_id": "approval-fixture-001",
+          "response": "approve"
+        }
+      }
+    }
+  ]
+}

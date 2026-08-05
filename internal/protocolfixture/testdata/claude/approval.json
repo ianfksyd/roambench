@@ -1,0 +1,56 @@
+{
+  "fixtureVersion": 1,
+  "vendor": "claude",
+  "protocol": "permission-request-hook",
+  "minimumSupportedVersion": "Claude Code 2.1.222",
+  "capturedVersion": "Claude Code 2.1.222",
+  "sourceUrl": "https://code.claude.com/docs/en/hooks#permissionrequest",
+  "validationLevel": "local-version-official-documentation",
+  "messages": [
+    {
+      "direction": "vendor_to_adapter",
+      "kind": "request",
+      "transport": "hook-stdin-json",
+      "correlationId": "claude-session-fixture-001:permission-1",
+      "payload": {
+        "session_id": "claude-session-fixture-001",
+        "transcript_path": "/workspace/.fixtures/claude-session-fixture-001.jsonl",
+        "cwd": "/workspace/project",
+        "permission_mode": "default",
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git status --short",
+          "description": "Inspect the working tree before continuing"
+        },
+        "permission_suggestions": [
+          {
+            "type": "addRules",
+            "rules": [
+              {
+                "toolName": "Bash",
+                "ruleContent": "git status --short"
+              }
+            ],
+            "behavior": "allow",
+            "destination": "session"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "adapter_to_vendor",
+      "kind": "response",
+      "transport": "hook-stdout-json",
+      "correlationId": "claude-session-fixture-001:permission-1",
+      "payload": {
+        "hookSpecificOutput": {
+          "hookEventName": "PermissionRequest",
+          "decision": {
+            "behavior": "allow"
+          }
+        }
+      }
+    }
+  ]
+}

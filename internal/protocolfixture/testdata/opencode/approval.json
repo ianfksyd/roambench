@@ -1,0 +1,54 @@
+{
+  "fixtureVersion": 1,
+  "vendor": "opencode",
+  "protocol": "http-sse-v1",
+  "minimumSupportedVersion": "OpenCode 1.18.10",
+  "capturedVersion": "OpenCode 1.18.10",
+  "sourceUrl": "https://opencode.ai/docs/server/",
+  "validationLevel": "locally-generated-openapi-3.1",
+  "messages": [
+    {
+      "direction": "vendor_to_adapter",
+      "kind": "request",
+      "transport": "sse-event",
+      "correlationId": "per_fixture_001",
+      "payload": {
+        "id": "evt_fixture_001",
+        "type": "permission.asked",
+        "properties": {
+          "id": "per_fixture_001",
+          "sessionID": "ses_fixture_001",
+          "permission": "bash",
+          "patterns": [
+            "git status --short"
+          ],
+          "metadata": {
+            "command": "git status --short",
+            "description": "Inspect the working tree before continuing"
+          },
+          "always": [
+            "git status --short"
+          ],
+          "tool": {
+            "messageID": "msg_fixture_001",
+            "callID": "call_fixture_001"
+          }
+        }
+      }
+    },
+    {
+      "direction": "adapter_to_vendor",
+      "kind": "response",
+      "transport": "http-json",
+      "correlationId": "per_fixture_001",
+      "payload": {
+        "method": "POST",
+        "path": "/permission/per_fixture_001/reply",
+        "body": {
+          "reply": "once"
+        },
+        "expectedStatus": 200
+      }
+    }
+  ]
+}
