@@ -208,6 +208,7 @@ func (s *Server) handleMobileInteraction(w http.ResponseWriter, r *http.Request)
 		writeControlPlaneError(w, err)
 		return
 	}
+	_ = s.runPendingTaskProjections(r.Context(), username)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"response": response, "replayed": replayed})
 }
 
@@ -366,6 +367,7 @@ func (s *Server) resolveControlPlaneCheckpointDecision(w http.ResponseWriter, r 
 		}
 		return true
 	}
+	_ = s.runPendingTaskProjections(r.Context(), username)
 	snapshot, err := s.projectControl.snapshotForUser(username, s.terminals)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

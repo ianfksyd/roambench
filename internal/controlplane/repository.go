@@ -229,6 +229,18 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   created_at TEXT NOT NULL,
   PRIMARY KEY(username, actor_scope, idempotency_key)
 );
+CREATE TABLE IF NOT EXISTS task_projections (
+  decision_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  request_id TEXT NOT NULL REFERENCES interactions(request_id) ON DELETE CASCADE,
+  response_id TEXT NOT NULL UNIQUE REFERENCES responses(response_id) ON DELETE CASCADE,
+  state TEXT NOT NULL CHECK(state IN ('pending','applied','failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_projections_pending_idx ON task_projections(username,state,created_at);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, CURRENT_TIMESTAMP);
 `
 
@@ -440,6 +452,9 @@ func (r *Repository) Respond(ctx context.Context, username, requestID string, in
 	if _, err := tx.ExecContext(ctx, `INSERT INTO idempotency_keys(username,actor_scope,idempotency_key,request_hash,response_id,created_at) VALUES(?,?,?,?,?,?)`, username, actorScope, input.IdempotencyKey, requestHash, response.ResponseID, formatTime(now)); err != nil {
 		return Response{}, false, fmt.Errorf("%w: idempotency key already used", ErrConflict)
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO task_projections(decision_id,username,request_id,response_id,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, response.ResponseID, username, requestID, response.ResponseID, "pending", formatTime(now), formatTime(now)); err != nil {
+		return Response{}, false, err
+	}
 	if err := insertAudit(ctx, tx, username, requestID, "interaction.resolved", response.Actor, response.Action, now); err != nil {
 		return Response{}, false, err
 	}
@@ -447,6 +462,9 @@ func (r *Repository) Respond(ctx context.Context, username, requestID string, in
 		return Response{}, false, err
 	}
 	if err := insertOutbox(ctx, tx, username, requestID, "adapter.decision.ready", response, now); err != nil {
+		return Response{}, false, err
+	}
+	if err := insertOutbox(ctx, tx, username, requestID, "project_task_projection.requested", map[string]string{"decisionId": response.ResponseID, "responseId": response.ResponseID}, now); err != nil {
 		return Response{}, false, err
 	}
 	if err := tx.Commit(); err != nil {

@@ -140,6 +140,10 @@ func importLegacyDecision(ctx context.Context, tx *sql.Tx, username string, deci
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE interactions SET status='resolved',final_action=?,resolved_at=? WHERE username=? AND request_id=?`, action, created, username, decision.CheckpointID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO task_projections(decision_id,username,request_id,response_id,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, decision.ID, username, decision.CheckpointID, responseID, "applied", created, created)
 	return err
 }
 

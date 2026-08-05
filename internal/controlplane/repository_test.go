@@ -149,6 +149,47 @@ func TestResponseRetryWithSameIdempotencyKeyReturnsOriginalResult(t *testing.T) 
 	}
 }
 
+func TestResponseTransactionQueuesTaskProjection(t *testing.T) {
+	repo, err := Open(filepath.Join(t.TempDir(), "control-plane.sqlite"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer repo.Close()
+	request := testPermissionRequest()
+	request.RequestKind = "final_acceptance"
+	created, err := repo.CreateInteraction(context.Background(), request)
+	if err != nil {
+		t.Fatalf("CreateInteraction: %v", err)
+	}
+	response, _, err := repo.Respond(context.Background(), "ian", created.RequestID, RespondInput{
+		Action: "approve_once", Actor: "ian", ExpectedRowVersion: 1,
+		IdempotencyKey: "projection-decision", InputHash: "sha256:abc",
+	})
+	if err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	projections, err := repo.ListPendingTaskProjections(context.Background(), "ian", 10)
+	if err != nil {
+		t.Fatalf("ListPendingTaskProjections: %v", err)
+	}
+	if len(projections) != 1 || projections[0].DecisionID != response.ResponseID || projections[0].RequestID != created.RequestID {
+		t.Fatalf("pending projections = %#v", projections)
+	}
+	events, err := repo.ListOutbox(context.Background(), "ian", 20)
+	if err != nil {
+		t.Fatalf("ListOutbox: %v", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.EventType == "project_task_projection.requested" && event.AggregateID == created.RequestID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("project_task_projection.requested missing from outbox: %#v", events)
+	}
+}
+
 func TestQuestionSchemaRejectsUnknownOptionAndAcceptsDeclaredChoice(t *testing.T) {
 	repo, err := Open(filepath.Join(t.TempDir(), "control-plane.sqlite"))
 	if err != nil {

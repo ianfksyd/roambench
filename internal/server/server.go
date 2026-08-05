@@ -102,6 +102,11 @@ func NewServer(
 	if s.controlPlaneErr == nil {
 		s.controlPlaneErr = s.migrateLegacyApprovals(cfg.Auth.SingleUser)
 	}
+	if s.controlPlaneErr == nil {
+		if err := s.runPendingTaskProjections(context.Background(), cfg.Auth.SingleUser); err != nil {
+			log.Printf("task projection recovery deferred: %v", err)
+		}
+	}
 	s.upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
