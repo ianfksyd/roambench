@@ -53,6 +53,7 @@ These docs are for maintainers, not end users.
 - [Release Packaging](internal/release-packaging.md) — build and bundle flow for GitHub Releases
 - [Windows Native Plan](internal/windows-native-plan.md) — Wails + ConPTY desktop app planning
 - [Project Control Iteration Plan](internal/project-control-iteration-plan.md) — next steps for auto-progression, agent API, notifications
+- [Mobile Interaction and CLI Coordination Plan](internal/mobile-approval-and-cli-coordination-plan-v0.1.md) — interactive phone control, durable decisions, CLI adapters, and cross-CLI messaging
 
 ## Branding
 
