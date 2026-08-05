@@ -77,6 +77,7 @@ func (s *Server) handleAgentInteractions(w http.ResponseWriter, r *http.Request)
 		RequestKind: req.RequestKind, RiskClass: req.RiskClass, Title: req.Title, Summary: req.Summary,
 		Preview: req.Preview, ArtifactRefs: req.ArtifactRefs, AllowedActions: req.AllowedActions,
 		ResponseSchema: req.ResponseSchema, UIHints: req.UIHints, ExpiresAt: req.ExpiresAt, InputHash: req.InputHash,
+		ActorScope: "agent", IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
 	})
 	if err != nil {
 		writeControlPlaneError(w, err)
@@ -133,7 +134,10 @@ func (s *Server) handleAgentInteraction(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 			return
 		}
-		interaction, err := s.controlPlane.CancelInteraction(r.Context(), username, requestID, req.ExpectedRowVersion, req.Reason)
+		interaction, err := s.controlPlane.CancelInteractionIdempotent(r.Context(), username, requestID, controlplane.CancelInteractionInput{
+			ExpectedRowVersion: req.ExpectedRowVersion, Reason: req.Reason,
+			ActorScope: "agent", IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
+		})
 		if err != nil {
 			writeControlPlaneError(w, err)
 			return

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -177,6 +178,118 @@ func TestAgentCanCancelAndRetryReadAfterServerRestart(t *testing.T) {
 	if interaction["status"] != "cancelled" {
 		t.Fatalf("interaction after restart = %#v", interaction)
 	}
+}
+
+func TestCreateInteractionIdempotencyReturnsOriginalResultAfterRestart(t *testing.T) {
+	persistDir := t.TempDir()
+	first, sessionToken, firstSessions := newInteractionAPIServer(t, persistDir)
+	agentToken := issueAgentToken(t, first, sessionToken)
+	body := `{
+		"taskId":"task-create-idempotency","runtimeId":"runtime-1","sessionId":"session-1",
+		"adapterKind":"generic","vendorRequestId":"create-idempotency","requestKind":"permission","riskClass":"R1",
+		"title":"Approve deployment","summary":"Deploy the reviewed build","preview":"deploy --reviewed",
+		"allowedActions":["approve_once","reject"],"responseSchema":{"type":"action"},"inputHash":"sha256:create-idempotency"
+	}`
+	firstResult, firstStatus := postAgentInteraction(t, first, agentToken, "create-persisted-key", body)
+	if firstStatus != http.StatusCreated {
+		t.Fatalf("first create status = %d, want 201: %#v", firstStatus, firstResult)
+	}
+	requestID := firstResult["requestId"].(string)
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/agent/v1/interactions/"+requestID+"/cancel", strings.NewReader(`{"expectedRowVersion":1,"reason":"change live state"}`))
+	cancelReq.Header.Set("Authorization", "Bearer "+agentToken)
+	cancelReq.Header.Set("Content-Type", "application/json")
+	cancelReq.Header.Set("Idempotency-Key", "create-test-cancel")
+	cancelRec := httptest.NewRecorder()
+	first.mux.ServeHTTP(cancelRec, cancelReq)
+	if cancelRec.Code != http.StatusOK {
+		t.Fatalf("cancel before retry status = %d: %s", cancelRec.Code, cancelRec.Body.String())
+	}
+	if err := first.controlPlane.Close(); err != nil {
+		t.Fatalf("close first control plane: %v", err)
+	}
+	firstSessions.Stop()
+
+	restarted, restartedSessionToken, restartedSessions := newInteractionAPIServer(t, persistDir)
+	defer restartedSessions.Stop()
+	restartedAgentToken := issueAgentToken(t, restarted, restartedSessionToken)
+	replayed, replayStatus := postAgentInteraction(t, restarted, restartedAgentToken, "create-persisted-key", body)
+	if replayStatus != http.StatusCreated {
+		t.Fatalf("replayed create status = %d, want 201: %#v", replayStatus, replayed)
+	}
+	if !reflect.DeepEqual(replayed, firstResult) {
+		t.Fatalf("replayed create = %#v, want original %#v", replayed, firstResult)
+	}
+
+	changed := strings.Replace(body, "Deploy the reviewed build", "Deploy a different build", 1)
+	conflict, conflictStatus := postAgentInteraction(t, restarted, restartedAgentToken, "create-persisted-key", changed)
+	if conflictStatus != http.StatusConflict {
+		t.Fatalf("changed create status = %d, want 409: %#v", conflictStatus, conflict)
+	}
+}
+
+func TestCancelInteractionIdempotencyReturnsOriginalResultAfterRestart(t *testing.T) {
+	persistDir := t.TempDir()
+	first, sessionToken, firstSessions := newInteractionAPIServer(t, persistDir)
+	agentToken := issueAgentToken(t, first, sessionToken)
+	created := createInteractionViaAPI(t, first, agentToken, "cancel-idempotency", "permission", `{"type":"action"}`)
+	requestID := created["requestId"].(string)
+	body := `{"expectedRowVersion":1,"reason":"adapter session ended"}`
+	firstResult, firstStatus := postAgentCancel(t, first, agentToken, requestID, "cancel-persisted-key", body)
+	if firstStatus != http.StatusOK {
+		t.Fatalf("first cancel status = %d, want 200: %#v", firstStatus, firstResult)
+	}
+	if err := first.controlPlane.Close(); err != nil {
+		t.Fatalf("close first control plane: %v", err)
+	}
+	firstSessions.Stop()
+
+	restarted, restartedSessionToken, restartedSessions := newInteractionAPIServer(t, persistDir)
+	defer restartedSessions.Stop()
+	restartedAgentToken := issueAgentToken(t, restarted, restartedSessionToken)
+	replayed, replayStatus := postAgentCancel(t, restarted, restartedAgentToken, requestID, "cancel-persisted-key", body)
+	if replayStatus != http.StatusOK {
+		t.Fatalf("replayed cancel status = %d, want 200: %#v", replayStatus, replayed)
+	}
+	if !reflect.DeepEqual(replayed, firstResult) {
+		t.Fatalf("replayed cancel = %#v, want original %#v", replayed, firstResult)
+	}
+
+	changed := `{"expectedRowVersion":1,"reason":"different cancellation reason"}`
+	conflict, conflictStatus := postAgentCancel(t, restarted, restartedAgentToken, requestID, "cancel-persisted-key", changed)
+	if conflictStatus != http.StatusConflict {
+		t.Fatalf("changed cancel status = %d, want 409: %#v", conflictStatus, conflict)
+	}
+}
+
+func postAgentInteraction(t *testing.T, srv *Server, agentToken, idempotencyKey, body string) (map[string]interface{}, int) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/v1/interactions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode interaction response: %v", err)
+	}
+	return result, rec.Code
+}
+
+func postAgentCancel(t *testing.T, srv *Server, agentToken, requestID, idempotencyKey, body string) (map[string]interface{}, int) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/v1/interactions/"+requestID+"/cancel", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode cancel response: %v", err)
+	}
+	return result, rec.Code
 }
 
 func TestMobileInteractionRoutesRequireBrowserSession(t *testing.T) {

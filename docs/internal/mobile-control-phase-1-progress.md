@@ -2,13 +2,13 @@
 
 日期：2026-08-05
 状态：实施中
-范围：Interaction/Decision Gateway 第一至第四切片
+范围：Interaction/Decision Gateway 第一至第五切片
 
 ## 当前结论
 
 阶段 1 的新请求闭环、旧审批事实迁移、durable Task projector 和运行时 Checkpoint 单一事实源已经建立。当前代码可以让 Adapter 创建结构化 Interaction，由另一个已登录浏览器作答，并让 Adapter 通过读取或最长 30 秒的有限长轮询取得最终结果。决定、审计、outbox 和待投影记录在同一 SQLite 事务中提交；并发作答最多一个成功。
 
-这不是阶段 1 完成声明。历史 Checkpoint/Decision 会在启动时从 JSON/WAL 幂等导入 SQLite，原文件保留只读迁移前备份，JSON 中的审批数组随后清空。运行期间旧 Project Control 路径创建、解决或过期 Checkpoint 时，会先把事实和 outbox 写入 SQLite，再保存不含审批数组的 JSON Task 投影；下一次旧路径变更会先从 SQLite 恢复兼容投影。决定后的 Task 更新由可恢复 projector 执行。完整 POST 幂等、自动 expiry/session cancel 和故障注入仍未完成；完成前不进入阶段 2。
+这不是阶段 1 完成声明。历史 Checkpoint/Decision 会在启动时从 JSON/WAL 幂等导入 SQLite，原文件保留只读迁移前备份，JSON 中的审批数组随后清空。运行期间旧 Project Control 路径创建、解决或过期 Checkpoint 时，会先把事实和 outbox 写入 SQLite，再保存不含审批数组的 JSON Task 投影；下一次旧路径变更会先从 SQLite 恢复兼容投影。决定后的 Task 更新由可恢复 projector 执行。Interaction 创建、响应和 cancel 均已有持久化幂等语义。自动 expiry/session cancel 和故障注入仍未完成；完成前不进入阶段 2。
 
 ## 已完成
 
@@ -41,6 +41,10 @@
 - pending Checkpoint 过期或取消时会更新同一 Interaction 的状态和 row version，并生成幂等 `interaction.expired` 或 `interaction.cancelled` outbox event。
 - SQLite 中已有的终态不会被迟到的旧 pending 投影重新打开。
 - 旧 approvals inbox 决策改走 Gateway 后，仍投影 `decision_made`、`checkpoint_resolved` 和原有决定类型事件，保持 replay、筛选和 HTTP 错误语义。
+- 新增持久化 POST 幂等表，按 username、actor scope、operation 和 idempotency key 隔离记录。
+- Interaction 创建和 cancel 在各自业务事务内保存规范化请求 hash 与原始 Interaction JSON；业务提交和幂等结果不会部分成功。
+- 同 key、同 payload 在服务重启后仍返回第一次 HTTP 结果；同 key、不同 payload 返回 conflict。
+- 创建幂等重放返回第一次创建时的 pending/row version 1 快照，不会被资源后来 resolved 或 cancelled 的当前状态替换。
 
 ## 已验证行为
 
@@ -63,13 +67,15 @@
 - 第二次旧状态变更能从 SQLite 找回 pending checkpoint，将它过期为 row version 2，并只生成一次 `interaction.expired` outbox。
 - 重放相同终态不会重复 outbox；更高 row version 的迟到 pending 写入也不能覆盖终态。
 - 旧决策事件、task replay、checkpoint 事件筛选和二次决策状态码回归通过。
+- Interaction 创建后即使资源随后取消，重启后的同 key 重试仍返回第一次 `201` 的原始 pending 快照。
+- cancel 在重启后使用同 key、同 payload 重试返回第一次 `200` 结果，不重复状态迁移。
+- 创建摘要或取消原因改变但复用原 key 时返回 HTTP `409`。
 
 ## 尚未完成的阶段 1 门槛
 
-1. 为 Interaction 创建和 cancel 增加完整的持久化 POST 幂等结果；当前创建依靠 vendor request 唯一键去重，cancel 依靠 row version 防止重复状态迁移。
-2. 增加 expiry 和 session-ended 自动取消处理。
-3. 补齐空状态 fixture，并对 migration、projector 和事务故障执行 fault-injection，证明失败时没有部分 audit/outbox。
+1. 增加 expiry 和 session-ended 自动取消处理。
+2. 补齐空状态 fixture，并对 migration、projector 和事务故障执行 fault-injection，证明失败时没有部分 audit/outbox。
 
 ## 下一切片
 
-下一切片补齐 Interaction 创建和 cancel 的持久化 POST 幂等结果，明确同 key 同 payload 返回原结果、同 key 不同 payload 返回 conflict。随后实现 expiry/session 自动取消和 fault-injection。满足全部退出条件后才把阶段 1 标记为完成。
+下一切片实现 expiry 和 session-ended 自动取消：到期请求必须原子转为终态并产生一次 outbox；session 结束只能取消仍为 pending 的请求，不能覆盖已经形成的手机决定。随后补空状态 fixture 和 fault-injection，满足全部退出条件后才把阶段 1 标记为完成。

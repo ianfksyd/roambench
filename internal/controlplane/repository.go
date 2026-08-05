@@ -57,6 +57,15 @@ type CreateInteraction struct {
 	UIHints         map[string]interface{}
 	ExpiresAt       time.Time
 	InputHash       string
+	ActorScope      string
+	IdempotencyKey  string
+}
+
+type CancelInteractionInput struct {
+	ExpectedRowVersion int
+	Reason             string
+	ActorScope         string
+	IdempotencyKey     string
 }
 
 type Interaction struct {
@@ -229,6 +238,16 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   created_at TEXT NOT NULL,
   PRIMARY KEY(username, actor_scope, idempotency_key)
 );
+CREATE TABLE IF NOT EXISTS post_idempotency_keys (
+  username TEXT NOT NULL,
+  actor_scope TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(username, actor_scope, operation, idempotency_key)
+);
 CREATE TABLE IF NOT EXISTS task_projections (
   decision_id TEXT PRIMARY KEY,
   username TEXT NOT NULL,
@@ -242,6 +261,7 @@ CREATE TABLE IF NOT EXISTS task_projections (
 );
 CREATE INDEX IF NOT EXISTS task_projections_pending_idx ON task_projections(username,state,created_at);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, CURRENT_TIMESTAMP);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, CURRENT_TIMESTAMP);
 `
 
 func Open(path string) (*Repository, error) {
@@ -290,6 +310,12 @@ func (r *Repository) CreateInteraction(ctx context.Context, input CreateInteract
 	if err := validateCreate(input); err != nil {
 		return Interaction{}, err
 	}
+	username := strings.TrimSpace(input.Username)
+	actorScope := strings.TrimSpace(input.ActorScope)
+	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
+	if (actorScope == "") != (idempotencyKey == "") {
+		return Interaction{}, fmt.Errorf("%w: actor scope and idempotency key must be provided together", ErrValidation)
+	}
 	now := time.Now().UTC()
 	interaction := Interaction{
 		RequestID: newID("interaction"), CheckpointID: strings.TrimSpace(input.CheckpointID),
@@ -306,31 +332,54 @@ func (r *Repository) CreateInteraction(ctx context.Context, input CreateInteract
 	schemaJSON, _ := json.Marshal(interaction.ResponseSchema)
 	hintsJSON, _ := json.Marshal(interaction.UIHints)
 	expiresAt := nullableTime(interaction.ExpiresAt)
+	requestHash := hashCreateInteractionInput(interaction)
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Interaction{}, err
 	}
 	defer tx.Rollback()
+	if idempotencyKey != "" {
+		replayed, found, err := replayPostIdempotency(ctx, tx, username, actorScope, "interaction.create", idempotencyKey, requestHash)
+		if err != nil {
+			return Interaction{}, err
+		}
+		if found {
+			return replayed, nil
+		}
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO interactions(
 		request_id,username,checkpoint_id,task_id,runtime_id,session_id,adapter_kind,vendor_request_id,request_kind,risk_class,title,summary,preview,
 		artifact_refs,allowed_actions,response_schema,ui_hints,status,created_at,expires_at,row_version,input_hash
 	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		interaction.RequestID, strings.TrimSpace(input.Username), nullString(interaction.CheckpointID), interaction.TaskID, interaction.RuntimeID,
+		interaction.RequestID, username, nullString(interaction.CheckpointID), interaction.TaskID, interaction.RuntimeID,
 		interaction.SessionID, interaction.AdapterKind, interaction.VendorRequestID, interaction.RequestKind, interaction.RiskClass,
 		interaction.Title, interaction.Summary, interaction.Preview, string(artifactJSON), string(actionsJSON), string(schemaJSON), string(hintsJSON),
 		interaction.Status, formatTime(now), expiresAt, interaction.RowVersion, interaction.InputHash)
 	if err != nil {
-		if existing, getErr := getByVendor(ctx, tx, strings.TrimSpace(input.Username), interaction.AdapterKind, interaction.SessionID, interaction.VendorRequestID); getErr == nil && existing.InputHash == interaction.InputHash {
+		if existing, getErr := getByVendor(ctx, tx, username, interaction.AdapterKind, interaction.SessionID, interaction.VendorRequestID); getErr == nil && existing.InputHash == interaction.InputHash {
+			if idempotencyKey != "" {
+				if err := storePostIdempotency(ctx, tx, username, actorScope, "interaction.create", idempotencyKey, requestHash, existing, now); err != nil {
+					return Interaction{}, err
+				}
+				if err := tx.Commit(); err != nil {
+					return Interaction{}, err
+				}
+			}
 			return existing, nil
 		}
 		return Interaction{}, fmt.Errorf("%w: duplicate or invalid interaction: %v", ErrConflict, err)
 	}
-	if err := insertAudit(ctx, tx, strings.TrimSpace(input.Username), interaction.RequestID, "interaction.created", "adapter", interaction.Summary, now); err != nil {
+	if err := insertAudit(ctx, tx, username, interaction.RequestID, "interaction.created", "adapter", interaction.Summary, now); err != nil {
 		return Interaction{}, err
 	}
-	if err := insertOutbox(ctx, tx, strings.TrimSpace(input.Username), interaction.RequestID, "interaction.created", interaction, now); err != nil {
+	if err := insertOutbox(ctx, tx, username, interaction.RequestID, "interaction.created", interaction, now); err != nil {
 		return Interaction{}, err
+	}
+	if idempotencyKey != "" {
+		if err := storePostIdempotency(ctx, tx, username, actorScope, "interaction.create", idempotencyKey, requestHash, interaction, now); err != nil {
+			return Interaction{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Interaction{}, err
@@ -491,32 +540,66 @@ func (r *Repository) Respond(ctx context.Context, username, requestID string, in
 }
 
 func (r *Repository) CancelInteraction(ctx context.Context, username, requestID string, expectedRowVersion int, reason string) (Interaction, error) {
-	if expectedRowVersion < 1 {
+	return r.CancelInteractionIdempotent(ctx, username, requestID, CancelInteractionInput{
+		ExpectedRowVersion: expectedRowVersion,
+		Reason:             reason,
+	})
+}
+
+func (r *Repository) CancelInteractionIdempotent(ctx context.Context, username, requestID string, input CancelInteractionInput) (Interaction, error) {
+	if input.ExpectedRowVersion < 1 {
 		return Interaction{}, fmt.Errorf("%w: expected row version is required", ErrValidation)
 	}
+	username = strings.TrimSpace(username)
+	requestID = strings.TrimSpace(requestID)
+	input.Reason = strings.TrimSpace(input.Reason)
+	input.ActorScope = strings.TrimSpace(input.ActorScope)
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if (input.ActorScope == "") != (input.IdempotencyKey == "") {
+		return Interaction{}, fmt.Errorf("%w: actor scope and idempotency key must be provided together", ErrValidation)
+	}
+	requestHash := hashCancelInteractionInput(requestID, input.ExpectedRowVersion, input.Reason)
 	now := time.Now().UTC()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Interaction{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE interactions SET status='cancelled',final_action='cancel',resolved_at=?,row_version=row_version+1 WHERE username=? AND request_id=? AND status='pending' AND row_version=?`, formatTime(now), strings.TrimSpace(username), strings.TrimSpace(requestID), expectedRowVersion)
+	if input.IdempotencyKey != "" {
+		replayed, found, err := replayPostIdempotency(ctx, tx, username, input.ActorScope, "interaction.cancel", input.IdempotencyKey, requestHash)
+		if err != nil {
+			return Interaction{}, err
+		}
+		if found {
+			return replayed, nil
+		}
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE interactions SET status='cancelled',final_action='cancel',resolved_at=?,row_version=row_version+1 WHERE username=? AND request_id=? AND status='pending' AND row_version=?`, formatTime(now), username, requestID, input.ExpectedRowVersion)
 	if err != nil {
 		return Interaction{}, err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return Interaction{}, fmt.Errorf("%w: interaction is not pending at expected version", ErrConflict)
 	}
-	if err := insertAudit(ctx, tx, strings.TrimSpace(username), strings.TrimSpace(requestID), "interaction.cancelled", "adapter", strings.TrimSpace(reason), now); err != nil {
+	if err := insertAudit(ctx, tx, username, requestID, "interaction.cancelled", "adapter", input.Reason, now); err != nil {
 		return Interaction{}, err
 	}
-	if err := insertOutbox(ctx, tx, strings.TrimSpace(username), strings.TrimSpace(requestID), "interaction.cancelled", map[string]string{"reason": strings.TrimSpace(reason)}, now); err != nil {
+	if err := insertOutbox(ctx, tx, username, requestID, "interaction.cancelled", map[string]string{"reason": input.Reason}, now); err != nil {
 		return Interaction{}, err
+	}
+	interaction, err := getInteractionTx(ctx, tx, username, requestID)
+	if err != nil {
+		return Interaction{}, err
+	}
+	if input.IdempotencyKey != "" {
+		if err := storePostIdempotency(ctx, tx, username, input.ActorScope, "interaction.cancel", input.IdempotencyKey, requestHash, interaction, now); err != nil {
+			return Interaction{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Interaction{}, err
 	}
-	return r.GetInteraction(ctx, username, requestID)
+	return interaction, nil
 }
 
 func (r *Repository) WaitInteraction(ctx context.Context, username, requestID string, timeout time.Duration) (Interaction, error) {
@@ -757,6 +840,77 @@ func hashResponseInput(requestID string, input RespondInput) string {
 	}{requestID, copyInput})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
+}
+
+func hashCreateInteractionInput(interaction Interaction) string {
+	payload, _ := json.Marshal(struct {
+		CheckpointID    string
+		TaskID          string
+		RuntimeID       string
+		SessionID       string
+		AdapterKind     string
+		VendorRequestID string
+		RequestKind     string
+		RiskClass       string
+		Title           string
+		Summary         string
+		Preview         string
+		ArtifactRefs    []string
+		AllowedActions  []string
+		ResponseSchema  ResponseSchema
+		UIHints         map[string]interface{}
+		ExpiresAt       string
+		InputHash       string
+	}{
+		CheckpointID: interaction.CheckpointID, TaskID: interaction.TaskID, RuntimeID: interaction.RuntimeID,
+		SessionID: interaction.SessionID, AdapterKind: interaction.AdapterKind, VendorRequestID: interaction.VendorRequestID,
+		RequestKind: interaction.RequestKind, RiskClass: interaction.RiskClass, Title: interaction.Title,
+		Summary: interaction.Summary, Preview: interaction.Preview, ArtifactRefs: interaction.ArtifactRefs,
+		AllowedActions: interaction.AllowedActions, ResponseSchema: interaction.ResponseSchema, UIHints: interaction.UIHints,
+		ExpiresAt: formatTime(interaction.ExpiresAt), InputHash: interaction.InputHash,
+	})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+func hashCancelInteractionInput(requestID string, expectedRowVersion int, reason string) string {
+	payload, _ := json.Marshal(struct {
+		RequestID          string
+		ExpectedRowVersion int
+		Reason             string
+	}{requestID, expectedRowVersion, reason})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+func replayPostIdempotency(ctx context.Context, tx *sql.Tx, username, actorScope, operation, idempotencyKey, requestHash string) (Interaction, bool, error) {
+	var storedHash, resultJSON string
+	err := tx.QueryRowContext(ctx, `SELECT request_hash,result_json FROM post_idempotency_keys WHERE username=? AND actor_scope=? AND operation=? AND idempotency_key=?`,
+		username, actorScope, operation, idempotencyKey).Scan(&storedHash, &resultJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Interaction{}, false, nil
+	}
+	if err != nil {
+		return Interaction{}, false, err
+	}
+	if storedHash != requestHash {
+		return Interaction{}, false, fmt.Errorf("%w: idempotency key reused with different input", ErrConflict)
+	}
+	var interaction Interaction
+	if err := json.Unmarshal([]byte(resultJSON), &interaction); err != nil {
+		return Interaction{}, false, err
+	}
+	return interaction, true, nil
+}
+
+func storePostIdempotency(ctx context.Context, tx *sql.Tx, username, actorScope, operation, idempotencyKey, requestHash string, interaction Interaction, now time.Time) error {
+	resultJSON, err := json.Marshal(interaction)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO post_idempotency_keys(username,actor_scope,operation,idempotency_key,request_hash,result_json,created_at) VALUES(?,?,?,?,?,?,?)`,
+		username, actorScope, operation, idempotencyKey, requestHash, string(resultJSON), formatTime(now))
+	return err
 }
 
 func newID(prefix string) string {
