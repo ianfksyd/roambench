@@ -1347,18 +1347,18 @@ func (d projectControlToolDef) maxOutput() int {
 func defaultProjectControlTools() []projectControlToolDef {
 	return []projectControlToolDef{
 		{
-			ID:           "repo_status",
-			Name:         "Repo Status",
-			Command:      []string{"git", "status", "--short"},
-			ArtifactKind: "repo_status",
+			ID:            "repo_status",
+			Name:          "Repo Status",
+			Command:       []string{"git", "status", "--short"},
+			ArtifactKind:  "repo_status",
 			ArtifactLabel: "Repo status",
 			AllowedPhases: []string{"plan", "implement", "write", "test", "review", "fix_or_replan", "final_validation"},
 		},
 		{
-			ID:           "diff_capture",
-			Name:         "Diff Capture",
-			Command:      []string{"git", "diff", "--stat", "--find-renames"},
-			ArtifactKind: "diff_summary",
+			ID:            "diff_capture",
+			Name:          "Diff Capture",
+			Command:       []string{"git", "diff", "--stat", "--find-renames"},
+			ArtifactKind:  "diff_summary",
 			ArtifactLabel: "Diff summary",
 			AllowedPhases: []string{"implement", "write", "fix_or_replan", "review", "final_validation"},
 		},
@@ -1761,13 +1761,13 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 			})
 			if run.RetryCount < run.MaxRetries {
 				retry := projectControlToolRun{
-					ID: projectControlID("tool-run", task.ID+"-"+run.PhaseID+"-"+run.ToolID+"-retry"),
+					ID:     projectControlID("tool-run", task.ID+"-"+run.PhaseID+"-"+run.ToolID+"-retry"),
 					TaskID: task.ID, PhaseAttemptID: run.PhaseAttemptID,
 					PhaseID: run.PhaseID, ToolID: run.ToolID,
 					WorkspaceRef: run.WorkspaceRef, Status: "running",
 					StartedAt: now, MaxRetries: run.MaxRetries,
 					RetryCount: run.RetryCount + 1,
-					Summary: fmt.Sprintf("Retry %d/%d of %s for %s.", run.RetryCount+1, run.MaxRetries, run.ToolID, run.PhaseID),
+					Summary:    fmt.Sprintf("Retry %d/%d of %s for %s.", run.RetryCount+1, run.MaxRetries, run.ToolID, run.PhaseID),
 				}
 				state.ToolRuns = append(state.ToolRuns, retry)
 				nextToolRunID = retry.ID
@@ -1776,12 +1776,12 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 					ID: projectControlID("event", "tool-retry"), Timestamp: now,
 					Actor: "tool_gateway", Action: "tool_retry",
-					Detail: fmt.Sprintf("Auto-retrying %s (%d/%d).", run.ToolID, retry.RetryCount, retry.MaxRetries),
+					Detail:    fmt.Sprintf("Auto-retrying %s (%d/%d).", run.ToolID, retry.RetryCount, retry.MaxRetries),
 					ProjectID: task.ProjectID, WorkstreamID: task.WorkstreamID, TaskID: task.ID,
 				})
 			} else {
 				cp := projectControlCheckpoint{
-					ID: projectControlID("checkpoint", "tool-failure-"+task.ID+"-"+run.ToolID),
+					ID:     projectControlID("checkpoint", "tool-failure-"+task.ID+"-"+run.ToolID),
 					TaskID: task.ID, Kind: "tool_failure",
 					Title:  "Tool " + run.ToolID + " failed",
 					Reason: detail, Status: "pending", RequestedAt: now,
@@ -1793,7 +1793,7 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 					ID: projectControlID("event", "tool-failure-checkpoint"), Timestamp: now,
 					Actor: "tool_gateway", Action: "checkpoint_raised",
-					Detail: "Created checkpoint after " + run.ToolID + " exhausted retries.",
+					Detail:    "Created checkpoint after " + run.ToolID + " exhausted retries.",
 					ProjectID: task.ProjectID, WorkstreamID: task.WorkstreamID,
 					TaskID: task.ID, CheckpointID: cp.ID,
 				})
@@ -5960,6 +5960,7 @@ func (s *Server) handleProjectControlSnapshot(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load project control state"})
 		return
 	}
+	snapshot = s.mergeControlPlaneSnapshot(r, GetUsername(r), snapshot)
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
@@ -6145,6 +6146,9 @@ func (s *Server) handleProjectControlCheckpointDecision(w http.ResponseWriter, r
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if s.resolveControlPlaneCheckpointDecision(w, r, id, req.Action) {
 		return
 	}
 	snapshot, err := s.projectControl.recordCheckpointDecision(GetUsername(r), id, req.Action, s.terminals)

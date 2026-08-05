@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/ianf339/roambench/internal/auth"
 	"github.com/ianf339/roambench/internal/config"
+	"github.com/ianf339/roambench/internal/controlplane"
 	"github.com/ianf339/roambench/internal/filebrowser"
 	"github.com/ianf339/roambench/internal/terminal"
 	"github.com/ianf339/roambench/web"
@@ -59,18 +61,20 @@ func (h *notificationHub) broadcast(n terminal.OSCNotification) {
 }
 
 type Server struct {
-	cfg            *config.Config
-	authProv       auth.AuthProvider
-	sessions       *auth.SessionManager
-	rateLimiter    *auth.RateLimiter
-	terminals      *terminal.Manager
-	workspaceState *workspaceStateStore
-	fileBrowser    *filebrowser.FileBrowser
-	projectControl *projectControlStore
-	notifHub       *notificationHub
-	mux            *http.ServeMux
-	upgrader       websocket.Upgrader
-	httpServer     *http.Server
+	cfg             *config.Config
+	authProv        auth.AuthProvider
+	sessions        *auth.SessionManager
+	rateLimiter     *auth.RateLimiter
+	terminals       *terminal.Manager
+	workspaceState  *workspaceStateStore
+	fileBrowser     *filebrowser.FileBrowser
+	projectControl  *projectControlStore
+	controlPlane    *controlplane.Repository
+	controlPlaneErr error
+	notifHub        *notificationHub
+	mux             *http.ServeMux
+	upgrader        websocket.Upgrader
+	httpServer      *http.Server
 }
 
 func NewServer(
@@ -80,17 +84,20 @@ func NewServer(
 	terminals *terminal.Manager,
 	fb *filebrowser.FileBrowser,
 ) *Server {
+	controlPlane, controlPlaneErr := controlplane.Open(filepath.Join(cfg.Terminal.GetPersistDir(), ".project-control", "control-plane.sqlite"))
 	s := &Server{
-		cfg:            cfg,
-		authProv:       authProv,
-		sessions:       sessions,
-		rateLimiter:    auth.NewRateLimiter(cfg.Auth.MaxLoginAttempts, cfg.Auth.GetLockoutDuration()),
-		terminals:      terminals,
-		workspaceState: newWorkspaceStateStore(cfg.Terminal.GetPersistDir()),
-		fileBrowser:    fb,
-		projectControl: newProjectControlStore(cfg.Terminal.GetPersistDir()),
-		notifHub:       newNotificationHub(),
-		mux:            http.NewServeMux(),
+		cfg:             cfg,
+		authProv:        authProv,
+		sessions:        sessions,
+		rateLimiter:     auth.NewRateLimiter(cfg.Auth.MaxLoginAttempts, cfg.Auth.GetLockoutDuration()),
+		terminals:       terminals,
+		workspaceState:  newWorkspaceStateStore(cfg.Terminal.GetPersistDir()),
+		fileBrowser:     fb,
+		projectControl:  newProjectControlStore(cfg.Terminal.GetPersistDir()),
+		controlPlane:    controlPlane,
+		controlPlaneErr: controlPlaneErr,
+		notifHub:        newNotificationHub(),
+		mux:             http.NewServeMux(),
 	}
 	s.upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -136,6 +143,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/agent/v1/task", s.handleAgentGetTask)
 	s.mux.HandleFunc("/api/agent/v1/artifact", s.handleAgentSubmitArtifact)
 	s.mux.HandleFunc("/api/agent/v1/checkpoint", s.handleAgentRequestCheckpoint)
+	s.mux.HandleFunc("/api/agent/v1/interactions", s.handleAgentInteractions)
+	s.mux.HandleFunc("/api/agent/v1/interactions/", s.handleAgentInteraction)
+
+	// Browser/mobile interaction control plane (session auth)
+	s.mux.HandleFunc("/api/mobile/interactions", authRequired(s.sessions, s.handleMobileInteractions))
+	s.mux.HandleFunc("/api/mobile/interactions/", authRequired(s.sessions, s.handleMobileInteraction))
 
 	// Terminals (auth required)
 	s.mux.HandleFunc("/api/terminals/ws/", authRequired(s.sessions, s.handleTerminalWebSocket))
@@ -258,10 +271,18 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.httpServer == nil {
-		return nil
+	var httpErr error
+	if s.httpServer != nil {
+		httpErr = s.httpServer.Shutdown(ctx)
 	}
-	return s.httpServer.Shutdown(ctx)
+	var controlPlaneErr error
+	if s.controlPlane != nil {
+		controlPlaneErr = s.controlPlane.Close()
+	}
+	if httpErr != nil {
+		return httpErr
+	}
+	return controlPlaneErr
 }
 
 // --- Auth handlers ---

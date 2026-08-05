@@ -1,7 +1,7 @@
 # 手机交互控制与多 CLI 协同工作计划 v0.1
 
 创建日期：2026-08-04
-状态：阶段 0 已完成，阶段 1 待实施
+状态：阶段 0 已完成；阶段 1 实施中（Gateway 第一切片已完成，旧审批迁移与 Task projector 待完成）
 适用范围：RoamBench 单用户、自托管部署
 
 ## 1. 目标
@@ -700,6 +700,8 @@ Companion App 不改变本计划阶段 0–6 的优先级；其可行性评审�
 - question request 能按 schema 接收选择或文本，并原样映射回 Adapter；
 - 服务在等待期间重启，客户端重试后仍得到同一个最终决定；
 - 两个客户端同时决定时只有一个成功。
+
+阶段 1 当前实施记录见 [阶段 1 进展](./mobile-control-phase-1-progress.md)。第一切片已经交付 SQLite Gateway、结构化 Agent/Web API、wait/cancel、并发与幂等决策，以及现有 approvals inbox 的兼容投影。旧 JSON Checkpoint/Decision 的一次性迁移、迁移备份和可恢复 Task projector 尚未完成，因此阶段 1 仍为“实施中”，不得据此提前进入阶段 2。
 
 ### 阶段 2：Generic Adapter 与 tmux 常驻监听（2–4 天）
 
