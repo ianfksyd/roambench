@@ -90,7 +90,7 @@
             'workspace.duplicateHint': 'This terminal is already visible in another pane.',
             'viewer.tab': 'Viewer',
             'viewer.emptyTitle': 'Paste from clipboard',
-            'viewer.emptyHint': 'Paste text or an image here, or open an image, PDF, PPTX, DOCX, XLSX, or text file from Files.',
+            'viewer.emptyHint': 'Paste text or an image here, or open an image, video, audio, PDF, PPTX, DOCX, XLSX, or text file from Files.',
             'viewer.copyText': 'Copy Text',
             'viewer.edit': 'Edit',
             'viewer.pptxLoading': 'Loading PPTX viewer and rendering slides...',
@@ -301,7 +301,7 @@
             'workspace.duplicateHint': '这个终端已经显示在另一个窗格中。',
             'viewer.tab': '查看器',
             'viewer.emptyTitle': '从剪贴板粘贴',
-            'viewer.emptyHint': '在这里粘贴文字或截图，或在文件标签中打开图片、PDF、PPTX、DOCX、XLSX 或文本文件。',
+            'viewer.emptyHint': '在这里粘贴文字或截图，或在文件标签中打开图片、视频、音频、PDF、PPTX、DOCX、XLSX 或文本文件。',
             'viewer.copyText': '复制全文',
             'viewer.edit': '编辑',
             'viewer.pptxLoading': '正在加载 PPTX 预览器并渲染幻灯片……',
@@ -512,7 +512,7 @@
             'workspace.duplicateHint': 'この端末は別のペインですでに表示されています。',
             'viewer.tab': 'Viewer',
             'viewer.emptyTitle': 'クリップボードから貼り付け',
-            'viewer.emptyHint': 'ここにテキストや画像を貼り付けるか、Files から画像、PDF、PPTX、DOCX、XLSX、テキストを開いてください。',
+            'viewer.emptyHint': 'ここにテキストや画像を貼り付けるか、Files から画像、動画、音声、PDF、PPTX、DOCX、XLSX、テキストを開いてください。',
             'viewer.copyText': 'テキストをコピー',
             'viewer.edit': '編集',
             'viewer.pptxLoading': 'PPTX ビューアを読み込み、スライドを描画しています...',
@@ -2125,6 +2125,10 @@
     const fileViewerPreviewImage = document.getElementById('image-preview-blur');
     const fileViewerImage = document.getElementById('image-preview-img');
     const fileViewerImageStage = document.getElementById('viewer-image-stage');
+    const fileViewerVideoStage = document.getElementById('viewer-video-stage');
+    const fileViewerVideo = document.getElementById('viewer-video-player');
+    const fileViewerAudioStage = document.getElementById('viewer-audio-stage');
+    const fileViewerAudio = document.getElementById('viewer-audio-player');
     const fileViewerPdfFrame = document.getElementById('viewer-pdf-frame');
     const fileViewerPptxStage = document.getElementById('viewer-pptx-stage');
     const fileViewerPptxHost = document.getElementById('viewer-pptx-host');
@@ -7042,6 +7046,8 @@
         folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>',
         file: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>',
         image: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><circle cx="10" cy="10" r="1.4"></circle><path d="M8.5 17l3-3 2.2 2.2 2.3-2.3 2 2.1"></path></svg>',
+        video: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><rect x="8" y="11" width="5.2" height="4.5" rx="1"></rect><path d="m13.2 12.2 3.3-1.7v5l-3.3-1.7"></path></svg>',
+        audio: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M10 16.5a1.8 1.8 0 1 1-1.8-1.8H10V10l5-1.2v6.5"></path><path d="M15 15.3a1.8 1.8 0 1 1-1.8-1.8H15"></path></svg>',
         pdf: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 12h6"></path><path d="M9 15h6"></path><path d="M9 18h4"></path></svg>',
         sheet: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M8 10.5h8"></path><path d="M8 14.5h8"></path><path d="M12 10v8"></path><path d="M16 10v8"></path></svg>',
         slides: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><rect x="8.5" y="10" width="7" height="5.5" rx="1"></rect><path d="M12 15.5v3"></path><path d="M9.5 18.5h5"></path></svg>',
@@ -7076,6 +7082,14 @@
             'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic', 'bmp', 'avif'
         ].indexOf(extension) !== -1) {
             tone = 'image';
+        } else if ([
+            'mp4', 'm4v', 'mov', 'webm', 'ogv', 'mkv'
+        ].indexOf(extension) !== -1) {
+            tone = 'video';
+        } else if ([
+            'mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'flac', 'opus'
+        ].indexOf(extension) !== -1) {
+            tone = 'audio';
         } else if ([
             'zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar'
         ].indexOf(extension) !== -1) {
@@ -7453,6 +7467,16 @@
             return;
         }
 
+        if (isPreviewableVideo(file.name)) {
+            previewVideo(file);
+            return;
+        }
+
+        if (isPreviewableAudio(file.name)) {
+            previewAudio(file);
+            return;
+        }
+
         if (isPreviewablePdf(file.name)) {
             previewPdf(file);
             return;
@@ -7547,6 +7571,24 @@
 
         previewImage(imageFiles[targetIndex]);
         return true;
+    }
+
+    function previewVideo(file) {
+        if (!discardViewerDraft({ render: false })) {
+            return;
+        }
+        setPreviewTarget(file, 'video');
+        renderViewerPanel(true);
+        setFileBrowserOpen(true, 'viewer');
+    }
+
+    function previewAudio(file) {
+        if (!discardViewerDraft({ render: false })) {
+            return;
+        }
+        setPreviewTarget(file, 'audio');
+        renderViewerPanel(true);
+        setFileBrowserOpen(true, 'viewer');
     }
 
     function previewPdf(file) {
@@ -8288,6 +8330,8 @@
         const isDocx = type === 'docx';
         const isXlsx = type === 'xlsx';
         const isImage = type === 'image';
+        const isVideo = type === 'video';
+        const isAudio = type === 'audio';
         const isEditMode = isText && state.previewEditMode;
 
         if (!fileViewerTitle || !fileViewerPath || !fileViewerImage || !fileViewerCanvas || !fileViewerEmpty) {
@@ -8331,6 +8375,12 @@
         if (fileViewerImageStage) {
             fileViewerImageStage.style.display = isImage ? 'flex' : 'none';
         }
+        if (fileViewerVideoStage) {
+            fileViewerVideoStage.style.display = isVideo ? 'flex' : 'none';
+        }
+        if (fileViewerAudioStage) {
+            fileViewerAudioStage.style.display = isAudio ? 'flex' : 'none';
+        }
         if (fileViewerPdfFrame) {
             fileViewerPdfFrame.style.display = isPdf ? 'block' : 'none';
         }
@@ -8354,6 +8404,12 @@
             if (forceReload || fileViewerCanvas.dataset.imageKey !== imageKey || !fileViewerImage.getAttribute('src')) {
                 loadViewerImage(imageKey);
             }
+            restoreEditorPaneHost();
+        } else if (isVideo) {
+            loadViewerMedia(fileViewerVideo, imageKey);
+            restoreEditorPaneHost();
+        } else if (isAudio) {
+            loadViewerMedia(fileViewerAudio, imageKey);
             restoreEditorPaneHost();
         } else if (isPdf) {
             resetViewerImageState();
@@ -8401,6 +8457,7 @@
             fileViewerPdfFrame.dataset.fileKey = '';
             fileViewerPdfFrame.removeAttribute('src');
         }
+        resetViewerMediaState();
         resetPptxViewerState();
         resetDocxViewerState();
         resetXlsxViewerState();
@@ -8415,6 +8472,21 @@
         if (fileViewerLoadingIndicator) {
             fileViewerLoadingIndicator.style.display = '';
         }
+    }
+
+    function resetViewerMediaState() {
+        [fileViewerVideo, fileViewerAudio].forEach(function(player) {
+            if (!player) {
+                return;
+            }
+            player.onloadedmetadata = null;
+            player.oncanplay = null;
+            player.onerror = null;
+            player.pause();
+            player.dataset.fileKey = '';
+            player.removeAttribute('src');
+            player.load();
+        });
     }
 
     function resetPptxViewerState() {
@@ -9192,6 +9264,63 @@
         }
     }
 
+    function loadViewerMedia(player, imageKey) {
+        if (!player) {
+            return;
+        }
+        if (player.dataset.fileKey === imageKey && player.getAttribute('src')) {
+            fileViewerCanvas.dataset.imageKey = imageKey;
+            fileViewerCanvas.classList.add('is-ready');
+            fileViewerCanvas.classList.remove('is-loading');
+            if (fileViewerLoadingIndicator) {
+                fileViewerLoadingIndicator.style.display = 'none';
+            }
+            return;
+        }
+
+        resetViewerImageState();
+
+        const requestToken = ++viewerLoadSequence;
+        const path = state.previewImagePath;
+        const version = String(state.previewImageVersion || Date.now());
+        const encodedPath = encodeURIComponent(path);
+        const encodedVersion = encodeURIComponent(version);
+        const fullSrc = withBasePath('/api/files/download?path=' + encodedPath + '&inline=1&v=' + encodedVersion);
+
+        fileViewerCanvas.dataset.imageKey = imageKey;
+        fileViewerCanvas.classList.remove('has-preview', 'is-ready');
+        fileViewerCanvas.classList.add('is-loading');
+        player.dataset.fileKey = imageKey;
+        if (fileViewerLoadingIndicator) {
+            fileViewerLoadingIndicator.style.display = 'inline-flex';
+        }
+
+        function markReady() {
+            if (!isActiveViewerRequest(requestToken, imageKey)) {
+                return;
+            }
+            fileViewerCanvas.classList.add('is-ready');
+            fileViewerCanvas.classList.remove('is-loading');
+            if (fileViewerLoadingIndicator) {
+                fileViewerLoadingIndicator.style.display = 'none';
+            }
+        }
+
+        player.onloadedmetadata = markReady;
+        player.oncanplay = markReady;
+        player.onerror = function() {
+            if (!isActiveViewerRequest(requestToken, imageKey)) {
+                return;
+            }
+            fileViewerCanvas.classList.remove('is-loading', 'is-ready');
+            if (fileViewerLoadingIndicator) {
+                fileViewerLoadingIndicator.style.display = 'none';
+            }
+        };
+        player.src = fullSrc;
+        player.load();
+    }
+
     function loadViewerImage(imageKey) {
         const requestToken = ++viewerLoadSequence;
         const path = state.previewImagePath;
@@ -9203,6 +9332,7 @@
         fileViewerCanvas.dataset.imageKey = imageKey;
         fileViewerCanvas.classList.remove('has-preview', 'is-ready');
         fileViewerCanvas.classList.add('is-loading');
+        resetViewerMediaState();
         fileViewerImage.removeAttribute('src');
         if (fileViewerPreviewImage) {
             fileViewerPreviewImage.removeAttribute('src');
@@ -11816,6 +11946,14 @@
 
     function isPreviewableImage(name) {
         return /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(name);
+    }
+
+    function isPreviewableVideo(name) {
+        return /\.(mp4|m4v|mov|webm|ogv|mkv)$/i.test(name || '');
+    }
+
+    function isPreviewableAudio(name) {
+        return /\.(mp3|m4a|aac|wav|ogg|oga|flac|opus)$/i.test(name || '');
     }
 
     function isPreviewablePdf(name) {

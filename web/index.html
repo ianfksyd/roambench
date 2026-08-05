@@ -578,7 +578,7 @@
             <div id="viewer-empty" class="viewer-empty">
                 <div class="viewer-empty-kicker" data-i18n="viewer.tab">Viewer</div>
                 <div class="viewer-empty-title" data-i18n="viewer.emptyTitle">Select a file</div>
-                <div class="viewer-empty-copy" data-i18n="viewer.emptyHint">Open an image, PDF, PPTX, DOCX, XLSX, or text file from Files.</div>
+                <div class="viewer-empty-copy" data-i18n="viewer.emptyHint">Open an image, video, audio, PDF, PPTX, DOCX, XLSX, or text file from Files.</div>
             </div>
             <div id="viewer-canvas" class="viewer-canvas" style="display:none">
                 <div id="viewer-loading-indicator" class="viewer-loading-indicator" aria-hidden="true">
@@ -589,6 +589,12 @@
                 <div id="viewer-image-stage" class="viewer-stage">
                     <img id="image-preview-blur" class="viewer-image viewer-image-preview" alt="">
                     <img id="image-preview-img" class="viewer-image viewer-image-full" alt="Image preview">
+                </div>
+                <div id="viewer-video-stage" class="viewer-media-stage" style="display:none">
+                    <video id="viewer-video-player" class="viewer-video-player" controls preload="metadata" playsinline></video>
+                </div>
+                <div id="viewer-audio-stage" class="viewer-media-stage viewer-audio-stage" style="display:none">
+                    <audio id="viewer-audio-player" class="viewer-audio-player" controls preload="metadata"></audio>
                 </div>
                 <iframe id="viewer-pdf-frame" class="viewer-pdf-frame" title="PDF preview" style="display:none"></iframe>
                 <div id="viewer-pptx-stage" class="viewer-pptx-stage" style="display:none">
