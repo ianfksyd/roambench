@@ -2,13 +2,13 @@
 
 日期：2026-08-05
 状态：实施中
-范围：Interaction/Decision Gateway 第一切片
+范围：Interaction/Decision Gateway 第一、第二切片
 
 ## 当前结论
 
-阶段 1 的新请求闭环已经建立，但旧审批事实迁移尚未完成。当前代码可以让 Adapter 创建结构化 Interaction，由另一个已登录浏览器作答，并让 Adapter 通过读取或最长 30 秒的有限长轮询取得最终结果。决定、审计和 outbox 在同一 SQLite 事务中提交；并发作答最多一个成功。
+阶段 1 的新请求闭环和旧审批事实迁移已经建立。当前代码可以让 Adapter 创建结构化 Interaction，由另一个已登录浏览器作答，并让 Adapter 通过读取或最长 30 秒的有限长轮询取得最终结果。决定、审计和 outbox 在同一 SQLite 事务中提交；并发作答最多一个成功。
 
-这不是阶段 1 完成声明。现有 JSON/WAL 中的历史 Checkpoint/Decision 仍待一次性迁移到 SQLite，Task 状态投影仍待实现为可恢复 projector。在这两项完成前，不进入阶段 2。
+这不是阶段 1 完成声明。历史 Checkpoint/Decision 会在启动时从 JSON/WAL 幂等导入 SQLite，原文件保留只读迁移前备份，JSON 中的审批数组随后清空。Task 状态投影仍待实现为可恢复 projector；完成前不进入阶段 2。
 
 ## 已完成
 
@@ -30,6 +30,9 @@
   - `GET /api/mobile/interactions/:id`
   - `POST /api/mobile/interactions/:id/respond`
 - 新 Interaction 会投影进现有 Project Control approvals inbox；旧 `/api/project-control/checkpoints/:id/decision` 入口处理这类请求时改走 SQLite Gateway。
+- 启动时迁移旧 JSON/WAL Checkpoint、Decision 和关联 audit event，并记录来源 hash、更新时间和导入数量。
+- 首次迁移前生成 `.pre-control-plane-v1.bak` 只读备份；SQLite 提交后清空 JSON 审批字段。
+- 如果进程在 SQLite 提交后、JSON 清理前退出，重启会幂等重放迁移，不重复 Interaction 或 outbox。
 
 ## 已验证行为
 
@@ -42,18 +45,18 @@
 - 未认证请求不能读取移动 Interaction API。
 - 第二个浏览器决定返回 HTTP `409`，并携带当前最终 Interaction。
 - 结构化请求可以从现有 approvals inbox 查看和决定。
+- pending 与 resolved 旧审批迁移后仍通过兼容快照保持原 ID、状态和决定类型。
+- 模拟“数据库已提交但 JSON 未清理”后重启，JSON 被继续清理且 outbox 不重复。
 - `go test ./...` 通过。
 
 ## 尚未完成的阶段 1 门槛
 
-1. 把已有 JSON/WAL Checkpoint、Decision 和相关 audit event 一次性导入 SQLite，记录源 hash、迁移版本和只读备份。
-2. 数据库提交后原子清理 JSON 中已迁移的审批字段，处理中断恢复，彻底消除两个可写事实源。
-3. 实现 `project_task_projection.requested` outbox consumer，按 `decision_id` 幂等更新 JSON Task，并可在重启后续跑。
-4. 为 Interaction 创建和 cancel 增加完整的持久化 POST 幂等结果；当前创建依靠 vendor request 唯一键去重，cancel 依靠 row version 防止重复状态迁移。
-5. 增加 expiry 和 session-ended 自动取消处理。
-6. 完成空状态、pending、resolved、迁移中断和备份恢复 fixture。
-7. 对 migration、projector 和事务故障执行 fault-injection，证明失败时没有部分 audit/outbox。
+1. 实现 `project_task_projection.requested` outbox consumer，按 `decision_id` 幂等更新 JSON Task，并可在重启后续跑。
+2. 为运行期间由旧 Project Control 路径新建或过期的 Checkpoint 增加统一 SQLite 落库接缝，避免只在启动迁移历史记录。
+3. 为 Interaction 创建和 cancel 增加完整的持久化 POST 幂等结果；当前创建依靠 vendor request 唯一键去重，cancel 依靠 row version 防止重复状态迁移。
+4. 增加 expiry 和 session-ended 自动取消处理。
+5. 补齐空状态 fixture，并对 migration、projector 和事务故障执行 fault-injection，证明失败时没有部分 audit/outbox。
 
 ## 下一切片
 
-下一切片只处理迁移和 projector：先用失败测试覆盖四类 migration fixture 与中断恢复，再实现导入、备份、JSON 清理和 Task 投影。完成后重新执行并发、重启、旧 approvals inbox 与完整回归测试，满足全部退出条件后才把阶段 1 标记为完成。
+下一切片实现 durable Task projector 和运行时 Checkpoint 落库接缝。完成后重新执行并发、重启、旧 approvals inbox 与完整回归测试，满足全部退出条件后才把阶段 1 标记为完成。

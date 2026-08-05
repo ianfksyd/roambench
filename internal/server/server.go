@@ -99,6 +99,9 @@ func NewServer(
 		notifHub:        newNotificationHub(),
 		mux:             http.NewServeMux(),
 	}
+	if s.controlPlaneErr == nil {
+		s.controlPlaneErr = s.migrateLegacyApprovals(cfg.Auth.SingleUser)
+	}
 	s.upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,

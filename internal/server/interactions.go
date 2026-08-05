@@ -261,7 +261,7 @@ func (s *Server) mergeControlPlaneSnapshot(r *http.Request, username string, sna
 			response := responses[0]
 			checkpoint.ResolvedByDecisionID = response.ResponseID
 			snapshot.Decisions = append(snapshot.Decisions, projectControlDecision{
-				ID: response.ResponseID, DecisionType: response.Action, Actor: response.Actor,
+				ID: response.ResponseID, DecisionType: compatibilityDecisionType(interaction.RequestKind, response.Action), Actor: response.Actor,
 				Timestamp: response.CreatedAt.Format(time.RFC3339), Summary: response.Feedback,
 				TaskID: interaction.TaskID, CheckpointID: interaction.RequestID,
 			})
@@ -273,6 +273,26 @@ func (s *Server) mergeControlPlaneSnapshot(r *http.Request, username string, sna
 		}
 	}
 	return snapshot
+}
+
+func compatibilityDecisionType(requestKind, action string) string {
+	verb := action
+	switch action {
+	case "approve", "approve_once", "approve_session":
+		verb = "approved"
+	case "reject", "reject_with_feedback":
+		verb = "rejected"
+	case "reroute", "request_changes":
+		verb = "rerouted"
+	}
+	switch requestKind {
+	case "final_acceptance":
+		return "final_acceptance_" + verb
+	case "archive_override":
+		return "archive_override_" + verb
+	default:
+		return action
+	}
 }
 
 func compatibilityCheckpointStatus(interaction controlplane.Interaction) string {
