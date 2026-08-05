@@ -249,26 +249,31 @@ func (s *Server) mergeControlPlaneSnapshot(r *http.Request, username string, sna
 	if err != nil {
 		return snapshot
 	}
+	checkpointIDs := make(map[string]bool, len(snapshot.Checkpoints))
+	for _, checkpoint := range snapshot.Checkpoints {
+		checkpointIDs[checkpoint.ID] = true
+	}
+	decisionIDs := make(map[string]bool, len(snapshot.Decisions))
+	for _, decision := range snapshot.Decisions {
+		decisionIDs[decision.ID] = true
+	}
 	for _, interaction := range interactions {
-		status := compatibilityCheckpointStatus(interaction)
-		checkpoint := projectControlCheckpoint{
-			ID: interaction.RequestID, TaskID: interaction.TaskID, Kind: interaction.RequestKind,
-			Title: interaction.Title, Reason: interaction.Summary, Status: status,
-			RequestedAt: interaction.CreatedAt.Format(time.RFC3339), AllowedActions: compatibilityAllowedActions(interaction.AllowedActions),
-			DecisionSummary: interaction.FinalAction, RowVersion: interaction.RowVersion,
-		}
+		checkpoint := projectControlCheckpointFromInteraction(interaction)
 		responses, responseErr := s.controlPlane.ListResponses(r.Context(), username, interaction.RequestID)
 		if responseErr == nil && len(responses) == 1 {
 			response := responses[0]
 			checkpoint.ResolvedByDecisionID = response.ResponseID
-			snapshot.Decisions = append(snapshot.Decisions, projectControlDecision{
-				ID: response.ResponseID, DecisionType: compatibilityDecisionType(interaction.RequestKind, response.Action), Actor: response.Actor,
-				Timestamp: response.CreatedAt.Format(time.RFC3339), Summary: response.Feedback,
-				TaskID: interaction.TaskID, CheckpointID: interaction.RequestID,
-			})
+			if !decisionIDs[response.ResponseID] {
+				snapshot.Decisions = append(snapshot.Decisions, projectControlDecisionFromResponse(interaction, response))
+				decisionIDs[response.ResponseID] = true
+			}
 		}
+		if checkpointIDs[checkpoint.ID] {
+			continue
+		}
+		checkpointIDs[checkpoint.ID] = true
 		snapshot.Checkpoints = append(snapshot.Checkpoints, checkpoint)
-		if status == "pending" {
+		if checkpoint.Status == "pending" {
 			snapshot.ApprovalsCount++
 			snapshot.Dashboard.PendingApprovals++
 		}
@@ -344,6 +349,10 @@ func (s *Server) resolveControlPlaneCheckpointDecision(w http.ResponseWriter, r 
 	}
 	if err != nil {
 		writeControlPlaneError(w, err)
+		return true
+	}
+	if interaction.Status != "pending" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "checkpoint is not pending"})
 		return true
 	}
 	action := mapLegacyDecisionAction(interaction.AllowedActions, strings.TrimSpace(strings.ToLower(legacyAction)))

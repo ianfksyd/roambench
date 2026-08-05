@@ -37,8 +37,18 @@ func (s *Server) migrateLegacyApprovals(username string) error {
 			return err
 		}
 	}
+	snapshot := legacyApprovalSnapshot(username, state, hex.EncodeToString(sum[:]))
+	if err := s.controlPlane.ImportLegacyApprovals(context.Background(), snapshot); err != nil {
+		return err
+	}
+	state.Checkpoints = []projectControlCheckpoint{}
+	state.Decisions = []projectControlDecision{}
+	return store.saveLocked(username, state)
+}
+
+func legacyApprovalSnapshot(username string, state projectControlState, sourceHash string) controlplane.LegacyApprovalSnapshot {
 	snapshot := controlplane.LegacyApprovalSnapshot{
-		Username: username, SourceHash: hex.EncodeToString(sum[:]), SourceUpdatedAt: state.UpdatedAt,
+		Username: username, SourceHash: sourceHash, SourceUpdatedAt: state.UpdatedAt,
 	}
 	for _, checkpoint := range state.Checkpoints {
 		inputPayload, _ := json.Marshal([]string{checkpoint.TaskID, checkpoint.Kind, checkpoint.Title, checkpoint.Reason})
@@ -64,10 +74,5 @@ func (s *Server) migrateLegacyApprovals(username string) error {
 			})
 		}
 	}
-	if err := s.controlPlane.ImportLegacyApprovals(context.Background(), snapshot); err != nil {
-		return err
-	}
-	state.Checkpoints = []projectControlCheckpoint{}
-	state.Decisions = []projectControlDecision{}
-	return store.saveLocked(username, state)
+	return snapshot
 }

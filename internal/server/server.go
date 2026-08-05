@@ -103,6 +103,7 @@ func NewServer(
 		s.controlPlaneErr = s.migrateLegacyApprovals(cfg.Auth.SingleUser)
 	}
 	if s.controlPlaneErr == nil {
+		s.projectControl.controlPlane = s.controlPlane
 		if err := s.runPendingTaskProjections(context.Background(), cfg.Auth.SingleUser); err != nil {
 			log.Printf("task projection recovery deferred: %v", err)
 		}

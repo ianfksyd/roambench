@@ -107,7 +107,7 @@ func importLegacyCheckpoint(ctx context.Context, tx *sql.Tx, username string, ch
 	actions, _ := json.Marshal(normalizedStrings(checkpoint.AllowedActions))
 	schemaPayload, _ := json.Marshal(ResponseSchema{Type: "action", MaxFeedbackLength: 500})
 	created := normalizedLegacyTime(checkpoint.RequestedAt)
-	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO interactions(
+	insertResult, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO interactions(
 		request_id,username,checkpoint_id,task_id,runtime_id,session_id,adapter_kind,vendor_request_id,request_kind,risk_class,title,summary,preview,
 		artifact_refs,allowed_actions,response_schema,ui_hints,status,final_action,created_at,resolved_at,row_version,input_hash
 	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -117,9 +117,43 @@ func importLegacyCheckpoint(ctx context.Context, tx *sql.Tx, username string, ch
 	if err != nil {
 		return err
 	}
-	payload, _ := json.Marshal(map[string]interface{}{"requestId": checkpoint.ID, "migrated": true})
+	inserted, _ := insertResult.RowsAffected()
+	if inserted == 1 {
+		payload, _ := json.Marshal(map[string]interface{}{"requestId": checkpoint.ID, "migrated": true})
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO outbox_events(event_id,username,aggregate_id,event_type,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`,
+			"legacy-created-"+checkpoint.ID, username, checkpoint.ID, "interaction.created", string(payload), created, created)
+		return err
+	}
+
+	var currentStatus string
+	var currentRowVersion int
+	if err := tx.QueryRowContext(ctx, `SELECT status,row_version FROM interactions WHERE username=? AND request_id=?`, username, checkpoint.ID).Scan(&currentStatus, &currentRowVersion); err != nil {
+		return err
+	}
+	shouldUpdate := rowVersion > currentRowVersion || (currentStatus == "pending" && status != "pending" && rowVersion >= currentRowVersion)
+	if !shouldUpdate || (currentStatus != "pending" && status == "pending") {
+		return nil
+	}
+	updateResult, err := tx.ExecContext(ctx, `UPDATE interactions SET task_id=?,request_kind=?,title=?,summary=?,preview=?,allowed_actions=?,status=?,final_action=?,resolved_at=?,row_version=?,input_hash=?
+		WHERE username=? AND request_id=? AND status=? AND row_version=?`, checkpoint.TaskID, checkpoint.Kind, checkpoint.Title,
+		checkpoint.Reason, checkpoint.Reason, string(actions), status, finalAction, nullableLegacyResolved(status, created), rowVersion,
+		checkpoint.InputHash, username, checkpoint.ID, currentStatus, currentRowVersion)
+	if err != nil {
+		return err
+	}
+	updated, _ := updateResult.RowsAffected()
+	if updated != 1 {
+		return nil
+	}
+	eventType := "interaction.updated"
+	if status == "expired" {
+		eventType = "interaction.expired"
+	} else if status == "cancelled" {
+		eventType = "interaction.cancelled"
+	}
+	payload, _ := json.Marshal(map[string]interface{}{"requestId": checkpoint.ID, "status": status, "rowVersion": rowVersion, "migrated": true})
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO outbox_events(event_id,username,aggregate_id,event_type,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`,
-		"legacy-created-"+checkpoint.ID, username, checkpoint.ID, "interaction.created", string(payload), created, created)
+		fmt.Sprintf("legacy-updated-%s-%d", checkpoint.ID, rowVersion), username, checkpoint.ID, eventType, string(payload), created, created)
 	return err
 }
 

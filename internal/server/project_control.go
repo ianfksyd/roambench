@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ianf339/roambench/internal/controlplane"
 	"github.com/ianf339/roambench/internal/terminal"
 )
 
@@ -425,6 +426,7 @@ type projectControlStore struct {
 	rootDir          string
 	runtimeRootDir   string
 	workspaceRootDir string
+	controlPlane     *controlplane.Repository
 	mu               sync.Mutex
 }
 
@@ -4119,10 +4121,16 @@ func (s *projectControlStore) loadOrSeed(username string) (projectControlState, 
 		return projectControlState{}, err
 	}
 	if exists {
+		if err := s.hydrateApprovalsLocked(username, &state); err != nil {
+			return projectControlState{}, err
+		}
 		return state, nil
 	}
 	state = defaultProjectControlState()
 	if err := s.saveLocked(username, state); err != nil {
+		return projectControlState{}, err
+	}
+	if err := s.hydrateApprovalsLocked(username, &state); err != nil {
 		return projectControlState{}, err
 	}
 	return state, nil
@@ -4144,6 +4152,9 @@ func (s *projectControlStore) withStateLocked(username string, fn func(*projectC
 	}
 	if !exists {
 		state = defaultProjectControlState()
+	}
+	if err := s.hydrateApprovalsLocked(username, &state); err != nil {
+		return projectControlState{}, err
 	}
 	if err := fn(&state); err != nil {
 		return projectControlState{}, err
@@ -4310,6 +4321,13 @@ func (s *projectControlStore) loadLocked(username string) (projectControlState, 
 }
 
 func (s *projectControlStore) saveLocked(username string, state projectControlState) error {
+	if s.controlPlane != nil {
+		if err := s.syncApprovalsLocked(username, state); err != nil {
+			return err
+		}
+		state.Checkpoints = []projectControlCheckpoint{}
+		state.Decisions = []projectControlDecision{}
+	}
 	if err := os.MkdirAll(s.rootDir, 0700); err != nil {
 		return err
 	}

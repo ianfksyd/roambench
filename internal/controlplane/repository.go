@@ -351,6 +351,23 @@ func (r *Repository) ListInteractions(ctx context.Context, username string, limi
 	return r.listInteractions(ctx, username, "", limit)
 }
 
+func (r *Repository) ListAllInteractions(ctx context.Context, username string) ([]Interaction, error) {
+	rows, err := r.db.QueryContext(ctx, interactionSelect+` WHERE username=? ORDER BY created_at`, strings.TrimSpace(username))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Interaction
+	for rows.Next() {
+		interaction, err := scanInteraction(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, interaction)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) listInteractions(ctx context.Context, username, status string, limit int) ([]Interaction, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100

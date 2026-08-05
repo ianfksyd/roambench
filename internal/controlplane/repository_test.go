@@ -71,6 +71,55 @@ func TestCreateInteractionPersistsRequestAndOutboxAtomically(t *testing.T) {
 	}
 }
 
+func TestLegacyCheckpointRuntimeUpdatesAreIdempotentAndCannotReopenTerminalState(t *testing.T) {
+	repo, err := Open(filepath.Join(t.TempDir(), "control-plane.sqlite"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer repo.Close()
+	ctx := context.Background()
+	checkpoint := LegacyCheckpoint{
+		ID: "checkpoint-runtime", TaskID: "task-1", Kind: "permission", Title: "Approve?", Reason: "Runtime request",
+		Status: "pending", RequestedAt: "2026-08-05T01:00:00Z", AllowedActions: []string{"approve", "reject"}, RowVersion: 1,
+		InputHash: "sha256:runtime",
+	}
+	importCheckpoint := func(sourceHash string, value LegacyCheckpoint) {
+		t.Helper()
+		if err := repo.ImportLegacyApprovals(ctx, LegacyApprovalSnapshot{
+			Username: "ian", SourceHash: sourceHash, SourceUpdatedAt: "2026-08-05T01:00:00Z", Checkpoints: []LegacyCheckpoint{value},
+		}); err != nil {
+			t.Fatalf("ImportLegacyApprovals(%s): %v", sourceHash, err)
+		}
+	}
+	importCheckpoint("pending", checkpoint)
+	checkpoint.Status = "expired"
+	checkpoint.AllowedActions = nil
+	checkpoint.RowVersion = 2
+	importCheckpoint("expired", checkpoint)
+	importCheckpoint("expired-replay", checkpoint)
+
+	stale := checkpoint
+	stale.Status = "pending"
+	stale.AllowedActions = []string{"approve", "reject"}
+	stale.RowVersion = 3
+	importCheckpoint("stale-pending", stale)
+
+	interaction, err := repo.GetInteraction(ctx, "ian", checkpoint.ID)
+	if err != nil {
+		t.Fatalf("GetInteraction: %v", err)
+	}
+	if interaction.Status != "expired" || interaction.RowVersion != 2 {
+		t.Fatalf("interaction after replay/stale write = status %q rowVersion %d, want expired/2", interaction.Status, interaction.RowVersion)
+	}
+	events, err := repo.ListOutbox(ctx, "ian", 10)
+	if err != nil {
+		t.Fatalf("ListOutbox: %v", err)
+	}
+	if len(events) != 2 || events[0].EventType != "interaction.created" || events[1].EventType != "interaction.expired" {
+		t.Fatalf("outbox events = %#v, want one created and one expired", events)
+	}
+}
+
 func TestConcurrentResponsesProduceExactlyOneFinalDecision(t *testing.T) {
 	repo, err := Open(filepath.Join(t.TempDir(), "control-plane.sqlite"))
 	if err != nil {
