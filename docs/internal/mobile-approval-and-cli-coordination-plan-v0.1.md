@@ -1,7 +1,7 @@
 # 手机交互控制与多 CLI 协同工作计划 v0.1
 
 创建日期：2026-08-04
-状态：阶段 0 已完成；阶段 1 实施中（Gateway 第一切片已完成，旧审批迁移与 Task projector 待完成）
+状态：阶段 0、阶段 1 已完成；下一步实施阶段 2 Generic Adapter CLI
 适用范围：RoamBench 单用户、自托管部署
 
 ## 1. 目标
@@ -679,7 +679,7 @@ Companion App 不改变本计划阶段 0–6 的优先级；其可行性评审�
 
 阶段 0 交付记录见 [阶段 0 基线](./mobile-control-phase-0-baseline.md) 和 [ADR-0001](./adr-0001-mobile-control-persistence.md)。已选择每个 tmux session 一个 server-owned control-mode observer，`pipe-pane -O` 作为降级；SQLite 唯一拥有 Interaction/Checkpoint/Decision/Outbox 等控制面事实。Kimi CLI 本机尚未安装，当前 fixture 来自官方 Wire 文档；这不阻止阶段 1，但在阶段 4 发布 Kimi Adapter 前必须补真实运行 fixture。
 
-### 阶段 1：持久化 Interaction/Decision Gateway（3–5 天）
+### 阶段 1：持久化 Interaction/Decision Gateway（已完成，2026-08-05）
 
 目标：先建立可靠交互闭环，不接手机推送。
 
@@ -701,7 +701,7 @@ Companion App 不改变本计划阶段 0–6 的优先级；其可行性评审�
 - 服务在等待期间重启，客户端重试后仍得到同一个最终决定；
 - 两个客户端同时决定时只有一个成功。
 
-阶段 1 当前实施记录见 [阶段 1 进展](./mobile-control-phase-1-progress.md)。SQLite Gateway、结构化 Agent/Web API、创建/响应/cancel 的持久化幂等、expiry/session 自动终止、旧审批迁移、可恢复 Task projector，以及运行时旧 Project Control Checkpoint 的 SQLite 单一事实源已经交付。阶段 1 只剩空状态 fixture 和故障注入收尾，因此仍为“实施中”，不得据此提前进入阶段 2。
+阶段 1 交付与退出条件证据见 [阶段 1 进展](./mobile-control-phase-1-progress.md)。SQLite Gateway、结构化 Agent/Web API、完整 Response 回传、创建/响应/cancel 的持久化幂等、expiry/session 自动终止、旧审批迁移、可恢复 Task projector，以及运行时旧 Project Control Checkpoint 的 SQLite 单一事实源已经交付。空状态 fixture 和创建、响应、expiry、session cancel、迁移、projector 故障恢复矩阵通过，阶段 2 可以开始。
 
 ### 阶段 2：Generic Adapter 与 tmux 常驻监听（2–4 天）
 

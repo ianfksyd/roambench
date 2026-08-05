@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,6 +36,11 @@ type createInteractionRequest struct {
 type cancelInteractionRequest struct {
 	ExpectedRowVersion int    `json:"expectedRowVersion"`
 	Reason             string `json:"reason"`
+}
+
+type agentInteractionResult struct {
+	controlplane.Interaction
+	Response *controlplane.Response `json:"response,omitempty"`
 }
 
 func (s *Server) controlPlaneReady(w http.ResponseWriter) bool {
@@ -107,7 +114,12 @@ func (s *Server) handleAgentInteraction(w http.ResponseWriter, r *http.Request) 
 			writeControlPlaneError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, interaction)
+		result, err := s.agentInteractionResult(r.Context(), username, interaction)
+		if err != nil {
+			writeControlPlaneError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	case r.Method == http.MethodGet && action == "wait":
 		timeout := 30 * time.Second
 		if raw := strings.TrimSpace(r.URL.Query().Get("timeout")); raw != "" {
@@ -123,7 +135,12 @@ func (s *Server) handleAgentInteraction(w http.ResponseWriter, r *http.Request) 
 			writeControlPlaneError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, interaction)
+		result, err := s.agentInteractionResult(r.Context(), username, interaction)
+		if err != nil {
+			writeControlPlaneError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	case r.Method == http.MethodPost && action == "cancel":
 		if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Idempotency-Key header is required"})
@@ -146,6 +163,22 @@ func (s *Server) handleAgentInteraction(w http.ResponseWriter, r *http.Request) 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) agentInteractionResult(ctx context.Context, username string, interaction controlplane.Interaction) (agentInteractionResult, error) {
+	result := agentInteractionResult{Interaction: interaction}
+	if interaction.Status != "resolved" {
+		return result, nil
+	}
+	responses, err := s.controlPlane.ListResponses(ctx, username, interaction.RequestID)
+	if err != nil {
+		return agentInteractionResult{}, err
+	}
+	if len(responses) != 1 {
+		return agentInteractionResult{}, fmt.Errorf("resolved interaction %q has %d final responses", interaction.RequestID, len(responses))
+	}
+	result.Response = &responses[0]
+	return result, nil
 }
 
 func (s *Server) handleMobileInteractions(w http.ResponseWriter, r *http.Request) {

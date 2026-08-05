@@ -1,14 +1,14 @@
 # 手机交互控制与多 CLI 协同：阶段 1 进展
 
 日期：2026-08-05
-状态：实施中
-范围：Interaction/Decision Gateway 第一至第六切片
+状态：已完成
+范围：Interaction/Decision Gateway 第一至第七切片
 
 ## 当前结论
 
-阶段 1 的新请求闭环、旧审批事实迁移、durable Task projector 和运行时 Checkpoint 单一事实源已经建立。当前代码可以让 Adapter 创建结构化 Interaction，由另一个已登录浏览器作答，并让 Adapter 通过读取或最长 30 秒的有限长轮询取得最终结果。决定、审计、outbox 和待投影记录在同一 SQLite 事务中提交；并发作答最多一个成功。
+阶段 1 的退出条件已经满足。Adapter 可以创建结构化 Interaction，由另一个已登录浏览器作答，并通过读取或最长 30 秒的有限长轮询取得最终 Interaction 和原始 Response。单选答案、文本反馈、`responseId` 和最终动作会原样返回；等待期间服务重启后，客户端重试仍得到同一结果。决定、审计、outbox、幂等键和待投影记录在同一 SQLite 事务中提交；并发作答最多一个成功。
 
-这不是阶段 1 完成声明。历史 Checkpoint/Decision 会在启动时从 JSON/WAL 幂等导入 SQLite，原文件保留只读迁移前备份，JSON 中的审批数组随后清空。运行期间旧 Project Control 路径创建、解决或过期 Checkpoint 时，会先把事实和 outbox 写入 SQLite，再保存不含审批数组的 JSON Task 投影；下一次旧路径变更会先从 SQLite 恢复兼容投影。决定后的 Task 更新由可恢复 projector 执行。Interaction 创建、响应、expiry 和 session cancel 均已有持久化终态语义。空状态 fixture 和事务故障注入仍未完成；完成前不进入阶段 2。
+历史 Checkpoint/Decision 会在启动时从 JSON/WAL 幂等导入 SQLite，原文件保留只读迁移前备份，JSON 中的审批数组随后清空。运行期间旧 Project Control 路径创建、解决或过期 Checkpoint 时，会先把事实和 outbox 写入 SQLite，再保存不含审批数组的 JSON Task 投影；下一次旧路径变更会先从 SQLite 恢复兼容投影。决定后的 Task 更新由可恢复 projector 执行。空状态 fixture 与创建、响应、expiry、session cancel、迁移和 projector 的故障恢复矩阵均已通过，阶段 2 可以开始。
 
 ## 已完成
 
@@ -50,6 +50,10 @@
 - 手机响应事务会再次检查截止时间；截止时间后的响应不能抢在 expiry 之后形成 Decision。
 - terminal manager 提供 session-ended 生命周期回调；HTTP 删除、空闲清理、存储上限清理和 tmux 消失均会取消该 session 的 pending Interaction。
 - session cancel 和手机决定通过 pending/row-version 条件更新竞争；已 resolved、expired 或 cancelled 的终态不会被覆盖。
+- Agent `GET`/`wait` 保持原有顶层 Interaction JSON 字段，并在 resolved 时附带唯一的结构化 `response`，供 Adapter 取得选择项、文本反馈和稳定 `responseId`。
+- 增加显式空 Project Control JSON fixture，空状态启动后不会生成 Interaction，也不会把审批事实写回 JSON。
+- 使用真实 SQLite `RAISE(ABORT)` trigger 覆盖创建、响应、expiry、session cancel 和旧审批迁移的末端写入故障；每个用例均验证整笔事务回滚并可安全重试。
+- projector 在目标 Task 缺失时记录 failed/attempt count，不在 JSON 留下半成品事件；Task 恢复后可重试并幂等完成。
 
 ## 已验证行为
 
@@ -79,11 +83,22 @@
 - 请求在服务停机期间到期后，首次重启生成一次 `interaction.expired` outbox；再次重启不重复事件。
 - terminal session 结束后，同 session 的 pending Interaction 变为 cancelled，已经批准的 Interaction 保持 resolved。
 - terminal manager 直接清理 session 时同样触发取消，不依赖 HTTP DELETE 路径。
+- 单选和文本问题经 Agent API 创建、浏览器回答后，`wait` 分别返回原始 `selectedOptionIds` 和 `feedback`。
+- Interaction 在等待期间经历服务重启、决定后再次重启，客户端重试仍得到相同 `responseId` 和文本答案。
+- 空 fixture 启动得到健康且为空的 Gateway，JSON 中 Checkpoint/Decision 数组保持为空。
+- 注入创建 outbox 失败后，Interaction、audit、outbox 和 POST 幂等键均为零；移除故障后同 key 可成功创建。
+- 在响应事务最后一个 projector outbox 处注入失败后，Interaction 仍为 pending/row version 1，Response、Decision、幂等键和 Task projection 均未遗留；重试只生成一个终态。
+- expiry 和 session 批量取消的 outbox 失败会回滚状态、audit 和同批较早写入；移除故障后可完整收敛。
+- 旧审批迁移 outbox 失败会连迁移标记表一同回滚；重试后只导入一次。
+- 缺失 Task 导致的 projector 失败会持久化为 failed；补回 Task 后重试成功，后续重放不增加 row version。
 
-## 尚未完成的阶段 1 门槛
+## 阶段 1 退出条件审查
 
-1. 补齐空状态 fixture，并对 migration、projector 和事务故障执行 fault-injection，证明失败时没有部分 audit/outbox。
+1. Adapter 创建请求后能在另一个浏览器批准并收到结果：已由 Agent → browser → `wait` API 闭环验证。
+2. question request 能按 schema 接收选择或文本并原样映射回 Adapter：已验证单选和文本 Response 回传。
+3. 服务在等待期间重启，客户端重试后仍得到同一个最终决定：已验证两次重启后的 `responseId` 与反馈不变。
+4. 两个客户端同时决定时只有一个成功：仓储并发测试与 HTTP `409` 测试均通过。
 
-## 下一切片
+## 后续阶段
 
-下一切片是阶段 1 收尾：补空数据库/空 JSON fixture，并对创建、响应、expiry、session cancel、迁移和 Task projector 做 fault-injection。每个故障点都要证明事务回滚后没有孤立 audit/outbox、重启可以恢复或安全重试。退出条件全部满足后，再审查是否把阶段 1 标记为完成。
+阶段 2 从 Generic Adapter CLI 开始：实现 `roambench-agent request --wait --json` 的参数契约、结构化输出、超时与退出码。CLI 闭环稳定后，再把 OSC ingest 从浏览器 WebSocket 生命周期中拆出并接入 tmux 常驻 observer。

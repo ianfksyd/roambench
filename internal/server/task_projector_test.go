@@ -123,6 +123,91 @@ func TestPendingFinalAcceptanceProjectionResumesAfterServerRestart(t *testing.T)
 	}
 }
 
+func TestFailedTaskProjectionRetriesAfterMissingTaskIsRestored(t *testing.T) {
+	persistDir := t.TempDir()
+	srv, _, sessions := newInteractionAPIServer(t, persistDir)
+	defer sessions.Stop()
+	const taskID = "task-restored-after-projection-failure"
+	interaction, err := srv.controlPlane.CreateInteraction(context.Background(), controlplane.CreateInteraction{
+		Username: "ian", TaskID: taskID, RuntimeID: "runtime-1", SessionID: "session-1",
+		AdapterKind: "generic", VendorRequestID: "missing-task-projection", RequestKind: "final_acceptance",
+		RiskClass: "R1", Title: "Final acceptance", Summary: "Review completed work", Preview: "diff summary",
+		AllowedActions: []string{"approve_once", "reject"}, ResponseSchema: controlplane.ResponseSchema{Type: "action"},
+		InputHash: "sha256:missing-task-projection",
+	})
+	if err != nil {
+		t.Fatalf("CreateInteraction: %v", err)
+	}
+	response, _, err := srv.controlPlane.Respond(context.Background(), "ian", interaction.RequestID, controlplane.RespondInput{
+		Action: "approve_once", Actor: "ian", ExpectedRowVersion: 1,
+		IdempotencyKey: "missing-task-projection-decision", InputHash: interaction.InputHash,
+	})
+	if err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+
+	if err := srv.runPendingTaskProjections(context.Background(), "ian"); err == nil || !strings.Contains(err.Error(), "not found for projection") {
+		t.Fatalf("first projector error = %v, want missing task", err)
+	}
+	projections, err := srv.controlPlane.ListPendingTaskProjections(context.Background(), "ian", 10)
+	if err != nil {
+		t.Fatalf("ListPendingTaskProjections after failure: %v", err)
+	}
+	if len(projections) != 1 || projections[0].State != "failed" || projections[0].AttemptCount != 1 {
+		t.Fatalf("failed projections = %#v", projections)
+	}
+	failedState, err := srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatalf("load state after failed projection: %v", err)
+	}
+	projectionEventID := "event-projection-" + response.ResponseID
+	for _, event := range failedState.Events {
+		if event.ID == projectionEventID {
+			t.Fatalf("failed projection left event %q in project state", projectionEventID)
+		}
+	}
+
+	if _, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		state.Tasks = append(state.Tasks, projectControlTask{
+			ID: taskID, ProjectID: projectControlProjectID, WorkstreamID: projectControlWorkstreamRuntimeID,
+			Title: "Restored task", Goal: "Verify projection retry", State: "execution_complete",
+			AcceptanceStatus: "awaiting_acceptance", RiskLevel: "medium", Priority: "high", RowVersion: 1,
+		})
+		return nil
+	}); err != nil {
+		t.Fatalf("restore missing task: %v", err)
+	}
+	if err := srv.runPendingTaskProjections(context.Background(), "ian"); err != nil {
+		t.Fatalf("retry projector: %v", err)
+	}
+	recovered, err := srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatalf("load recovered state: %v", err)
+	}
+	task := projectControlTaskFromStateByID(t, recovered, taskID)
+	if task.AcceptanceStatus != "accepted" || task.AcceptanceDecisionID != response.ResponseID {
+		t.Fatalf("recovered task = %#v", task)
+	}
+	rowVersion := task.RowVersion
+	projections, err = srv.controlPlane.ListPendingTaskProjections(context.Background(), "ian", 10)
+	if err != nil {
+		t.Fatalf("ListPendingTaskProjections after recovery: %v", err)
+	}
+	if len(projections) != 0 {
+		t.Fatalf("pending projections after recovery = %#v", projections)
+	}
+	if err := srv.runPendingTaskProjections(context.Background(), "ian"); err != nil {
+		t.Fatalf("idempotent projector rerun: %v", err)
+	}
+	afterReplay, err := srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatalf("load state after idempotent rerun: %v", err)
+	}
+	if got := projectControlTaskFromStateByID(t, afterReplay, taskID).RowVersion; got != rowVersion {
+		t.Fatalf("row version after idempotent rerun = %d, want %d", got, rowVersion)
+	}
+}
+
 func projectControlTaskFromStateByID(t *testing.T, state projectControlState, taskID string) projectControlTask {
 	t.Helper()
 	for _, task := range state.Tasks {

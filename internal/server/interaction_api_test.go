@@ -12,6 +12,7 @@ import (
 
 	"github.com/ianf339/roambench/internal/auth"
 	"github.com/ianf339/roambench/internal/config"
+	"github.com/ianf339/roambench/internal/controlplane"
 )
 
 func newInteractionAPIServer(t *testing.T, persistDir string) (*Server, string, *auth.SessionManager) {
@@ -107,6 +108,128 @@ func TestInteractionAPICompletesAgentToBrowserDecisionRoundTrip(t *testing.T) {
 	}
 	if resolved["status"] != "resolved" || resolved["finalAction"] != "approve_once" || resolved["rowVersion"] != float64(2) {
 		t.Fatalf("resolved interaction = %#v", resolved)
+	}
+}
+
+func TestQuestionResponseRoundTripsFromBrowserToWaitingAgent(t *testing.T) {
+	tests := []struct {
+		name         string
+		vendorID     string
+		kind         string
+		schema       string
+		responseBody string
+		wantOptionID string
+		wantFeedback string
+	}{
+		{
+			name: "single choice", vendorID: "question-choice", kind: "question_single",
+			schema:       `{"type":"single_choice","options":[{"id":"safe","label":"Safe"},{"id":"fast","label":"Fast"}]}`,
+			responseBody: `{"action":"answer","selectedOptionIds":["safe"],"expectedRowVersion":1,"idempotencyKey":"choice-answer","inputHash":"sha256:abc","deviceId":"phone"}`,
+			wantOptionID: "safe",
+		},
+		{
+			name: "text", vendorID: "question-text", kind: "question_text",
+			schema:       `{"type":"text","maxFeedbackLength":500}`,
+			responseBody: `{"action":"answer","feedback":"Use the safer migration path.","expectedRowVersion":1,"idempotencyKey":"text-answer","inputHash":"sha256:abc","deviceId":"phone"}`,
+			wantFeedback: "Use the safer migration path.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv, sessionToken, sessions := newInteractionAPIServer(t, t.TempDir())
+			defer sessions.Stop()
+			agentToken := issueAgentToken(t, srv, sessionToken)
+			created := createInteractionViaAPI(t, srv, agentToken, test.vendorID, test.kind, test.schema)
+			requestID := created["requestId"].(string)
+
+			respondReq := httptest.NewRequest(http.MethodPost, "/api/mobile/interactions/"+requestID+"/respond", strings.NewReader(test.responseBody))
+			respondReq.Header.Set("Content-Type", "application/json")
+			respondReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sessionToken})
+			respondRec := httptest.NewRecorder()
+			srv.mux.ServeHTTP(respondRec, respondReq)
+			if respondRec.Code != http.StatusOK {
+				t.Fatalf("POST respond status = %d: %s", respondRec.Code, respondRec.Body.String())
+			}
+
+			waitReq := httptest.NewRequest(http.MethodGet, "/api/agent/v1/interactions/"+requestID+"/wait?timeout=50ms", nil)
+			waitReq.Header.Set("Authorization", "Bearer "+agentToken)
+			waitRec := httptest.NewRecorder()
+			srv.mux.ServeHTTP(waitRec, waitReq)
+			if waitRec.Code != http.StatusOK {
+				t.Fatalf("GET wait status = %d: %s", waitRec.Code, waitRec.Body.String())
+			}
+			var result map[string]interface{}
+			if err := json.NewDecoder(waitRec.Body).Decode(&result); err != nil {
+				t.Fatalf("decode wait response: %v", err)
+			}
+			response, ok := result["response"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("wait response has no structured final response: %#v", result)
+			}
+			if test.wantOptionID != "" {
+				options, ok := response["selectedOptionIds"].([]interface{})
+				if !ok || len(options) != 1 || options[0] != test.wantOptionID {
+					t.Fatalf("selectedOptionIds = %#v, want %q", response["selectedOptionIds"], test.wantOptionID)
+				}
+			}
+			if test.wantFeedback != "" && response["feedback"] != test.wantFeedback {
+				t.Fatalf("feedback = %#v, want %q", response["feedback"], test.wantFeedback)
+			}
+		})
+	}
+}
+
+func TestWaitingAgentRetryAfterServerRestartsReturnsSameFinalResponse(t *testing.T) {
+	persistDir := t.TempDir()
+	first, firstSessionToken, firstSessions := newInteractionAPIServer(t, persistDir)
+	firstAgentToken := issueAgentToken(t, first, firstSessionToken)
+	created := createInteractionViaAPI(t, first, firstAgentToken, "restart-final-response", "question_text", `{"type":"text","maxFeedbackLength":500}`)
+	requestID := created["requestId"].(string)
+	if err := first.controlPlane.Close(); err != nil {
+		t.Fatalf("close first control plane: %v", err)
+	}
+	firstSessions.Stop()
+
+	second, secondSessionToken, secondSessions := newInteractionAPIServer(t, persistDir)
+	respondBody := `{"action":"answer","feedback":"Persist this exact answer.","expectedRowVersion":1,"idempotencyKey":"restart-answer","inputHash":"sha256:abc","deviceId":"phone"}`
+	respondReq := httptest.NewRequest(http.MethodPost, "/api/mobile/interactions/"+requestID+"/respond", strings.NewReader(respondBody))
+	respondReq.Header.Set("Content-Type", "application/json")
+	respondReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: secondSessionToken})
+	respondRec := httptest.NewRecorder()
+	second.mux.ServeHTTP(respondRec, respondReq)
+	if respondRec.Code != http.StatusOK {
+		t.Fatalf("POST respond after first restart status = %d: %s", respondRec.Code, respondRec.Body.String())
+	}
+	var responded struct {
+		Response controlplane.Response `json:"response"`
+	}
+	if err := json.NewDecoder(respondRec.Body).Decode(&responded); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if responded.Response.ResponseID == "" {
+		t.Fatal("response ID is empty")
+	}
+	if err := second.controlPlane.Close(); err != nil {
+		t.Fatalf("close second control plane: %v", err)
+	}
+	secondSessions.Stop()
+
+	third, thirdSessionToken, thirdSessions := newInteractionAPIServer(t, persistDir)
+	defer thirdSessions.Stop()
+	thirdAgentToken := issueAgentToken(t, third, thirdSessionToken)
+	waitReq := httptest.NewRequest(http.MethodGet, "/api/agent/v1/interactions/"+requestID+"/wait?timeout=50ms", nil)
+	waitReq.Header.Set("Authorization", "Bearer "+thirdAgentToken)
+	waitRec := httptest.NewRecorder()
+	third.mux.ServeHTTP(waitRec, waitReq)
+	if waitRec.Code != http.StatusOK {
+		t.Fatalf("GET wait after second restart status = %d: %s", waitRec.Code, waitRec.Body.String())
+	}
+	var retried agentInteractionResult
+	if err := json.NewDecoder(waitRec.Body).Decode(&retried); err != nil {
+		t.Fatalf("decode retried wait result: %v", err)
+	}
+	if retried.Response == nil || retried.Response.ResponseID != responded.Response.ResponseID || retried.Response.Feedback != "Persist this exact answer." {
+		t.Fatalf("retried final response = %#v, want ID %q and original feedback", retried.Response, responded.Response.ResponseID)
 	}
 }
 
