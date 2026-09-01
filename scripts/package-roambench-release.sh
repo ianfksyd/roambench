@@ -105,7 +105,7 @@ for arch in "${ARCH_LIST[@]}"; do
 	(
 		cd "${REPO_ROOT}"
 		CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" \
-			go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+			go build -trimpath -ldflags "-X main.version=${VERSION}" \
 			-o "${bundle_dir}/roambench" ./cmd/roambench
 	)
 

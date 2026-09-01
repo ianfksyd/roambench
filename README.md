@@ -103,13 +103,14 @@ Quickstart notes:
 - multi-pane workspace tabs with `1 / 2 / 4` layouts and cross-browser sync
 - unique terminal assignment across workspaces
 - visible right-side scrollbar in each terminal pane
+- optional cgroup v2 admission checks and per-terminal memory, swap, PID, CPU, and I/O controls
 
 ### File Workspace
 
 - directory listing with sorting, hidden-file toggle, breadcrumb navigation, and current-directory filtering
 - text file editing with draft recovery, find / replace, go-to-line, and optional line numbers
 - `New File`, `New Folder`, `Save As`, rename / move, copy, upload, download, delete
-- image preview in the built-in viewer
+- image, audio, and video preview in the built-in viewer
 
 ### Agent Workflows
 
@@ -124,13 +125,14 @@ Quickstart notes:
 - auto-progression from one phase to the next when registered tools pass
 - extensible tool registry for commands such as `go test`, `npm test`, `cargo test`, or `pytest`
 - agent-neutral HTTP API and `roambench-agent` CLI for task lookup, artifact submission, and human checkpoints
+- durable SQLite-backed interaction and decision gateway for answering agent requests from another authenticated browser
 - failure recovery, health monitoring, scheduled execution, and global agent activity visibility
 - terminal notification monitoring through OSC escape sequences and browser notifications
 
 ### General
 
 - lightweight, low-overhead behavior intended to stay responsive on modest self-hosted machines
-- live memory indicator in the header
+- live host and service-cgroup memory pressure indicator in the header
 - interface language switching for English, Simplified Chinese, and Japanese
 
 ## Roadmap: Project Control Layer
@@ -155,6 +157,8 @@ For the full design discussion, see [`docs/project-control-discussions/`](docs/p
 - Go `1.22+`
 - `tmux` recommended for persistent terminal sessions
 - Linux or another Unix-like environment with PTY support
+
+Official `v0.5.0` Linux release binaries are built with Go `1.27.0`.
 
 Without `tmux`, RoamBench still runs, but terminal session persistence is reduced.
 
@@ -235,7 +239,7 @@ go test ./...
 Release bundles for GitHub Releases:
 
 ```bash
-make release-packages TAG=v0.4.1
+make release-packages TAG=v0.5.0
 ```
 
 PAM build:

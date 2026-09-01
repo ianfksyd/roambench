@@ -6,6 +6,27 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-01
+
+### Added
+
+- Durable SQLite-backed Interaction and Decision Gateway with authenticated agent and mobile APIs, bounded wait requests, audit/outbox records, and persisted POST idempotency
+- Automatic migration of legacy checkpoint and decision state into SQLite, including a read-only pre-migration backup and recoverable task projection
+- Interaction expiry and terminal-lifecycle cancellation so pending requests cannot remain open after their session ends
+- Optional cgroup v2 admission checks and per-terminal memory, swap, PID, CPU, and I/O controls
+- Host and service-cgroup memory pressure reporting in the header
+- Inline audio and video preview in the file viewer
+
+### Changed
+
+- Multi-window terminal attachment and workspace assignment are more stable during reconnects
+- New terminal requests return a temporary-unavailable response when configured memory, swap, or PSI thresholds are exceeded
+- Linux release binaries are built with Go 1.27.0
+
+### Security
+
+- Updated `github.com/gorilla/websocket` from 1.5.1 to 1.5.3, fixing GO-2026-6278
+
 ## [0.4.1] - 2026-04-19
 
 ### Added
