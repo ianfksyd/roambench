@@ -21,6 +21,7 @@ import (
 	"github.com/ianf339/roambench/internal/config"
 	"github.com/ianf339/roambench/internal/controlplane"
 	"github.com/ianf339/roambench/internal/filebrowser"
+	"github.com/ianf339/roambench/internal/systemstats"
 	"github.com/ianf339/roambench/internal/terminal"
 	"github.com/ianf339/roambench/web"
 )
@@ -77,6 +78,7 @@ type Server struct {
 	httpServer      *http.Server
 	lifecycleCancel context.CancelFunc
 	lifecycleWG     sync.WaitGroup
+	readSystemStats func() (systemstats.Snapshot, error)
 }
 
 func NewServer(
@@ -100,6 +102,7 @@ func NewServer(
 		controlPlaneErr: controlPlaneErr,
 		notifHub:        newNotificationHub(),
 		mux:             http.NewServeMux(),
+		readSystemStats: systemstats.Read,
 	}
 	if s.controlPlaneErr == nil {
 		s.controlPlaneErr = s.migrateLegacyApprovals(cfg.Auth.SingleUser)
@@ -490,13 +493,24 @@ func (s *Server) handleTerminals(w http.ResponseWriter, r *http.Request) {
 		session, err := s.terminals.CreateSession(username)
 		if err != nil {
 			log.Printf("create session error: %v", err)
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to create terminal session"})
+			status, message, retryAfter := terminalCreateErrorResponse(err)
+			if retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			writeJSON(w, status, map[string]string{"error": message})
 			return
 		}
 		writeJSON(w, http.StatusCreated, session)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func terminalCreateErrorResponse(err error) (int, string, string) {
+	if errors.Is(err, systemstats.ErrAdmissionDenied) || errors.Is(err, terminal.ErrResourceControlUnavailable) {
+		return http.StatusServiceUnavailable, "system under resource pressure or resource controls unavailable; try again later", "30"
+	}
+	return http.StatusBadRequest, "failed to create terminal session", ""
 }
 
 func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {

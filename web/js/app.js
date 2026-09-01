@@ -120,7 +120,8 @@
             'viewer.newDraft.imagePasted': 'Image pasted ({size})',
             'viewer.newDraft.discardConfirm': 'Discard this draft?',
             'memory.title': 'Memory',
-            'memory.tooltip': 'RoamBench RSS {app} / System Used {used} / System RAM {total}',
+            'memory.tooltip': 'Server RSS {server} / Task pool {pool} (anon {anon}, cache {cache}, swap {poolSwap}, high {high}, max {max}, PIDs {pids}, PSI full avg10 {pressure}) / Host {used}/{total} (swap {hostSwapUsed}/{hostSwapTotal})',
+            'memory.unlimited': 'unlimited',
             'memory.unavailableTooltip': 'Memory status unavailable',
             'editor.noFileOpen': 'No file open',
             'editor.save': 'Save',
@@ -331,7 +332,8 @@
             'viewer.newDraft.imagePasted': '已粘贴图片（{size}）',
             'viewer.newDraft.discardConfirm': '放弃这份草稿吗？',
             'memory.title': '内存',
-            'memory.tooltip': 'RoamBench 占用 {app} / 系统已用 {used} / 系统总内存 {total}',
+            'memory.tooltip': '服务 RSS {server} / 任务池 {pool}（匿名 {anon}、缓存 {cache}、交换 {poolSwap}、高水位 {high}、上限 {max}、进程 {pids}、PSI full avg10 {pressure}）/ 主机 {used}/{total}（交换 {hostSwapUsed}/{hostSwapTotal}）',
+            'memory.unlimited': '无限制',
             'memory.unavailableTooltip': '内存状态暂不可用',
             'editor.noFileOpen': '未打开文件',
             'editor.save': '保存',
@@ -542,7 +544,8 @@
             'viewer.newDraft.imagePasted': '画像を貼り付けました（{size}）',
             'viewer.newDraft.discardConfirm': 'この下書きを破棄しますか？',
             'memory.title': 'メモリ',
-            'memory.tooltip': 'RoamBench 使用量 {app} / システム使用中 {used} / システム総メモリ {total}',
+            'memory.tooltip': 'サーバー RSS {server} / タスクプール {pool}（anon {anon}、cache {cache}、swap {poolSwap}、high {high}、max {max}、PID {pids}、PSI full avg10 {pressure}）/ ホスト {used}/{total}（swap {hostSwapUsed}/{hostSwapTotal}）',
+            'memory.unlimited': '無制限',
             'memory.unavailableTooltip': 'メモリ状態を取得できません',
             'editor.noFileOpen': 'ファイルは開かれていません',
             'editor.save': '保存',
@@ -2056,7 +2059,21 @@
         memoryStatus: {
             processRSSBytes: 0,
             systemUsedBytes: 0,
+            systemAvailableBytes: 0,
             totalMemoryBytes: 0,
+            systemSwapUsedBytes: 0,
+            systemSwapTotalBytes: 0,
+            taskPoolAvailable: false,
+            taskPoolCurrentBytes: 0,
+            taskPoolAnonBytes: 0,
+            taskPoolFileBytes: 0,
+            taskPoolSwapBytes: 0,
+            taskPoolMemoryHighBytes: null,
+            taskPoolMemoryMaxBytes: null,
+            taskPoolPidsCurrent: 0,
+            taskPoolPidsMax: null,
+            memoryPressureSomeAvg10: 0,
+            memoryPressureFullAvg10: 0,
             available: false
         },
         terminalSettings: Object.assign({}, DEFAULT_TERMINAL_SETTINGS),
@@ -3151,9 +3168,13 @@
 
     function renderMemoryStatus() {
         var status = state.memoryStatus;
-        var appText;
+        var serverText;
+        var poolText;
         var usedText;
         var totalText;
+        var highText;
+        var maxText;
+        var pidsText;
 
         if (!memoryIndicator || !memoryIndicatorText) {
             return;
@@ -3166,20 +3187,35 @@
             return;
         }
 
-        appText = formatMemoryCompact(status.processRSSBytes);
+        serverText = formatMemoryCompact(status.processRSSBytes);
+        poolText = status.taskPoolAvailable ? formatMemoryCompact(status.taskPoolCurrentBytes) : '--';
         usedText = formatMemoryCompact(status.systemUsedBytes);
         totalText = formatMemoryCompact(status.totalMemoryBytes);
+        highText = status.taskPoolMemoryHighBytes === null ? t('memory.unlimited') : formatMemoryCompact(status.taskPoolMemoryHighBytes);
+        maxText = status.taskPoolMemoryMaxBytes === null ? t('memory.unlimited') : formatMemoryCompact(status.taskPoolMemoryMaxBytes);
+        pidsText = String(status.taskPoolPidsCurrent) + '/' + (status.taskPoolPidsMax === null ? t('memory.unlimited') : String(status.taskPoolPidsMax));
 
-        memoryIndicator.dataset.state = 'ready';
-        memoryIndicatorText.textContent = appText + ' / ' + usedText + ' / ' + totalText;
-        memoryIndicator.title = t('memory.tooltip', { app: appText, used: usedText, total: totalText });
+        memoryIndicator.dataset.state = window.RoamBenchMemoryStatus.classify(status);
+        memoryIndicatorText.textContent = 'S ' + serverText + ' · P ' + poolText + ' · H ' + usedText + '/' + totalText;
+        memoryIndicator.title = t('memory.tooltip', {
+            server: serverText,
+            pool: poolText,
+            anon: formatMemoryCompact(status.taskPoolAnonBytes),
+            cache: formatMemoryCompact(status.taskPoolFileBytes),
+            poolSwap: formatMemoryCompact(status.taskPoolSwapBytes),
+            high: highText,
+            max: maxText,
+            pids: pidsText,
+            pressure: status.memoryPressureFullAvg10.toFixed(2),
+            used: usedText,
+            total: totalText,
+            hostSwapUsed: formatMemoryCompact(status.systemSwapUsedBytes),
+            hostSwapTotal: formatMemoryCompact(status.systemSwapTotalBytes)
+        });
     }
 
     function resetMemoryStatus() {
-        state.memoryStatus.processRSSBytes = 0;
-        state.memoryStatus.systemUsedBytes = 0;
-        state.memoryStatus.totalMemoryBytes = 0;
-        state.memoryStatus.available = false;
+        state.memoryStatus = window.RoamBenchMemoryStatus.normalize({});
         renderMemoryStatus();
     }
 
@@ -3193,10 +3229,7 @@
     function refreshMemoryStatus() {
         return fetchJSON('/api/system/memory', undefined, { authRequired: true })
             .then(function(data) {
-                state.memoryStatus.processRSSBytes = Number(data.processRSSBytes) || 0;
-                state.memoryStatus.systemUsedBytes = Number(data.systemUsedBytes) || 0;
-                state.memoryStatus.totalMemoryBytes = Number(data.totalMemoryBytes) || 0;
-                state.memoryStatus.available = state.memoryStatus.processRSSBytes > 0 && state.memoryStatus.systemUsedBytes > 0 && state.memoryStatus.totalMemoryBytes > 0;
+                state.memoryStatus = window.RoamBenchMemoryStatus.normalize(data);
                 renderMemoryStatus();
             })
             .catch(function(err) {

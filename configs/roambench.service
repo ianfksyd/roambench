@@ -16,5 +16,19 @@ ExecStart=/usr/local/bin/roambench --config /etc/roambench/roambench.toml
 Restart=always
 RestartSec=3
 
+# Bound the complete RoamBench task pool, including terminal descendants.
+MemoryAccounting=yes
+MemoryHigh=40%
+MemoryMax=50%
+MemorySwapMax=1G
+TasksAccounting=yes
+TasksMax=384
+OOMPolicy=continue
+
+# Allow RoamBench to place each new terminal in its own cgroup. The main
+# server stays in a leaf subgroup so delegated controllers can be enabled.
+Delegate=cpu io memory pids
+DelegateSubgroup=supervisor
+
 [Install]
 WantedBy=default.target

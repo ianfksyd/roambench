@@ -43,6 +43,20 @@ idle_timeout = "72h"     # kill idle sessions after this
 persist_max_bytes = 67108864  # total disk budget for remembered terminal metadata
 # persist_dir = "/home/your-user/.local/state/roambench/terminals"
 
+# Optional pressure admission and per-terminal cgroup limits. These values are
+# a starting point for a host with about 16 GiB RAM. They require the Delegate
+# settings from configs/roambench.service.
+[terminal.resources]
+min_system_available_bytes = 2147483648
+max_system_swap_used_percent = 75
+max_memory_pressure_avg10 = 10
+session_memory_high_bytes = 3221225472
+session_memory_max_bytes = 5368709120
+session_swap_max_bytes = 536870912
+session_pids_max = 256
+session_cpu_weight = 80
+session_io_weight = 80
+
 [ui]
 title = "RoamBench"
 # motd = "Welcome to my server"

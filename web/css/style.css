@@ -1135,6 +1135,16 @@ body.view-login #terminal-view {
     color: var(--text);
 }
 
+.header-memory[data-state="warning"],
+.header-memory[data-state="warning"] .header-btn-icon {
+    color: var(--folder);
+}
+
+.header-memory[data-state="critical"],
+.header-memory[data-state="critical"] .header-btn-icon {
+    color: var(--error);
+}
+
 .header-btn-icon {
     width: 18px;
     height: 18px;

@@ -41,12 +41,25 @@ type AuthConfig struct {
 }
 
 type TerminalConfig struct {
-	Shell           string `toml:"shell"`
-	MaxSessions     int    `toml:"max_sessions"`
-	Scrollback      int    `toml:"scrollback"`
-	IdleTimeout     string `toml:"idle_timeout"`
-	PersistDir      string `toml:"persist_dir"`
-	PersistMaxBytes int64  `toml:"persist_max_bytes"`
+	Shell           string                 `toml:"shell"`
+	MaxSessions     int                    `toml:"max_sessions"`
+	Scrollback      int                    `toml:"scrollback"`
+	IdleTimeout     string                 `toml:"idle_timeout"`
+	PersistDir      string                 `toml:"persist_dir"`
+	PersistMaxBytes int64                  `toml:"persist_max_bytes"`
+	Resources       TerminalResourceConfig `toml:"resources"`
+}
+
+type TerminalResourceConfig struct {
+	MinSystemAvailableBytes  int64   `toml:"min_system_available_bytes"`
+	MaxSystemSwapUsedPercent float64 `toml:"max_system_swap_used_percent"`
+	MaxMemoryPressureAvg10   float64 `toml:"max_memory_pressure_avg10"`
+	SessionMemoryHighBytes   int64   `toml:"session_memory_high_bytes"`
+	SessionMemoryMaxBytes    int64   `toml:"session_memory_max_bytes"`
+	SessionSwapMaxBytes      int64   `toml:"session_swap_max_bytes"`
+	SessionPIDsMax           int64   `toml:"session_pids_max"`
+	SessionCPUWeight         int64   `toml:"session_cpu_weight"`
+	SessionIOWeight          int64   `toml:"session_io_weight"`
 }
 
 type UIConfig struct {
@@ -192,6 +205,31 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.Terminal.PersistMaxBytes < 0 {
 		return fmt.Errorf("terminal.persist_max_bytes must be 0 or greater")
+	}
+	resources := cfg.Terminal.Resources
+	if resources.MinSystemAvailableBytes < 0 {
+		return fmt.Errorf("terminal.resources.min_system_available_bytes must be 0 or greater")
+	}
+	if resources.MaxSystemSwapUsedPercent < 0 || resources.MaxSystemSwapUsedPercent > 100 {
+		return fmt.Errorf("terminal.resources.max_system_swap_used_percent must be between 0 and 100")
+	}
+	if resources.MaxMemoryPressureAvg10 < 0 || resources.MaxMemoryPressureAvg10 > 100 {
+		return fmt.Errorf("terminal.resources.max_memory_pressure_avg10 must be between 0 and 100")
+	}
+	if resources.SessionMemoryHighBytes < 0 || resources.SessionMemoryMaxBytes < 0 || resources.SessionSwapMaxBytes < 0 {
+		return fmt.Errorf("terminal session memory resource limits must be 0 or greater")
+	}
+	if resources.SessionMemoryHighBytes > 0 && resources.SessionMemoryMaxBytes > 0 && resources.SessionMemoryHighBytes > resources.SessionMemoryMaxBytes {
+		return fmt.Errorf("terminal.resources.session_memory_high_bytes must not exceed session_memory_max_bytes")
+	}
+	if resources.SessionPIDsMax < 0 {
+		return fmt.Errorf("terminal.resources.session_pids_max must be 0 or greater")
+	}
+	if resources.SessionCPUWeight < 0 || resources.SessionCPUWeight > 10000 {
+		return fmt.Errorf("terminal.resources.session_cpu_weight must be 0 or between 1 and 10000")
+	}
+	if resources.SessionIOWeight < 0 || resources.SessionIOWeight > 10000 {
+		return fmt.Errorf("terminal.resources.session_io_weight must be 0 or between 1 and 10000")
 	}
 	return nil
 }

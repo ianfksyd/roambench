@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ianf339/roambench/internal/config"
+	"github.com/ianf339/roambench/internal/systemstats"
 )
 
 func newTestManager(t *testing.T, cfg *config.TerminalConfig) *Manager {
@@ -288,6 +290,143 @@ func TestManagerMaxSessionsZeroAllowsMoreThanTenSessions(t *testing.T) {
 	sessions := mgr.ListSessions("ian")
 	if len(sessions) != 12 {
 		t.Fatalf("ListSessions length = %d, want 12", len(sessions))
+	}
+}
+
+func TestManagerRejectsNewSessionUnderResourcePressure(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		Scrollback:  1000,
+		IdleTimeout: "1h",
+		Resources: config.TerminalResourceConfig{
+			MinSystemAvailableBytes: 2 << 30,
+		},
+	})
+	mgr.readSystemStats = func() (systemstats.Snapshot, error) {
+		return systemstats.Snapshot{SystemAvailableBytes: 1 << 30}, nil
+	}
+
+	_, err := mgr.CreateSession("ian")
+	if !errors.Is(err, systemstats.ErrAdmissionDenied) {
+		t.Fatalf("CreateSession error = %v, want %v", err, systemstats.ErrAdmissionDenied)
+	}
+	if got := len(mgr.ListSessions("ian")); got != 0 {
+		t.Fatalf("ListSessions length = %d, want 0 after rejected admission", got)
+	}
+}
+
+func TestManagerAllowsNewSessionWhenResourcePressureIsHealthy(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		Scrollback:  1000,
+		IdleTimeout: "1h",
+		Resources: config.TerminalResourceConfig{
+			MinSystemAvailableBytes: 2 << 30,
+			MaxMemoryPressureAvg10:  10,
+		},
+	})
+	mgr.readSystemStats = func() (systemstats.Snapshot, error) {
+		return systemstats.Snapshot{SystemAvailableBytes: 4 << 30, MemoryPressureFullAvg10: 0.5}, nil
+	}
+
+	if _, err := mgr.CreateSession("ian"); err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+}
+
+func TestManagerRejectsNewSessionWhenConfiguredResourceStatsFail(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		Scrollback:  1000,
+		IdleTimeout: "1h",
+		Resources: config.TerminalResourceConfig{
+			MinSystemAvailableBytes: 2 << 30,
+		},
+	})
+	mgr.readSystemStats = func() (systemstats.Snapshot, error) {
+		return systemstats.Snapshot{}, errors.New("proc unavailable")
+	}
+
+	if _, err := mgr.CreateSession("ian"); !errors.Is(err, systemstats.ErrAdmissionDenied) {
+		t.Fatalf("CreateSession error = %v, want %v", err, systemstats.ErrAdmissionDenied)
+	}
+}
+
+func TestManagerPreparesPerSessionCgroupBeforeCreatingSession(t *testing.T) {
+	root := t.TempDir()
+	writeCgroupFixture(t, root, "cgroup.controllers", "memory pids\n")
+	writeCgroupFixture(t, root, "cgroup.subtree_control", "")
+	writeCgroupFixture(t, root, "terminals/cgroup.controllers", "memory pids\n")
+	writeCgroupFixture(t, root, "terminals/cgroup.subtree_control", "")
+
+	resources := config.TerminalResourceConfig{
+		SessionMemoryMaxBytes: 5 << 30,
+		SessionSwapMaxBytes:   512 << 20,
+		SessionPIDsMax:        256,
+	}
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		Scrollback:  1000,
+		IdleTimeout: "1h",
+		Resources:   resources,
+	})
+	mgr.sessionCgroups = &sessionCgroupManager{root: root, resources: resources}
+	mgr.sessionCgroupErr = nil
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+	mgr.mu.Lock()
+	procsPath := mgr.sessions[session.ID].cgroupProcsPath
+	mgr.mu.Unlock()
+	want := filepath.Join(root, "terminals", session.ID, "cgroup.procs")
+	if procsPath != want {
+		t.Fatalf("cgroupProcsPath = %q, want %q", procsPath, want)
+	}
+}
+
+func TestManagerMovesAttachedShellIntoItsSessionCgroup(t *testing.T) {
+	root := t.TempDir()
+	writeCgroupFixture(t, root, "cgroup.controllers", "pids\n")
+	writeCgroupFixture(t, root, "cgroup.subtree_control", "")
+	writeCgroupFixture(t, root, "terminals/cgroup.controllers", "pids\n")
+	writeCgroupFixture(t, root, "terminals/cgroup.subtree_control", "")
+	resources := config.TerminalResourceConfig{SessionPIDsMax: 256}
+
+	mgr := newTestManager(t, &config.TerminalConfig{
+		Shell:       "/bin/sh",
+		Scrollback:  1000,
+		IdleTimeout: "1h",
+		Resources:   resources,
+	})
+	mgr.sessionCgroups = &sessionCgroupManager{root: root, resources: resources}
+	mgr.sessionCgroupErr = nil
+
+	session, err := mgr.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession error: %v", err)
+	}
+	procsPath := filepath.Join(root, "terminals", session.ID, "cgroup.procs")
+	if err := os.WriteFile(procsPath, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(cgroup.procs): %v", err)
+	}
+
+	ptyFile, cmd, err := mgr.AttachSessionForUser("ian", session.ID)
+	if err != nil {
+		t.Fatalf("AttachSessionForUser error: %v", err)
+	}
+	defer ptyFile.Close()
+	if cmd != nil && cmd.Process != nil {
+		defer cmd.Process.Kill()
+	}
+
+	data, err := os.ReadFile(procsPath)
+	if err != nil {
+		t.Fatalf("ReadFile(cgroup.procs): %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != strconv.Itoa(cmd.Process.Pid) {
+		t.Fatalf("cgroup.procs = %q, want PID %d", got, cmd.Process.Pid)
 	}
 }
 

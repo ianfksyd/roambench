@@ -209,6 +209,16 @@ Useful baseline service practices:
 - run as a non-root user
 - restart automatically on failure
 - keep config and env files readable only by that service user
+- cap the complete task pool with `MemoryHigh=`, `MemoryMax=`,
+  `MemorySwapMax=`, and `TasksMax=`
+- use `Delegate=cpu io memory pids` with `DelegateSubgroup=supervisor` when
+  `[terminal.resources]` enables per-terminal limits
+
+The template uses percentage-based pool memory limits. The host-specific unit
+under `deploy/` uses a 6 GiB high watermark, 8 GiB hard limit, 1 GiB swap
+limit, and 384-task ceiling for a machine with about 16 GiB RAM. Keep
+`OOMPolicy=continue` so one terminal hitting its grouped cgroup OOM limit does
+not terminate the RoamBench UI and unrelated terminals.
 
 Be careful with aggressive systemd sandboxing options. RoamBench launches real terminal sessions, so filesystem and namespace restrictions can change what the terminal can access.
 

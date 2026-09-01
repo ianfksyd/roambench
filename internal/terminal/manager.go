@@ -20,6 +20,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/ianf339/roambench/internal/config"
+	"github.com/ianf339/roambench/internal/systemstats"
 )
 
 var (
@@ -93,14 +94,15 @@ type tmuxSessionState struct {
 }
 
 type Session struct {
-	Info         SessionInfo
-	Username     string
-	WorkDir      string
-	LastActivity time.Time
-	cmd          *exec.Cmd
-	ptyFile      *os.File
-	replacedPTYs map[*os.File]struct{}
-	dirty        bool
+	Info            SessionInfo
+	Username        string
+	WorkDir         string
+	LastActivity    time.Time
+	cmd             *exec.Cmd
+	ptyFile         *os.File
+	replacedPTYs    map[*os.File]struct{}
+	dirty           bool
+	cgroupProcsPath string
 }
 
 type Manager struct {
@@ -112,6 +114,9 @@ type Manager struct {
 	cancel            context.CancelFunc
 	persistDir        string
 	tmuxSessionExists func(string) bool
+	readSystemStats   func() (systemstats.Snapshot, error)
+	sessionCgroups    *sessionCgroupManager
+	sessionCgroupErr  error
 }
 
 func (m *Manager) SetSessionEndedHandler(handler func(username, sessionID string)) {
@@ -122,6 +127,7 @@ func (m *Manager) SetSessionEndedHandler(handler func(username, sessionID string
 
 func NewManager(cfg *config.TerminalConfig) *Manager {
 	_, err := exec.LookPath("tmux")
+	sessionCgroups, sessionCgroupErr := newSessionCgroupManager(cfg.Resources)
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		cfg:        cfg,
@@ -132,6 +138,9 @@ func NewManager(cfg *config.TerminalConfig) *Manager {
 		tmuxSessionExists: func(sessionID string) bool {
 			return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
 		},
+		readSystemStats:  systemstats.Read,
+		sessionCgroups:   sessionCgroups,
+		sessionCgroupErr: sessionCgroupErr,
 	}
 	if m.hasTmux {
 		// Set global tmux defaults BEFORE any session is created so the
@@ -193,6 +202,10 @@ func (m *Manager) CreateSession(username string) (SessionInfo, error) {
 }
 
 func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOptions) (SessionInfo, error) {
+	if err := m.checkResourceAdmission(); err != nil {
+		return SessionInfo{}, err
+	}
+
 	m.mu.Lock()
 
 	count := 0
@@ -207,8 +220,22 @@ func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOp
 	}
 
 	id := m.generateID()
+	if m.sessionCgroupErr != nil {
+		m.mu.Unlock()
+		return SessionInfo{}, m.sessionCgroupErr
+	}
+	cgroupProcsPath := ""
+	if m.sessionCgroups != nil {
+		var prepareErr error
+		cgroupProcsPath, prepareErr = m.sessionCgroups.Prepare(id)
+		if prepareErr != nil {
+			m.mu.Unlock()
+			return SessionInfo{}, prepareErr
+		}
+	}
 	name, err := normalizeSessionName(opts.Name)
 	if err != nil {
+		m.sessionCgroups.Cleanup(id)
 		m.mu.Unlock()
 		return SessionInfo{}, err
 	}
@@ -224,16 +251,17 @@ func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOp
 			Name:      name,
 			CreatedAt: now,
 		},
-		Username:     username,
-		WorkDir:      workDir,
-		LastActivity: now,
-		dirty:        false,
+		Username:        username,
+		WorkDir:         workDir,
+		LastActivity:    now,
+		dirty:           false,
+		cgroupProcsPath: cgroupProcsPath,
 	}
 	m.sessions[id] = session
 	m.mu.Unlock()
 
 	if m.hasTmux {
-		defaultCommand := tmuxShellCommand(m.cfg.Shell, homeDir)
+		defaultCommand := tmuxShellCommandInCgroup(m.cfg.Shell, homeDir, cgroupProcsPath)
 		cmdArgs := tmuxNewSessionArgs(id, defaultCommand, workDir)
 		cmd := exec.Command("tmux", cmdArgs...)
 		if workDir != "" {
@@ -244,6 +272,7 @@ func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOp
 			m.mu.Lock()
 			delete(m.sessions, id)
 			m.mu.Unlock()
+			m.sessionCgroups.Cleanup(id)
 			return SessionInfo{}, fmt.Errorf("tmux new-session: %w", err)
 		}
 		m.configureTmuxTerminal(id, defaultCommand)
@@ -266,6 +295,23 @@ func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOp
 	info := session.Info
 	m.mu.Unlock()
 	return info, nil
+}
+
+func (m *Manager) checkResourceAdmission() error {
+	resources := m.cfg.Resources
+	if resources.MinSystemAvailableBytes <= 0 && resources.MaxSystemSwapUsedPercent <= 0 && resources.MaxMemoryPressureAvg10 <= 0 {
+		return nil
+	}
+
+	snapshot, err := m.readSystemStats()
+	if err != nil {
+		return fmt.Errorf("%w: system statistics unavailable: %v", systemstats.ErrAdmissionDenied, err)
+	}
+	return snapshot.CheckAdmission(systemstats.AdmissionPolicy{
+		MinSystemAvailableBytes:  uint64(resources.MinSystemAvailableBytes),
+		MaxSystemSwapUsedPercent: resources.MaxSystemSwapUsedPercent,
+		MaxMemoryPressureAvg10:   resources.MaxMemoryPressureAvg10,
+	})
 }
 
 func (m *Manager) sessionForUser(username, sessionID string) (*Session, error) {
@@ -331,6 +377,14 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return nil, nil, fmt.Errorf("pty start: %w", err)
+	}
+	if !m.hasTmux && session.cgroupProcsPath != "" {
+		if err := writeCgroupValue(session.cgroupProcsPath, strconv.Itoa(cmd.Process.Pid)); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			_ = ptmx.Close()
+			return nil, nil, fmt.Errorf("move terminal process into session cgroup: %w", err)
+		}
 	}
 
 	pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 120})
@@ -624,6 +678,7 @@ func (m *Manager) KillSession(sessionID string) error {
 	if m.hasTmux {
 		exec.Command("tmux", "kill-session", "-t", sessionID).Run()
 	}
+	m.sessionCgroups.Cleanup(sessionID)
 
 	m.removePersistedSession(session.Username, sessionID)
 	if handler != nil {
@@ -723,7 +778,15 @@ func terminalCommandEnv(baseEnv []string, homeDir string) []string {
 }
 
 func tmuxShellCommand(shellPath, homeDir string) string {
-	command := fmt.Sprintf(
+	return tmuxShellCommandInCgroup(shellPath, homeDir, "")
+}
+
+func tmuxShellCommandInCgroup(shellPath, homeDir, cgroupProcsPath string) string {
+	command := ""
+	if cgroupProcsPath != "" {
+		command = fmt.Sprintf("printf '%%s\\n' \"$$\" > %s || exit 125; ", shQuote(cgroupProcsPath))
+	}
+	command += fmt.Sprintf(
 		"exec env -u TERM_PROGRAM -u TERM_PROGRAM_VERSION -u NO_COLOR -u TMUX -u STY -u WINDOW TERM=%s COLORTERM=%s HOME=%s SHELL=%s ",
 		shQuote(terminalClientTerm),
 		shQuote(terminalColorDepth),

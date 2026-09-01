@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -20,6 +21,7 @@ import (
 	"github.com/ianf339/roambench/internal/auth"
 	"github.com/ianf339/roambench/internal/config"
 	"github.com/ianf339/roambench/internal/filebrowser"
+	"github.com/ianf339/roambench/internal/systemstats"
 	"github.com/ianf339/roambench/internal/terminal"
 )
 
@@ -396,36 +398,6 @@ func TestLoginCookieUsesBasePath(t *testing.T) {
 	}
 }
 
-func TestParseProcMemoryValueBytes(t *testing.T) {
-	content := "Name:\troambench\nVmRSS:\t   12345 kB\nThreads:\t7\n"
-
-	got, err := parseProcMemoryValueBytes(content, "VmRSS:")
-	if err != nil {
-		t.Fatalf("parseProcMemoryValueBytes error = %v", err)
-	}
-	if want := uint64(12345 * 1024); got != want {
-		t.Fatalf("parseProcMemoryValueBytes = %d, want %d", got, want)
-	}
-}
-
-func TestReadMemoryStatusParsesUsedMemory(t *testing.T) {
-	meminfo := "MemTotal:       16384 kB\nMemAvailable:    4096 kB\n"
-
-	total, err := parseProcMemoryValueBytes(meminfo, "MemTotal:")
-	if err != nil {
-		t.Fatalf("MemTotal parse error = %v", err)
-	}
-	available, err := parseProcMemoryValueBytes(meminfo, "MemAvailable:")
-	if err != nil {
-		t.Fatalf("MemAvailable parse error = %v", err)
-	}
-
-	used := total - available
-	if want := uint64((16384 - 4096) * 1024); used != want {
-		t.Fatalf("used memory = %d, want %d", used, want)
-	}
-}
-
 func TestMemoryStatusRouteReturnsStats(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Server.AllowAllIPs = true
@@ -443,6 +415,25 @@ func TestMemoryStatusRouteReturnsStats(t *testing.T) {
 	}
 
 	srv := NewServer(cfg, nil, sessions, nil, nil)
+	srv.readSystemStats = func() (systemstats.Snapshot, error) {
+		memoryHigh := uint64(6 << 30)
+		memoryMax := uint64(8 << 30)
+		pidsMax := uint64(384)
+		return systemstats.Snapshot{
+			ProcessRSSBytes:         32 << 20,
+			SystemUsedBytes:         12 << 30,
+			SystemAvailableBytes:    4 << 30,
+			SystemTotalBytes:        16 << 30,
+			TaskPoolAvailable:       true,
+			TaskPoolCurrentBytes:    5 << 30,
+			TaskPoolAnonBytes:       2 << 30,
+			TaskPoolFileBytes:       3 << 30,
+			TaskPoolMemoryHighBytes: &memoryHigh,
+			TaskPoolMemoryMaxBytes:  &memoryMax,
+			TaskPoolPIDsCurrent:     141,
+			TaskPoolPIDsMax:         &pidsMax,
+		}, nil
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/system/memory", nil)
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	rec := httptest.NewRecorder()
@@ -457,9 +448,11 @@ func TestMemoryStatusRouteReturnsStats(t *testing.T) {
 	}
 
 	var resp struct {
-		ProcessRSSBytes  uint64 `json:"processRSSBytes"`
-		SystemUsedBytes  uint64 `json:"systemUsedBytes"`
-		TotalMemoryBytes uint64 `json:"totalMemoryBytes"`
+		ProcessRSSBytes      uint64 `json:"processRSSBytes"`
+		SystemUsedBytes      uint64 `json:"systemUsedBytes"`
+		TotalMemoryBytes     uint64 `json:"totalMemoryBytes"`
+		TaskPoolAvailable    bool   `json:"taskPoolAvailable"`
+		TaskPoolCurrentBytes uint64 `json:"taskPoolCurrentBytes"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Decode error: %v", err)
@@ -472,6 +465,59 @@ func TestMemoryStatusRouteReturnsStats(t *testing.T) {
 	}
 	if resp.SystemUsedBytes == 0 {
 		t.Fatal("SystemUsedBytes = 0, want non-zero")
+	}
+	if !resp.TaskPoolAvailable || resp.TaskPoolCurrentBytes != 5<<30 {
+		t.Fatalf("task pool = available %t current %d, want true and %d", resp.TaskPoolAvailable, resp.TaskPoolCurrentBytes, uint64(5<<30))
+	}
+}
+
+func TestCreateTerminalReturnsServiceUnavailableUnderResourcePressure(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.AllowAllIPs = true
+	cfg.Auth.SingleUser = "ian"
+	cfg.Terminal.PersistDir = t.TempDir()
+	cfg.Terminal.Resources.MinSystemAvailableBytes = int64(^uint64(0) >> 1)
+
+	sessions, err := auth.NewSessionManager(&cfg.Auth)
+	if err != nil {
+		t.Fatalf("NewSessionManager error: %v", err)
+	}
+	defer sessions.Stop()
+	token, err := sessions.CreateSession("ian")
+	if err != nil {
+		t.Fatalf("CreateSession auth error: %v", err)
+	}
+	terminals := terminal.NewManager(&cfg.Terminal)
+	defer terminals.Stop()
+
+	srv := NewServer(cfg, nil, sessions, terminals, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST /api/terminals status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "30" {
+		t.Fatalf("Retry-After = %q, want %q", got, "30")
+	}
+}
+
+func TestTerminalCreateErrorResponseTreatsResourceControlsAsTemporary(t *testing.T) {
+	tests := []error{
+		fmt.Errorf("wrapped: %w", systemstats.ErrAdmissionDenied),
+		fmt.Errorf("wrapped: %w", terminal.ErrResourceControlUnavailable),
+	}
+	for _, err := range tests {
+		status, message, retryAfter := terminalCreateErrorResponse(err)
+		if status != http.StatusServiceUnavailable || retryAfter != "30" {
+			t.Fatalf("terminalCreateErrorResponse(%v) = %d, %q, %q", err, status, message, retryAfter)
+		}
+		if message != "system under resource pressure or resource controls unavailable; try again later" {
+			t.Fatalf("message = %q", message)
+		}
 	}
 }
 

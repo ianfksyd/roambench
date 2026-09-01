@@ -15,5 +15,16 @@ ExecStart=/usr/local/bin/roambench --config /etc/roambench/roambench.toml
 Restart=always
 RestartSec=3
 
+# Host profile: approximately 16 GiB RAM.
+MemoryAccounting=yes
+MemoryHigh=6G
+MemoryMax=8G
+MemorySwapMax=1G
+TasksAccounting=yes
+TasksMax=384
+OOMPolicy=continue
+Delegate=cpu io memory pids
+DelegateSubgroup=supervisor
+
 [Install]
 WantedBy=multi-user.target

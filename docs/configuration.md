@@ -92,6 +92,17 @@ scrollback = 10000
 idle_timeout = "72h"
 persist_max_bytes = 67108864
 persist_dir = "/home/your-user/.local/state/roambench/terminals"
+
+[terminal.resources]
+min_system_available_bytes = 2147483648
+max_system_swap_used_percent = 75
+max_memory_pressure_avg10 = 10
+session_memory_high_bytes = 3221225472
+session_memory_max_bytes = 5368709120
+session_swap_max_bytes = 536870912
+session_pids_max = 256
+session_cpu_weight = 80
+session_io_weight = 80
 ```
 
 Important behavior:
@@ -102,6 +113,19 @@ Important behavior:
 - `idle_timeout` removes inactive sessions after the configured duration
 - `persist_max_bytes` limits how much disk is used for terminal metadata
 - `persist_dir` overrides the metadata storage directory
+- the three admission settings reject new terminals when available memory,
+  host swap use, or cgroup PSI indicates sustained pressure
+- `session_memory_high_bytes` starts reclaim before a terminal reaches its
+  hard `session_memory_max_bytes` limit
+- `session_swap_max_bytes` and `session_pids_max` contain swap thrashing and
+  runaway process trees within one terminal
+- `session_cpu_weight` and `session_io_weight` set relative cgroup v2 weights
+  from 1 to 10000; `0` leaves a controller unmanaged
+
+All `[terminal.resources]` values are optional and `0` disables that check or
+limit. Per-terminal limits require cgroup v2 plus `Delegate=` and
+`DelegateSubgroup=supervisor` in the systemd unit. The example values target a
+host with about 16 GiB RAM; tune them for smaller or larger machines.
 
 Default metadata directory:
 
