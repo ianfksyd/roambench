@@ -127,11 +127,16 @@ func (m *Manager) SetSessionEndedHandler(handler func(username, sessionID string
 
 func NewManager(cfg *config.TerminalConfig) *Manager {
 	_, err := exec.LookPath("tmux")
+	return newManager(cfg, err == nil)
+}
+
+// newManager selects the backend before startup can restore or prune sessions.
+func newManager(cfg *config.TerminalConfig, hasTmux bool) *Manager {
 	sessionCgroups, sessionCgroupErr := newSessionCgroupManager(cfg.Resources)
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		cfg:        cfg,
-		hasTmux:    err == nil,
+		hasTmux:    hasTmux,
 		sessions:   make(map[string]*Session),
 		cancel:     cancel,
 		persistDir: cfg.GetPersistDir(),

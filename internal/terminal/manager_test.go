@@ -20,8 +20,8 @@ func newTestManager(t *testing.T, cfg *config.TerminalConfig) *Manager {
 	if cfg.PersistDir == "" {
 		cfg.PersistDir = t.TempDir()
 	}
-	mgr := NewManager(cfg)
-	mgr.hasTmux = false
+	mgr := newManager(cfg, false)
+	t.Cleanup(mgr.Stop)
 	return mgr
 }
 

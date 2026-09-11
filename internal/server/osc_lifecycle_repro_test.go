@@ -31,8 +31,7 @@ func TestOSCNotificationIngestContinuesWithoutTerminalWebSocket(t *testing.T) {
 		t.Fatalf("user.Current error: %v", err)
 	}
 
-	// Isolate this test from the user's normal tmux server and sessions.
-	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	// TestMain isolates the tmux socket, including inherited TMUX connections.
 
 	cfg := config.Defaults()
 	cfg.Auth.SingleUser = currentUser.Username
