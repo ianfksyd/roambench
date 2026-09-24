@@ -2260,6 +2260,11 @@ button.tab-action:focus-visible {
     grid-template-rows: minmax(0, 1fr);
 }
 
+.terminal-grid[data-layout="3c"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr);
+}
+
 .terminal-grid[data-layout="4"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: repeat(2, minmax(0, 1fr));

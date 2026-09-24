@@ -187,6 +187,22 @@ func TestWorkspaceStateLoadRecoversFromNewerWAL(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkspaceLayout(t *testing.T) {
+	cases := map[string]string{
+		"1": "1", "2": "2", "3c": "3c", "4": "4", "4w": "4w",
+		" 3c ": "3c",
+		"3":    "1",
+		"bogus": "1",
+		"":     "1",
+	}
+
+	for input, want := range cases {
+		if got := normalizeWorkspaceLayout(input); got != want {
+			t.Errorf("normalizeWorkspaceLayout(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestWorkspaceStateLoadUsesWALWhenMainStateIsMissing(t *testing.T) {
 	store := newWorkspaceStateStore(t.TempDir())
 	recovered := testWorkspaceStatePayload("2026-01-01T00:02:00Z", "view-3", "Recovered from WAL only")

@@ -17,7 +17,7 @@
     const EDITOR_UI_STORAGE_KEY = 'roambench.editor-ui.v1';
     const UPLOAD_RESPONSE_GRACE_MS = 6000;
     const DEFAULT_LANGUAGE = 'en';
-    const WORKSPACE_LAYOUT_SLOT_COUNTS = { '1': 1, '2': 2, '4': 4, '4w': 4 };
+    const WORKSPACE_LAYOUT_SLOT_COUNTS = { '1': 1, '2': 2, '3c': 3, '4': 4, '4w': 4 };
     const BASE_PATH = normalizeBasePath(typeof window.__BASE_PATH__ === 'string' ? window.__BASE_PATH__ : '');
     const DEFAULT_TERMINAL_NAME_PREFIXES = {
         en: 'Term ',
@@ -78,6 +78,7 @@
             'workspace.layoutSwitcher': 'Terminal Layout',
             'workspace.layout.single': 'Single Terminal',
             'workspace.layout.double': 'Two Terminals',
+            'workspace.layout.tripleColumns': 'Three Columns',
             'workspace.layout.quad': 'Four Terminals',
             'workspace.layout.quadWide': 'Four Columns',
             'workspace.emptySlot': 'Empty pane',
@@ -290,6 +291,7 @@
             'workspace.layoutSwitcher': '终端布局',
             'workspace.layout.single': '单终端',
             'workspace.layout.double': '双终端',
+            'workspace.layout.tripleColumns': '三列布局',
             'workspace.layout.quad': '四终端',
             'workspace.layout.quadWide': '四列布局',
             'workspace.emptySlot': '空白窗格',
@@ -502,6 +504,7 @@
             'workspace.layoutSwitcher': '端末レイアウト',
             'workspace.layout.single': '単一端末',
             'workspace.layout.double': '2 分割端末',
+            'workspace.layout.tripleColumns': '3 列端末',
             'workspace.layout.quad': '4 分割端末',
             'workspace.layout.quadWide': '4 列端末',
             'workspace.emptySlot': '空のペイン',
@@ -5588,7 +5591,7 @@
     function updateLayoutSwitchButtons() {
         var activeWorkspace = getActiveWorkspace();
 
-        ['1', '2', '4', '4w'].forEach(function(layout) {
+        ['1', '2', '3c', '4', '4w'].forEach(function(layout) {
             var button = document.getElementById('layout-btn-' + layout);
             if (!button) {
                 return;
