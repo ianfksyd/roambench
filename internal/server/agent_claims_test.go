@@ -11,6 +11,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -277,3 +278,150 @@ type atomicTimeValue struct{ v atomic.Value }
 
 func (a *atomicTimeValue) Store(t time.Time) { a.v.Store(t) }
 func (a *atomicTimeValue) Load() time.Time   { return a.v.Load().(time.Time) }
+
+// K4 wiring test (FIXER round): creating a task must raise a pending
+// kind="dispatch" checkpoint; approving it must set DispatchState=ready and
+// make the task claimable end-to-end; rejecting keeps it unclaimable.
+func TestDispatchCheckpointCreationAndApprovalGatesClaim(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	agentToken := agentTokenFor(t, srv, token)
+
+	// Create a project + workstream + task via the API.
+	projectReq := httptest.NewRequest(http.MethodPost, "/api/project-control/projects", strings.NewReader(`{"key":"k4-demo","name":"K4 Demo"}`))
+	projectReq.Header.Set("Content-Type", "application/json")
+	projectReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	projectRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(projectRec, projectReq)
+	if projectRec.Code != http.StatusCreated {
+		t.Fatalf("POST project status = %d: %s", projectRec.Code, projectRec.Body.String())
+	}
+	projectSnapshot := decodeProjectControlSnapshot(t, projectRec)
+	createdProject := projectSnapshot.Projects[len(projectSnapshot.Projects)-1]
+
+	workstreamReq := httptest.NewRequest(http.MethodPost, "/api/project-control/workstreams", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"title":"K4 Stream"}`, createdProject.ID)))
+	workstreamReq.Header.Set("Content-Type", "application/json")
+	workstreamReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	workstreamRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(workstreamRec, workstreamReq)
+	if workstreamRec.Code != http.StatusCreated {
+		t.Fatalf("POST workstream status = %d: %s", workstreamRec.Code, workstreamRec.Body.String())
+	}
+	workstreamSnapshot := decodeProjectControlSnapshot(t, workstreamRec)
+	createdWorkstream := workstreamSnapshot.Workstreams[len(workstreamSnapshot.Workstreams)-1]
+
+	taskReq := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"K4 dispatch task"}`, createdProject.ID, createdWorkstream.ID)))
+	taskReq.Header.Set("Content-Type", "application/json")
+	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	taskRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(taskRec, taskReq)
+	if taskRec.Code != http.StatusCreated {
+		t.Fatalf("POST task status = %d: %s", taskRec.Code, taskRec.Body.String())
+	}
+	snapshot := decodeProjectControlSnapshot(t, taskRec)
+
+	// The new task carries a pending dispatch checkpoint and is awaiting_approval.
+	var createdTaskID, dispatchCheckpointID string
+	for _, task := range snapshot.Tasks {
+		if task.Title != "K4 dispatch task" {
+			continue
+		}
+		createdTaskID = task.ID
+		if task.DispatchState != "awaiting_approval" {
+			t.Fatalf("created task dispatchState = %q, want awaiting_approval", task.DispatchState)
+		}
+	}
+	if createdTaskID == "" {
+		t.Fatal("created task not found")
+	}
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == createdTaskID && checkpoint.Kind == "dispatch" && checkpoint.Status == "pending" {
+			dispatchCheckpointID = checkpoint.ID
+		}
+	}
+	if dispatchCheckpointID == "" {
+		t.Fatalf("expected pending dispatch checkpoint, got %#v", snapshot.Checkpoints)
+	}
+
+	// Before approval: claim returns 204.
+	rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-k4","agentLabel":"hermes"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("claim before dispatch approval = %d, want 204", rec.Code)
+	}
+
+	// Approve the dispatch checkpoint.
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+dispatchCheckpointID+"/decision", strings.NewReader(`{"action":"approve"}`))
+	decisionReq.Header.Set("Content-Type", "application/json")
+	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("POST dispatch decision status = %d: %s", decisionRec.Code, decisionRec.Body.String())
+	}
+	approved := decodeProjectControlSnapshot(t, decisionRec)
+	for _, task := range approved.Tasks {
+		if task.ID == createdTaskID && task.DispatchState != "ready" {
+			t.Fatalf("task dispatchState after approve = %q, want ready", task.DispatchState)
+		}
+	}
+
+	// After approval: the claim succeeds and returns the task.
+	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-k4","agentLabel":"hermes"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim after dispatch approval = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var claimPayload map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&claimPayload)
+	if claimPayload["taskId"] != createdTaskID {
+		t.Fatalf("claimed taskId = %v, want %v", claimPayload["taskId"], createdTaskID)
+	}
+	leaseID, _ := claimPayload["leaseId"].(string)
+	rec = agentAPIPost(t, srv, "/api/agent/v1/release", agentToken, `{"leaseId":"`+leaseID+`","outcome":"done"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("release status = %d, want 200", rec.Code)
+	}
+
+	// Reject path: a second task rejected at its checkpoint must be unclaimable.
+	taskReq2 := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"K4 reject task"}`, createdProject.ID, createdWorkstream.ID)))
+	taskReq2.Header.Set("Content-Type", "application/json")
+	taskReq2.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	taskRec2 := httptest.NewRecorder()
+	srv.mux.ServeHTTP(taskRec2, taskReq2)
+	if taskRec2.Code != http.StatusCreated {
+		t.Fatalf("POST second task status = %d: %s", taskRec2.Code, taskRec2.Body.String())
+	}
+	snapshot2 := decodeProjectControlSnapshot(t, taskRec2)
+	var rejectTaskID, rejectCheckpointID string
+	for _, task := range snapshot2.Tasks {
+		if task.Title != "K4 reject task" {
+			continue
+		}
+		rejectTaskID = task.ID
+	}
+	for _, checkpoint := range snapshot2.Checkpoints {
+		if checkpoint.TaskID == rejectTaskID && checkpoint.Kind == "dispatch" && checkpoint.Status == "pending" {
+			rejectCheckpointID = checkpoint.ID
+		}
+	}
+	if rejectCheckpointID == "" {
+		t.Fatalf("expected pending dispatch checkpoint on second task, got %#v", snapshot2.Checkpoints)
+	}
+	rejectReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+rejectCheckpointID+"/decision", strings.NewReader(`{"action":"reject"}`))
+	rejectReq.Header.Set("Content-Type", "application/json")
+	rejectReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rejectRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rejectRec, rejectReq)
+	if rejectRec.Code != http.StatusOK {
+		t.Fatalf("POST reject decision status = %d: %s", rejectRec.Code, rejectRec.Body.String())
+	}
+	rejected := decodeProjectControlSnapshot(t, rejectRec)
+	for _, task := range rejected.Tasks {
+		if task.ID == rejectTaskID && task.DispatchState != "none" {
+			t.Fatalf("task dispatchState after reject = %q, want none", task.DispatchState)
+		}
+	}
+	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-k4b","agentLabel":"hermes"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("claim after rejection = %d, want 204", rec.Code)
+	}
+}

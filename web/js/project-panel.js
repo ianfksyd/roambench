@@ -36,6 +36,8 @@
         creatingTaskRunbookId: '',
         creatingTaskStep: 1,
         creatingTaskSaving: false,
+        agentRecommendations: [],
+        agentRecommendationsLoading: false,
         phaseUpdatingTaskId: '',
         toolRunRefreshTimer: null,
         boardLoading: false,
@@ -1201,6 +1203,71 @@
         state.creatingTaskRunbookId = '';
         state.creatingTaskStep = 1;
         state.creatingTaskSaving = false;
+        state.agentRecommendations = [];
+        state.agentRecommendationsLoading = false;
+    }
+
+    // C7: fetch the K3 tier recommendations (GET /api/project-control/agents)
+    // so the task wizard's review step can show which agentLabel to hand the
+    // work to. Failures are silent — the wizard still works without it.
+    function loadAgentRecommendations() {
+        state.agentRecommendationsLoading = true;
+        fetchJSON('/api/project-control/agents').then(function(payload) {
+            state.agentRecommendations = payload && Array.isArray(payload.recommendations) ? payload.recommendations : [];
+            state.agentRecommendationsLoading = false;
+            render();
+        }).catch(function() {
+            state.agentRecommendations = [];
+            state.agentRecommendationsLoading = false;
+            render();
+        });
+    }
+
+    function recommendedAgentLabelForRisk(riskLevel) {
+        var tiers = Array.isArray(state.agentRecommendations) ? state.agentRecommendations : [];
+        if (!tiers.length) {
+            return '';
+        }
+        var risk = String(riskLevel || 'medium').trim().toLowerCase();
+        // Risk -> tier mapping (review R1): critical/high work goes to the
+        // heavy tier (T3/T4), medium to T2, low to T1. Tiers come ordered
+        // T1..T4 from the probe; fall back to the first available.
+        var wanted = risk === 'critical' || risk === 'high' ? ['T3', 'T4'] : (risk === 'low' ? ['T1', 'T2'] : ['T2', 'T3']);
+        for (var i = 0; i < wanted.length; i++) {
+            for (var j = 0; j < tiers.length; j++) {
+                if (String(tiers[j].tier || '').trim() === wanted[i] && tiers[j].workerLabel) {
+                    return String(tiers[j].workerLabel);
+                }
+            }
+        }
+        for (var k = 0; k < tiers.length; k++) {
+            if (tiers[k].workerLabel) {
+                return String(tiers[k].workerLabel);
+            }
+        }
+        return '';
+    }
+
+    function renderAgentRecommendationRows(riskLevel) {
+        var tiers = Array.isArray(state.agentRecommendations) ? state.agentRecommendations : [];
+        if (state.agentRecommendationsLoading && !tiers.length) {
+            return '<div class="project-list-item muted">' + escapeHTML(tr('project.recommendationsLoading', 'Detecting available agents…')) + '</div>';
+        }
+        if (!tiers.length) {
+            return '<div class="project-list-item muted">' + escapeHTML(tr('project.noRecommendations', 'No agent recommendations available.')) + '</div>';
+        }
+        var recommended = recommendedAgentLabelForRisk(riskLevel);
+        return tiers.map(function(item) {
+            var workerLabel = String(item.workerLabel || '—');
+            var reviewerLabel = String(item.reviewerLabel || '—');
+            var isRecommended = recommended && workerLabel === recommended;
+            return '<div class="project-fact-row">'
+                + '<div class="project-fact-label">' + escapeHTML(String(item.tier || '?')) + '</div>'
+                + '<div class="project-fact-value">' + escapeHTML(workerLabel)
+                + (item.reviewerLabel && item.reviewerLabel !== workerLabel ? ' <span class="project-list-meta">/ ' + escapeHTML(reviewerLabel) + '</span>' : '')
+                + (isRecommended ? ' <span class="project-pill tone-success">' + escapeHTML(tr('project.recommended', 'Recommended')) + '</span>' : '')
+                + '</div></div>';
+        }).join('');
     }
 
     function focusWorkstreamWizard() {
@@ -1300,6 +1367,9 @@
             return;
         }
         state.creatingTaskStep = clampTaskWizardStep(currentTaskWizardStep() + 1);
+        if (state.creatingTaskStep >= TASK_WIZARD_TOTAL_STEPS && !state.agentRecommendations.length && !state.agentRecommendationsLoading) {
+            loadAgentRecommendations();
+        }
         render();
         focusTaskWizard();
     }
@@ -1974,6 +2044,8 @@
             return tr('project.finalAcceptance', 'Final acceptance');
         case 'archive_override':
             return tr('project.archiveOverride', 'Archive override');
+        case 'dispatch':
+            return tr('project.dispatchCheckpoint', 'Dispatch approval');
         default:
             return String(kind || '').trim() || tr('project.checkpoint', 'checkpoint');
         }
@@ -2027,6 +2099,11 @@
             return item && item.status === 'pending'
                 ? tr('project.archiveOverridePendingSummary', 'A person needs to approve closing this task without final acceptance.')
                 : tr('project.archiveOverrideResolvedSummary', 'Shows the result of the archive exception decision for this task.');
+        }
+        if (kind === 'dispatch') {
+            return item && item.status === 'pending'
+                ? tr('project.dispatchPendingSummary', 'Approving lets an agent runtime claim this task and start working on it.')
+                : tr('project.dispatchResolvedSummary', 'Shows the result of the dispatch approval for this task.');
         }
         return tr('project.genericApprovalSummary', 'This item is waiting on a human decision.');
     }
@@ -2089,7 +2166,7 @@
     function renderTaskApprovalStatusCard(task) {
         var finalAcceptance = currentTaskApprovalState(task, 'final_acceptance');
         var archiveOverride = currentTaskApprovalState(task, 'archive_override');
-
+        var dispatch = currentTaskApprovalState(task, 'dispatch');
         function renderStatusRow(label, approval, kind) {
             if (!approval) {
                 return '';
@@ -2110,19 +2187,112 @@
                 + '</div></div>';
         }
 
-        if (!finalAcceptance && !archiveOverride) {
+        if (!finalAcceptance && !archiveOverride && !dispatch) {
             return '';
         }
         return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.currentApprovals', 'Current approvals')) + '</h3>'
+            + renderStatusRow(tr('project.dispatchCheckpoint', 'Dispatch approval'), dispatch, 'dispatch')
             + renderStatusRow(tr('project.finalAcceptance', 'Final acceptance'), finalAcceptance, 'final_acceptance')
             + renderStatusRow(tr('project.archiveOverride', 'Archive override'), archiveOverride, 'archive_override')
             + '</div>';
     }
 
+    // Dispatch pipeline (K4/C7): the task's dispatch state, who currently
+    // holds the lease, and how long that lease has left. Lease expiry is
+    // derived from the latest claim timeline event carrying an ISO timestamp
+    // in its detail text; when no such event exists the row falls back to
+    // dispatchState + claimedBy only.
+    function taskLeaseRemainingSeconds(task) {
+        if (!task || String(task.dispatchState || '') !== 'claimed') {
+            return null;
+        }
+        var detail = '';
+        var timeline = Array.isArray(task.timeline) ? task.timeline : [];
+        for (var i = timeline.length - 1; i >= 0; i--) {
+            var action = String(timeline[i].action || '');
+            if (action === 'checkpoint_task_claimed' || action === 'checkpoint_task_lease_heartbeat') {
+                detail = String(timeline[i].detail || '');
+                break;
+            }
+        }
+        var match = detail.match(/\b(\d{4}-\d{2}-\d{2}T[0-9:.]+Z)\b/);
+        if (!match) {
+            return null;
+        }
+        var expires = new Date(match[1]);
+        if (isNaN(expires.getTime())) {
+            return null;
+        }
+        return Math.max(0, Math.round((expires.getTime() - Date.now()) / 1000));
+    }
+
+    function dispatchStateLabel(value) {
+        switch (String(value || '').trim()) {
+        case 'none':
+            return tr('project.dispatchStateNone', 'Not dispatchable');
+        case 'awaiting_approval':
+            return tr('project.dispatchStateAwaiting', 'Awaiting approval');
+        case 'ready':
+            return tr('project.dispatchStateReady', 'Ready to claim');
+        case 'claimed':
+            return tr('project.dispatchStateClaimed', 'Claimed by agent');
+        case 'released':
+            return tr('project.dispatchStateReleased', 'Released');
+        case 'done':
+            return tr('project.dispatchStateDone', 'Done');
+        default:
+            return humanizeToken(value);
+        }
+    }
+
+    function renderTaskDispatchCard(task) {
+        if (!task) {
+            return '';
+        }
+        var dispatchState = String(task.dispatchState || '').trim();
+        if (!dispatchState) {
+            return '';
+        }
+        var claimedBy = String(task.claimedByRuntimeId || '').trim();
+        var leaseSeconds = taskLeaseRemainingSeconds(task);
+        var tone = 'neutral';
+        if (dispatchState === 'ready') {
+            tone = 'success';
+        } else if (dispatchState === 'claimed') {
+            tone = 'info';
+        } else if (dispatchState === 'awaiting_approval') {
+            tone = 'warning';
+        }
+        var rows = '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.dispatchState', 'Dispatch state')) + '</div>'
+            + '<div class="project-fact-value">' + escapeHTML(dispatchStateLabel(dispatchState)) + '</div></div>';
+        if (claimedBy) {
+            rows += '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.claimedBy', 'Claimed by')) + '</div>'
+                + '<div class="project-fact-value">' + escapeHTML(claimedBy) + '</div></div>';
+        }
+        if (leaseSeconds !== null) {
+            rows += '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.leaseRemaining', 'Lease remaining')) + '</div>'
+                + '<div class="project-fact-value">' + escapeHTML(tr('project.leaseSeconds', '{count} s', { count: leaseSeconds })) + '</div></div>';
+        }
+        return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.dispatchTitle', 'Agent dispatch')) + '</h3>'
+            + '<div class="project-approval-status-row tone-' + escapeHTML(tone) + '">'
+            + '<span class="project-pill tone-' + escapeHTML(tone) + '">' + escapeHTML(dispatchStateLabel(dispatchState)) + '</span></div>'
+            + '<div class="project-fact-list compact">' + rows + '</div>'
+            + '</div>';
+    }
+
     function taskApprovalBadges(task) {
         var badges = [];
+        var dispatch = currentTaskApprovalState(task, 'dispatch');
         var finalAcceptance = currentTaskApprovalState(task, 'final_acceptance');
         var archiveOverride = currentTaskApprovalState(task, 'archive_override');
+
+        if (dispatch) {
+            if (dispatch.actions && dispatch.actions.length) {
+                badges.push({ className: 'approval-pending', label: tr('project.dispatchCheckpointPending', 'Dispatch pending') });
+            } else if (task && task.dispatchState === 'ready') {
+                badges.push({ className: 'approval-approved', label: tr('project.dispatchReady', 'Dispatch ready') });
+            }
+        }
 
         if (finalAcceptance) {
             if (finalAcceptance.actions && finalAcceptance.actions.length) {
@@ -2410,6 +2580,10 @@
                 + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.taskGoal', 'Goal')) + '</span><strong>' + escapeHTML(state.creatingTaskGoal || tr('project.none', 'None')) + '</strong></div>'
                 + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.skill', 'Skill')) + '</span><strong>' + escapeHTML(humanizeSkill(selectedSkill)) + '</strong></div>'
                 + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</span><strong>' + escapeHTML(selectedRunbook.id || tr('project.none', 'None')) + '</strong></div>'
+                + '</div>'
+                + '<div class="project-wizard-agent-recommendations"><div class="project-card-title">' + escapeHTML(tr('project.agentRecommendations', 'Recommended agents')) + '</div>'
+                + '<div class="project-card-copy">' + escapeHTML(tr('project.agentRecommendationsCopy', 'Agent tiers detected on this machine; the highlighted tier fits the task risk level.')) + '</div>'
+                + '<div class="project-fact-list compact">' + renderAgentRecommendationRows('medium') + '</div>'
                 + '</div>'
                 + '</div>';
         }
@@ -3941,6 +4115,7 @@
         default:
             return '<div class="project-task-detail-stack">'
                 + renderTaskExecutionGuide(task, taskSessions)
+                + renderTaskDispatchCard(task)
                 + renderTaskRunbookPanel(task)
                 + renderTaskApprovalStatusCard(task)
                 + '</div>';
@@ -4485,6 +4660,9 @@
         state.creatingTaskRunbookId = runbook.id || 'code_change_default';
         state.creatingTaskStep = 1;
         state.creatingTaskSaving = false;
+        if (!state.agentRecommendations.length && !state.agentRecommendationsLoading) {
+            loadAgentRecommendations();
+        }
         state.selectedProjectId = workstream.projectId;
         state.selectedWorkstreamId = workstream.id;
         state.selectedTaskId = '';

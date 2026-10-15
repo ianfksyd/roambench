@@ -34,7 +34,22 @@ const (
 	CommandTimeout = 3 * time.Second
 	// CacheTTL is how long a Fetch result stays fresh per repoPath.
 	CacheTTL = 10 * time.Second
+	// CacheMaxEntries caps how many repoPath entries the Cache keeps. Once
+	// the limit is hit the oldest entry is evicted (review R1: repoPath is
+	// user supplied, so an unbounded cache grows forever on a long-lived
+	// server).
+	CacheMaxEntries = 64
 )
+
+// fsmonitorOverrideArgs disable every fsmonitor backend for the child git: a
+// repo-local core.fsmonitor (or core.fsmonitorDaemon in .git/config, which
+// GIT_CONFIG_GLOBAL/SYSTEM=/dev/null does not touch) would otherwise spawn a
+// daemon from a board read (review R1 nit).
+var fsmonitorOverrideArgs = []string{
+	"-c", "core.fsmonitor=false",
+	"-c", "core.fsmonitorDaemon=false",
+	"-c", "fsmaintenance.enabled=false",
+}
 
 // Worktree is one entry of `git worktree list`.
 type Worktree struct {
@@ -141,7 +156,8 @@ func fetchWithTimeout(gitBin, repoPath string, timeout time.Duration) Status {
 func runGit(gitBin, dir string, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	argv := append([]string{"--no-optional-locks"}, args...)
+	argv := append([]string{"--no-optional-locks"}, fsmonitorOverrideArgs...)
+	argv = append(argv, args...)
 	cmd := exec.CommandContext(ctx, gitBin, argv...)
 	cmd.Dir = dir
 	cmd.Env = sanitizedGitEnv(os.Environ())
@@ -267,12 +283,14 @@ type cacheEntry struct {
 }
 
 // Cache memoizes Fetch results per repoPath for CacheTTL. It is safe for
-// concurrent use.
+// concurrent use. At most CacheMaxEntries repos are remembered; inserting
+// beyond the cap evicts the least-recently-fetched entry.
 type Cache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
 	gitBin  string
 	entries map[string]cacheEntry
+	order   []string
 }
 
 func NewCache() *Cache {
@@ -313,7 +331,16 @@ func (c *Cache) Fetch(repoPath string) Status {
 	status := fetchWithTimeout(c.gitBin, repoPath, CommandTimeout)
 
 	c.mu.Lock()
+	if _, exists := c.entries[repoPath]; !exists {
+		c.order = append(c.order, repoPath)
+	}
 	c.entries[repoPath] = cacheEntry{status: status, fetchedAt: time.Now()}
+	// Capacity bound: drop the oldest entries beyond CacheMaxEntries.
+	for len(c.order) > CacheMaxEntries {
+		oldest := c.order[0]
+		c.order = c.order[1:]
+		delete(c.entries, oldest)
+	}
 	c.mu.Unlock()
 	return status
 }

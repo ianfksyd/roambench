@@ -171,6 +171,22 @@ func applyProjectedTaskDecision(task *projectControlTask, requestKind, action, d
 		default:
 			return fmt.Errorf("unsupported archive override action %q", action)
 		}
+	case "dispatch":
+		// Dispatch pipeline (K4, WS-20261015-001): the control-plane
+		// decision path mirrors the legacy recordCheckpointDecision hook —
+		// approve makes the task claimable, reject keeps it parked.
+		switch action {
+		case "approve", "approve_once", "approve_session":
+			task.DispatchState = controlplane.DispatchStateReady
+			task.RecentSummary = "Dispatch approved by human operator; task is ready to be claimed."
+			task.NextStep = "An agent runtime can now claim this task via /api/agent/v1/claim."
+		case "reject", "reject_with_feedback":
+			task.DispatchState = controlplane.DispatchStateNone
+			task.RecentSummary = "Dispatch rejected by human operator; task cannot be claimed."
+			task.NextStep = "Request a new dispatch checkpoint when the task is ready for agent handoff."
+		default:
+			return fmt.Errorf("unsupported dispatch action %q", action)
+		}
 	}
 	return nil
 }

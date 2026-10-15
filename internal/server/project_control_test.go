@@ -2619,8 +2619,10 @@ func TestProjectControlEventsRouteSupportsFilteringAndOrdering(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("Decode error: %v", err)
 	}
-	if len(payload.Events) != 1 {
-		t.Fatalf("len(events) = %d, want 1 for filtered task history", len(payload.Events))
+	// K4: task creation now also raises a dispatch checkpoint, so the filtered
+	// task history carries task_created + checkpoint_raised (limit=2).
+	if len(payload.Events) != 2 {
+		t.Fatalf("len(events) = %d, want 2 for filtered task history", len(payload.Events))
 	}
 	if payload.Events[0].Action != "task_created" {
 		t.Fatalf("events[0].Action = %q, want task_created", payload.Events[0].Action)

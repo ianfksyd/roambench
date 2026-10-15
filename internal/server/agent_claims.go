@@ -77,7 +77,22 @@ func (s *projectControlStore) agentClaimTask(username string, req agentClaimRequ
 	if err != nil {
 		return http.StatusInternalServerError, nil, err
 	}
-	if err := s.applyClaimToTask(username, claim.TaskID, controlplane.DispatchStateClaimed, claim.RuntimeID, claim.ClaimID); err != nil {
+	// TOCTOU re-check (K5): the candidate snapshot was taken before the lease
+	// INSERT. Re-verify inside withStateLocked that the task is still
+	// dispatch-ready before overwriting its dispatch state; a checkpoint
+	// rejection that raced in between must win over the claim.
+	if err := s.applyClaimToTaskRechecked(username, claim.TaskID, controlplane.DispatchStateClaimed, claim.RuntimeID, claim.ClaimID, func(current string) error {
+		if current != controlplane.DispatchStateReady {
+			return controlplane.ErrConflict
+		}
+		return nil
+	}); err != nil {
+		// Roll the losing lease back so the lease table stays consistent
+		// with the task projection.
+		_, _ = claims.ReleaseClaim(context.Background(), username, claim.ClaimID, controlplane.ReleaseOutcomeReleased)
+		if errors.Is(err, controlplane.ErrConflict) {
+			return http.StatusConflict, nil, fmt.Errorf("task %s is no longer dispatch-ready", claim.TaskID)
+		}
 		return http.StatusInternalServerError, nil, err
 	}
 	s.recordClaimTimeline(username, claim.TaskID, claim.AgentLabel, "task_claimed",
@@ -216,7 +231,16 @@ func (s *projectControlStore) readyTaskIDsForUser(username string) []string {
 // applyClaimToTask writes DispatchState / ClaimedByRuntimeID back to the
 // project-control task and appends a Timeline entry. Task fields live in the
 // project-control state; the lease row stays authoritative for leases.
+//
+// The recheckDispatchState callback (when non-nil) runs inside the same
+// withStateLocked critical section just before the write, so a claim that
+// raced with a checkpoint rejection (dispatchState left ready) fails with
+// ErrConflict instead of overwriting the human decision (K5 TOCTOU fix).
 func (s *projectControlStore) applyClaimToTask(username, taskID, dispatchState, claimedByRuntimeID, claimID string) error {
+	return s.applyClaimToTaskRechecked(username, taskID, dispatchState, claimedByRuntimeID, claimID, nil)
+}
+
+func (s *projectControlStore) applyClaimToTaskRechecked(username, taskID, dispatchState, claimedByRuntimeID, claimID string, recheckDispatchState func(current string) error) error {
 	if strings.TrimSpace(taskID) == "" {
 		return nil
 	}
@@ -228,6 +252,15 @@ func (s *projectControlStore) applyClaimToTask(username, taskID, dispatchState, 
 				continue
 			}
 			found = true
+			if recheckDispatchState != nil {
+				current := strings.TrimSpace(state.Tasks[i].DispatchState)
+				if current == "" {
+					current = controlplane.DispatchStateNone
+				}
+				if err := recheckDispatchState(current); err != nil {
+					return err
+				}
+			}
 			state.Tasks[i].DispatchState = dispatchState
 			state.Tasks[i].ClaimedByRuntimeID = claimedByRuntimeID
 			state.Tasks[i].RowVersion += 1

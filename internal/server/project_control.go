@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -1854,6 +1855,7 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 		state.Tasks[taskIndex].RowVersion += 1
 		syncProjectControlAcceptanceCheckpoint(state, state.Tasks[taskIndex], now)
 		syncProjectControlArchiveOverrideCheckpoint(state, state.Tasks[taskIndex], now)
+		syncProjectControlDispatchCheckpoint(state, state.Tasks[taskIndex], now)
 		if state.ToolRuns[runIndex].Status == "completed" && state.ToolRuns[runIndex].Outcome == "pass" {
 			resolveWorkspace := func(_ projectControlTask, _ projectControlRunbookPhase, _ string) (string, error) {
 				return s.runtimeWorkspaceDir()
@@ -2214,6 +2216,73 @@ func syncProjectControlArchiveOverrideCheckpoint(state *projectControlState, tas
 		Actor:        "policy_engine",
 		Action:       "checkpoint_expired",
 		Detail:       checkpoint.DecisionSummary,
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+		CheckpointID: checkpoint.ID,
+	})
+}
+
+// syncProjectControlDispatchCheckpoint raises the dispatch approval gate
+// (K4, WS-20261015-001): when a task is in a dispatchable state (planned or
+// queued) and its DispatchState has no approval outcome yet (empty or none),
+// a pending Kind="dispatch" checkpoint is created so a human can approve the
+// handoff to an agent runtime. Approving sets DispatchState=ready (claimable,
+// see recordCheckpointDecision); rejecting sets it back to none. The sync is
+// idempotent: at most one pending dispatch checkpoint per task.
+func syncProjectControlDispatchCheckpoint(state *projectControlState, task projectControlTask, now string) {
+	if state == nil {
+		return
+	}
+	// Only planned/queued tasks are dispatchable; anything else (running,
+	// archived, execution_complete, …) must not gain a dispatch gate.
+	if task.State != "planned" && task.State != "queued" {
+		return
+	}
+	dispatchState := strings.TrimSpace(task.DispatchState)
+	if dispatchState == "" {
+		dispatchState = controlplane.DispatchStateNone
+	}
+	// Only an unresolved task (no approval outcome yet) raises the gate. Once
+	// approved (ready) the task is claimable; once rejected the operator must
+	// explicitly request a new dispatch (a fresh unarchive/reopen resets
+	// DispatchState to empty via projectControlNormalizeState).
+	if dispatchState != controlplane.DispatchStateNone {
+		return
+	}
+	for _, checkpoint := range state.Checkpoints {
+		if checkpoint.TaskID == task.ID && checkpoint.Kind == "dispatch" && checkpoint.Status == "pending" {
+			return
+		}
+	}
+	checkpoint := projectControlCheckpoint{
+		ID:             projectControlID("checkpoint", task.ID+"-dispatch"),
+		TaskID:         task.ID,
+		Kind:           "dispatch",
+		Title:          "Dispatch approval required",
+		Reason:         "Task is ready for agent dispatch; approve to make it claimable by an agent runtime.",
+		Status:         "pending",
+		RequestedAt:    now,
+		AllowedActions: []string{"approve", "reject"},
+		RowVersion:     1,
+	}
+	state.Checkpoints = append(state.Checkpoints, checkpoint)
+	task.DispatchState = controlplane.DispatchStateAwaitingApproval
+	task.RecentSummary = "Dispatch approval requested; waiting for a human decision before an agent can claim this task."
+	task.NextStep = "Approve or reject the dispatch checkpoint in the approvals inbox."
+	task.RowVersion += 1
+	for i := range state.Tasks {
+		if state.Tasks[i].ID == task.ID {
+			state.Tasks[i] = task
+			break
+		}
+	}
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "checkpoint-raised-dispatch"),
+		Timestamp:    now,
+		Actor:        "policy_engine",
+		Action:       "checkpoint_raised",
+		Detail:       "Generated dispatch checkpoint for explicit dispatch approval.",
 		ProjectID:    task.ProjectID,
 		WorkstreamID: task.WorkstreamID,
 		TaskID:       task.ID,
@@ -2741,6 +2810,10 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			WorkstreamID: task.WorkstreamID,
 			TaskID:       task.ID,
 		})
+		// Dispatch pipeline (K4, WS-20261015-001): a fresh task starts at
+		// DispatchState=none; raise the dispatch approval gate immediately so the
+		// human can hand it to an agent runtime from the approvals inbox.
+		syncProjectControlDispatchCheckpoint(state, task, now)
 		return nil
 	})
 	if err != nil {
@@ -2988,6 +3061,7 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			task.RowVersion += 1
 			syncProjectControlAcceptanceCheckpoint(state, task, now)
 			syncProjectControlArchiveOverrideCheckpoint(state, task, now)
+			syncProjectControlDispatchCheckpoint(state, task, now)
 			state.Tasks[i] = task
 			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 				ID:           projectControlID("event", "task-updated"),
@@ -3185,6 +3259,7 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 			task.RowVersion += 1
 			syncProjectControlAcceptanceCheckpoint(state, task, now)
 			syncProjectControlArchiveOverrideCheckpoint(state, task, now)
+			syncProjectControlDispatchCheckpoint(state, task, now)
 			state.Tasks[index] = task
 			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 				ID:           projectControlID("event", "decision-made"),
@@ -5920,7 +5995,9 @@ func (s *projectControlStore) validateAgentToken(username, token string) bool {
 	if err != nil || state.AgentToken == "" {
 		return false
 	}
-	return state.AgentToken == token
+	// Constant-time comparison: the agent token gates the claim/heartbeat/
+	// release endpoints, so a timing side channel on == would leak the token.
+	return subtle.ConstantTimeCompare([]byte(state.AgentToken), []byte(token)) == 1
 }
 
 func (s *projectControlStore) agentGetTask(username string) (map[string]interface{}, error) {
