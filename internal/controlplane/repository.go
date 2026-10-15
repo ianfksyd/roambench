@@ -262,9 +262,22 @@ CREATE TABLE IF NOT EXISTS task_projections (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS task_projections_pending_idx ON task_projections(username,state,created_at);
+CREATE TABLE IF NOT EXISTS task_claims (
+  claim_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  runtime_id TEXT NOT NULL,
+  agent_label TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('active','released','expired')),
+  lease_expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS task_claims_active_idx ON task_claims(task_id) WHERE status='active';
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, CURRENT_TIMESTAMP);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, CURRENT_TIMESTAMP);
 `
 
 func Open(path string) (*Repository, error) {

@@ -88,7 +88,10 @@ type projectControlProject struct {
 	Description string `json:"description"`
 	Status      string `json:"status"`
 	CurrentGoal string `json:"currentGoal"`
-	RowVersion  int    `json:"rowVersion,omitempty"`
+	// RepoPath is the absolute path of the git repository backing this project.
+	// When empty, the server falls back to runtimeRootDir. Optional (K1, WS-20261015-001).
+	RepoPath   string `json:"repoPath,omitempty"`
+	RowVersion int    `json:"rowVersion,omitempty"`
 }
 
 type projectControlWorkstream struct {
@@ -112,7 +115,12 @@ type projectControlTask struct {
 	AcceptanceStatus     string                    `json:"acceptanceStatus"`
 	AcceptanceDecisionID string                    `json:"acceptanceDecisionId,omitempty"`
 	ArchiveDecisionID    string                    `json:"archiveDecisionId,omitempty"`
-	RiskLevel            string                    `json:"riskLevel"`
+	// Dispatch pipeline fields (K4, WS-20261015-001).
+	// DispatchState: none -> awaiting_approval -> (checkpoint approved) ready ->
+	// claimed -> released|done. Empty value is treated as "none" on read.
+	DispatchState      string `json:"dispatchState,omitempty"`
+	ClaimedByRuntimeID string `json:"claimedByRuntimeId,omitempty"`
+	RiskLevel          string `json:"riskLevel"`
 	Priority             string                    `json:"priority"`
 	AgentLabel           string                    `json:"agentLabel"`
 	RuntimeID            string                    `json:"runtimeId"`
@@ -341,6 +349,39 @@ type projectControlProjectCreateRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	CurrentGoal string `json:"currentGoal"`
+	// RepoPath optional: absolute path to the git repository backing this
+	// project (K1, WS-20261015-001). Validated by validateProjectControlRepoPath.
+	RepoPath string `json:"repoPath"`
+}
+
+// validateProjectControlRepoPath enforces the K1 contract: absolute path,
+// directory exists, and confined under the user's home directory (GATE-1
+// decision #4 limits the command-execution surface of board git reads).
+func validateProjectControlRepoPath(value string) (string, error) {
+	p := strings.TrimSpace(value)
+	if p == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("repoPath must be an absolute path")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("repoPath validation failed: %w", err)
+	}
+	clean := filepath.Clean(p)
+	rel, err := filepath.Rel(home, clean)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("repoPath must stay under the home directory")
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return "", fmt.Errorf("repoPath does not exist: %s", clean)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("repoPath is not a directory: %s", clean)
+	}
+	return clean, nil
 }
 
 type projectControlWorkstreamCreateRequest struct {
@@ -2570,6 +2611,10 @@ func (s *projectControlStore) createProject(username string, req projectControlP
 		if key == "" {
 			key = slugifyProjectControl(name)
 		}
+		repoPath, err := validateProjectControlRepoPath(req.RepoPath)
+		if err != nil {
+			return err
+		}
 		project := projectControlProject{
 			ID:          projectControlID("project", name),
 			Key:         key,
@@ -2577,6 +2622,7 @@ func (s *projectControlStore) createProject(username string, req projectControlP
 			Description: strings.TrimSpace(req.Description),
 			Status:      "active",
 			CurrentGoal: strings.TrimSpace(req.CurrentGoal),
+			RepoPath:    repoPath,
 			RowVersion:  1,
 		}
 		state.Projects = append(state.Projects, project)

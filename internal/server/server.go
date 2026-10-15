@@ -196,11 +196,18 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/project-control", authRequired(s.sessions, s.handleProjectControlSnapshot))
 
 	// Agent API (token auth)
-	s.mux.HandleFunc("/api/agent/v1/task", s.handleAgentGetTask)
+	s.mux.HandleFunc("/api/agent/v1/task", s.handleAgentGetTask) // deprecated (GATE-1 #5): returns 410, use /api/agent/v1/claim
 	s.mux.HandleFunc("/api/agent/v1/artifact", s.handleAgentSubmitArtifact)
 	s.mux.HandleFunc("/api/agent/v1/checkpoint", s.handleAgentRequestCheckpoint)
 	s.mux.HandleFunc("/api/agent/v1/interactions", s.handleAgentInteractions)
 	s.mux.HandleFunc("/api/agent/v1/interactions/", s.handleAgentInteraction)
+	// Dispatch pipeline (K5, WS-20261015-001). Stubs return 501 until C2/C5 land.
+	s.mux.HandleFunc("/api/agent/v1/claim", s.tokenRequired(s.handleAgentClaim))
+	s.mux.HandleFunc("/api/agent/v1/heartbeat", s.tokenRequired(s.handleAgentHeartbeat))
+	s.mux.HandleFunc("/api/agent/v1/release", s.tokenRequired(s.handleAgentRelease))
+	// Board & agent probe (K2/K3, WS-20261015-001). Stubs return 501 until C2/C4 land.
+	s.mux.HandleFunc("/api/project-control/board", authRequired(s.sessions, s.handleProjectControlBoard))
+	s.mux.HandleFunc("/api/project-control/agents", authRequired(s.sessions, s.handleProjectControlAgents))
 
 	// Browser/mobile interaction control plane (session auth)
 	s.mux.HandleFunc("/api/mobile/interactions", authRequired(s.sessions, s.handleMobileInteractions))
@@ -1292,17 +1299,14 @@ func (s *Server) handleAgentGetTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	username, ok := s.agentUsername(r)
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid agent token"})
-		return
-	}
-	result, err := s.projectControl.agentGetTask(username)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
+	// Deprecated (GATE-1 decision #5, WS-20261015-001): the single-active-task
+	// assumption no longer holds once claim leases exist. Point agents at
+	// POST /api/agent/v1/claim.
+	writeJSON(w, http.StatusGone, map[string]string{
+		"error":   "deprecated: /api/agent/v1/task is removed",
+		"use":     "POST /api/agent/v1/claim",
+		"sinceWs": "WS-20261015-001",
+	})
 }
 
 func (s *Server) handleAgentSubmitArtifact(w http.ResponseWriter, r *http.Request) {

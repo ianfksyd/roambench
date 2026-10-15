@@ -4426,21 +4426,19 @@ func TestProjectControlAgentGetTaskReturnsActiveTask(t *testing.T) {
 	patchProjectControlTask(t, srv, token, projectControlTaskPanelID,
 		`{"expectedRowVersion":1,"action":"start_execution"}`)
 
-	// Agent gets task
+	// GATE-1 #5 (WS-20261015-001): /api/agent/v1/task is deprecated — the
+	// endpoint now answers 410 with a pointer to the claim API.
 	req := httptest.NewRequest(http.MethodGet, "/api/agent/v1/task", nil)
 	req.Header.Set("Authorization", "Bearer "+agentToken)
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET task status = %d, want 200: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusGone {
+		t.Fatalf("GET task status = %d, want 410 (deprecated): %s", rec.Code, rec.Body.String())
 	}
-	var taskResp map[string]interface{}
-	json.NewDecoder(rec.Body).Decode(&taskResp)
-	if taskResp["taskId"] == "" {
-		t.Fatal("agent task response has empty taskId")
-	}
-	if taskResp["currentPhase"] != "plan" {
-		t.Fatalf("currentPhase = %v, want plan", taskResp["currentPhase"])
+	var depResp map[string]string
+	json.NewDecoder(rec.Body).Decode(&depResp)
+	if depResp["use"] != "POST /api/agent/v1/claim" {
+		t.Fatalf("deprecated response `use` = %v, want POST /api/agent/v1/claim", depResp["use"])
 	}
 }
 
@@ -4534,12 +4532,23 @@ func TestProjectControlAgentInvalidTokenReturns401(t *testing.T) {
 	srv, _, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
+	// GATE-1 #5 (WS-20261015-001): /api/agent/v1/task is deprecated (410) and
+	// no longer performs token auth. The auth check now lives on the claim
+	// endpoints; verify both behaviors.
 	req := httptest.NewRequest(http.MethodGet, "/api/agent/v1/task", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("GET task with invalid token status = %d, want 410 (deprecated)", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/agent/v1/claim", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer invalid-token")
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("GET task with invalid token status = %d, want 401", rec.Code)
+		t.Fatalf("POST claim with invalid token status = %d, want 401", rec.Code)
 	}
 }
 
