@@ -6,3 +6,10 @@ C2 owned: internal/gitstatus/*, internal/server/project_board*.go
 C4 owned: internal/agentprobe/*, internal/server/agent_probe*.go
 C5 owned: internal/controlplane/claims*.go, internal/server/agent_claims*.go
 front-end 串行队列: C3 -> C7 (project-panel.js)
+
+E2E SMOKE (2026-10-15 14:28):
+- /api/project-control/board: 200, JSON 符合 K2（demo 项目 fallback repoPath 被正确拒绝: "must stay under the home directory" — GATE-1 #4 生效）
+- /api/project-control/agents?refresh=1: 200, 四家真实版本识别 (kiro 2.29.1/claude 2.1.300/codex 0.162.1/opencode 2.0.27), T1-T4 推荐: T1/T2=opencode+kiro-cli, T3/T4=kiro-cli+codex
+- /api/agent/v1/task: 410 (废弃生效)
+- /api/agent/v1/claim (无 token): 401; (有效 token, 无 ready 任务): 204
+- 冒烟通过, 临时实例与数据已清理
