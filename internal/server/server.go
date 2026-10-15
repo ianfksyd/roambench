@@ -397,6 +397,35 @@ func (s *Server) Start() error {
 	s.startInteractionLifecycle()
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
+	// Multi-binding support: when Host names several comma-separated addresses,
+	// listen on each (e.g. loopback + Tailscale IP, WS-20261015-001 deployment).
+	listeners := make([]net.Listener, 0, 2)
+	if strings.Contains(s.cfg.Server.Host, ",") {
+		for _, h := range strings.Split(s.cfg.Server.Host, ",") {
+			l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", strings.TrimSpace(h), s.cfg.Server.Port))
+			if err != nil {
+				for _, prev := range listeners {
+					prev.Close()
+				}
+				return err
+			}
+			listeners = append(listeners, l)
+		}
+		log.Printf("Listening on %d interfaces: %s (port %d)", len(listeners), s.cfg.Server.Host, s.cfg.Server.Port)
+		handler := recoverer(requestLogger(ipAllowlist(s.cfg, secureHeaders(s.cfg, s.basePathHandler(s.mux)))))
+		// Build the http.Server BEFORE starting any Serve goroutine.
+		s.httpServer = &http.Server{
+			Addr:    addr,
+			Handler: handler,
+		}
+		// Serve the first listener in the calling goroutine (blocking, exactly
+		// like single-bind); the rest in background goroutines. Shutdown closes
+		// them via httpServer.Shutdown, which reaches every Serve call.
+		for _, l := range listeners[1:] {
+			go s.httpServer.Serve(l)
+		}
+		return s.httpServer.Serve(listeners[0])
+	}
 	handler := recoverer(requestLogger(ipAllowlist(s.cfg, secureHeaders(s.cfg, s.basePathHandler(s.mux)))))
 	s.httpServer = &http.Server{
 		Addr:    addr,
