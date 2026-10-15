@@ -1,0 +1,11 @@
+你是 RoamBench 项目的 Planner。阅读 .hermes/worksheets/WS-20261015-001/handoffs/00-planning-brief.md（规划输入包，含代码事实与验收口径），必要时可只读探查仓库（git log、读 internal/server/project_control.go 等，不要改任何文件）。
+
+产出一份规划（直接输出文本，不要写文件）：
+1. 把 F1（项目看板：真实 git 分支状态 + 项目进展聚合）和 F2（Hermes 自动接手 + agent 探测推荐）拆成任务卡，每张卡只写：验收标准 + 测试清单 + 约束 + owned_files（防冲突的文件归属）——禁止产品代码实现细节（类名/函数拆分），但接口契约（新增 API 路径、JSON 字段名、SQLite 表结构要点）属于跨任务公共决策，必须由你定并写进「设计契约」节
+2. 复杂度分诊 T1-T4（T1<15min、T4 需并行多 worker）
+3. 依赖顺序与可并行性（哪些卡可并行、owned_files 是否有交集）
+4. 每卡一个推荐 agentLabel（本机有 kiro-cli/claude/codex/opencode 四家，参考输入包第 7 条）
+5. 北极星一句话（这个 worksheet 完成的判定）
+6. 风险与开放问题（需要用户 GATE-1 裁决的点，尤其：Go 工具链缺失怎么办；F2 的 Hermes runtime 适配深度——是只做 API 对接还是 server 直接拉起 hermes 进程？）
+
+字数控制在 1500 字内，可验收粒度。
