@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>RoamBench · 项目看板 v2</title>
+  <!-- 当前环境无法读取 v1 文件，且本轮上下文没有其源码；以下甘特为重建版本，不能保证与 v1 原样一致。 -->
+  <style>
+    :root {
+      --bg: #1e1e1e;
+      --surface: #252526;
+      --text: #d4d4d4;
+      --accent: #4ec9b0;
+      --border: #3c3c3c;
+      --muted: #a0a0a0;
+      --subtle: #808080;
+      --hover: #2d2d2e;
+      --active: #4ec9b0;
+      --idle: #dcdcaa;
+      --exited: #f48771;
+      --detached: #808080;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI",
+              "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--bg);
+    }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--bg);
+      font: 14px/1.5 var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    select {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    button:focus-visible,
+    select:focus-visible,
+    [tabindex="0"]:focus-visible {
+      outline: 2px solid var(--text);
+      outline-offset: 4px;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .app-header {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-inner {
+      max-width: 1600px;
+      min-height: 60px;
+      margin: 0 auto;
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .brand-name {
+      font: 600 15px/1.5 var(--mono);
+      letter-spacing: -0.3px;
+    }
+
+    .brand-location {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .snapshot {
+      color: var(--muted);
+      font: 12px/1.5 var(--mono);
+      white-space: nowrap;
+    }
+
+    main {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 32px 32px 24px;
+    }
+
+    .page-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 23px;
+      line-height: 1.4;
+      font-weight: 600;
+      letter-spacing: -0.4px;
+    }
+
+    .page-meta {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .project-filter {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    select {
+      max-width: 100%;
+      min-height: 36px;
+      padding: 6px 30px 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      background: var(--surface);
+      cursor: pointer;
+    }
+
+    .view-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .view-tabs {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+    }
+
+    .view-tab {
+      position: relative;
+      min-height: 36px;
+      padding: 7px 19px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .view-tab:hover {
+      color: var(--text);
+      background: var(--hover);
+    }
+
+    .view-tab[aria-selected="true"] {
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .view-tab[aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      right: 19px;
+      bottom: 3px;
+      left: 19px;
+      height: 2px;
+      border-radius: 1px;
+      background: var(--accent);
+    }
+
+    .legend {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      font: 12px/1.5 var(--mono);
+    }
+
+    .legend li {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .legend-count {
+      min-width: 1ch;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .status-dot {
+      display: inline-block;
+      flex: 0 0 7px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--detached);
+    }
+
+    .status-dot[data-status="active"] {
+      background: var(--active);
+    }
+
+    .status-dot[data-status="idle"] {
+      background: var(--idle);
+    }
+
+    .status-dot[data-status="exited"] {
+      background: var(--exited);
+    }
+
+    .status-dot[data-status="detached"] {
+      background: var(--detached);
+    }
+
+    .panel-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      margin: 24px 0 20px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.5;
+      font-weight: 600;
+    }
+
+    .panel-note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .project-group + .project-group {
+      margin-top: 25px;
+    }
+
+    .project-heading {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 9px;
+    }
+
+    h3 {
+      margin: 0;
+      font: 500 12px/1.5 var(--mono);
+    }
+
+    .project-count {
+      color: var(--subtle);
+      font: 11px/1.5 var(--mono);
+    }
+
+    .session-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .session-cell {
+      min-width: 0;
+      min-height: 85px;
+      padding: 15px 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+    }
+
+    .session-name-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .session-name-row .status-dot {
+      margin-top: 5px;
+    }
+
+    .session-name {
+      min-width: 0;
+      margin: 0;
+      color: var(--text);
+      font: 500 12px/1.5 var(--mono);
+      overflow-wrap: anywhere;
+    }
+
+    .session-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 6px;
+      margin: 8px 0 0 15px;
+      color: var(--muted);
+      font: 11px/1.5 var(--mono);
+    }
+
+    .session-meta time {
+      white-space: nowrap;
+    }
+
+    .gantt-scroll {
+      max-width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      scrollbar-color: var(--border) var(--bg);
+    }
+
+    .gantt-table {
+      width: 100%;
+      min-width: 990px;
+      border-spacing: 0;
+      table-layout: fixed;
+      font: 12px/1.5 var(--mono);
+    }
+
+    .gantt-name-column {
+      width: 190px;
+    }
+
+    .gantt-table th,
+    .gantt-table td {
+      padding: 0;
+      text-align: left;
+      font-weight: 400;
+    }
+
+    .gantt-table thead th {
+      height: 43px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+    }
+
+    .gantt-table .gantt-label {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      padding: 0 14px;
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .gantt-table thead .gantt-label {
+      z-index: 3;
+    }
+
+    .time-axis {
+      position: relative;
+      height: 42px;
+      margin: 0 16px;
+    }
+
+    .time-axis span {
+      position: absolute;
+      top: 12px;
+      left: var(--tick);
+      transform: translateX(-50%);
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .time-axis span:first-child {
+      transform: none;
+    }
+
+    .time-axis span:last-child {
+      transform: translateX(-100%);
+    }
+
+    .gantt-project th {
+      height: 34px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+    }
+
+    .gantt-session-row th,
+    .gantt-session-row td {
+      height: 37px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .gantt-table tbody:last-child .gantt-session-row:last-child th,
+    .gantt-table tbody:last-child .gantt-session-row:last-child td {
+      border-bottom: 0;
+    }
+
+    .gantt-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .timeline-track {
+      position: relative;
+      height: 36px;
+      margin: 0 16px;
+      background-image: repeating-linear-gradient(
+        to right,
+        var(--border) 0,
+        var(--border) 1px,
+        transparent 1px,
+        transparent 12.5%
+      );
+    }
+
+    .timeline-track::after {
+      content: "";
+      position: absolute;
+      z-index: 1;
+      top: 0;
+      bottom: 0;
+      left: 69.166667%;
+      width: 1px;
+      background: var(--text);
+      opacity: 0.55;
+      pointer-events: none;
+    }
+
+    .time-axis::after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 69.166667%;
+      width: 1px;
+      height: 8px;
+      background: var(--text);
+    }
+
+    .timeline-bar {
+      position: absolute;
+      top: 11px;
+      left: var(--start);
+      width: var(--duration);
+      height: 14px;
+      border-radius: 2px;
+      background: var(--detached);
+    }
+
+    .timeline-bar[data-status="active"] {
+      background: var(--active);
+    }
+
+    .timeline-bar[data-status="idle"] {
+      background: var(--idle);
+    }
+
+    .timeline-bar[data-status="exited"] {
+      background: var(--exited);
+    }
+
+    .timeline-bar[data-status="detached"] {
+      border: 1px dashed var(--muted);
+      background: transparent;
+    }
+
+    .timeline-bar[data-status="active"]::after {
+      content: "";
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--bg);
+    }
+
+    .gantt-footnote {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .gantt-footnote p {
+      margin: 0;
+    }
+
+    .page-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      margin-top: 30px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      color: var(--subtle);
+      font: 11px/1.5 var(--mono);
+    }
+
+    .page-footer p {
+      margin: 0;
+    }
+
+    .empty-message {
+      color: var(--muted);
+    }
+
+    @media (max-width: 1199px) {
+      .session-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 700px) {
+      .header-inner {
+        padding-right: 20px;
+        padding-left: 20px;
+      }
+
+      .brand {
+        gap: 10px;
+      }
+
+      .brand-location {
+        display: none;
+      }
+
+      main {
+        padding: 24px 20px 20px;
+      }
+
+      .view-toolbar {
+        align-items: flex-start;
+      }
+
+      .legend {
+        width: 100%;
+        gap: 8px 16px;
+      }
+
+      .session-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 480px) {
+      .header-inner {
+        min-height: 52px;
+        padding-right: 16px;
+        padding-left: 16px;
+        gap: 12px;
+      }
+
+      .brand-name {
+        font-size: 14px;
+      }
+
+      .snapshot {
+        font-size: 10px;
+      }
+
+      main {
+        padding: 22px 16px 20px;
+      }
+
+      h1 {
+        font-size: 21px;
+      }
+
+      .page-heading {
+        margin-bottom: 20px;
+      }
+
+      .project-filter {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .project-filter select {
+        min-width: 156px;
+      }
+
+      .view-tabs {
+        width: 100%;
+      }
+
+      .view-tab {
+        flex: 1;
+        padding-right: 16px;
+        padding-left: 16px;
+      }
+
+      .legend {
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 10px;
+      }
+
+      .legend li {
+        gap: 5px;
+      }
+
+      .panel-heading {
+        margin-top: 20px;
+        margin-bottom: 18px;
+      }
+
+      .session-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .session-cell {
+        min-height: 88px;
+        padding: 13px 10px;
+      }
+
+      .session-name {
+        font-size: 11px;
+      }
+
+      .session-meta {
+        gap: 3px 5px;
+        font-size: 10px;
+      }
+
+      .project-group + .project-group {
+        margin-top: 22px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-name">RoamBench</span>
+        <span class="brand-location">本地工作区 / 项目看板</span>
+      </div>
+      <div class="snapshot">
+        模拟快照 · <time datetime="2026-10-15T14:32:00+08:00">10-15 14:32</time>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="page-heading">
+      <div>
+        <h1>项目看板</h1>
+        <p class="page-meta">4 个项目 · 28 个 tmux 会话</p>
+      </div>
+      <label class="project-filter">
+        <span>项目</span>
+        <select id="project-filter" aria-label="筛选项目">
+          <option value="all">全部项目</option>
+          <option value="roambench">roambench</option>
+          <option value="atlas-api">atlas-api</option>
+          <option value="fieldnotes">fieldnotes</option>
+          <option value="infra-kit">infra-kit</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="view-toolbar">
+      <div class="view-tabs" role="tablist" aria-label="看板视图">
+        <button
+          class="view-tab"
+          id="tab-wall"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="panel-wall"
+          tabindex="0"
+        >状态墙</button>
+        <button
+          class="view-tab"
+          id="tab-gantt"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-gantt"
+          tabindex="-1"
+        >甘特时间轴</button>
+      </div>
+
+      <ul class="legend" aria-label="当前筛选下的会话状态统计">
+        <li>
+          <span class="status-dot" data-status="active" aria-hidden="true"></span>
+          <span>active</span>
+          <span class="legend-count" id="count-active">20</span>
+        </li>
+        <li>
+          <span class="status-dot" data-status="idle" aria-hidden="true"></span>
+          <span>idle</span>
+          <span class="legend-count" id="count-idle">3</span>
+        </li>
+        <li>
+          <span class="status-dot" data-status="exited" aria-hidden="true"></span>
+          <span>exited</span>
+          <span class="legend-count" id="count-exited">1</span>
+        </li>
+        <li>
+          <span class="status-dot" data-status="detached" aria-hidden="true"></span>
+          <span>detached</span>
+          <span class="legend-count" id="count-detached">4</span>
+        </li>
+      </ul>
+    </div>
+
+    <section
+      id="panel-wall"
+      role="tabpanel"
+      aria-labelledby="tab-wall"
+      tabindex="0"
+    >
+      <div class="panel-heading">
+        <h2>会话状态</h2>
+        <p class="panel-note" id="wall-note">28 个会话 · 按项目分组</p>
+      </div>
+      <div id="session-wall"></div>
+    </section>
+
+    <section
+      id="panel-gantt"
+      role="tabpanel"
+      aria-labelledby="tab-gantt"
+      tabindex="0"
+      hidden
+    >
+      <div class="panel-heading">
+        <h2>会话时间轴</h2>
+        <p class="panel-note">
+          <time datetime="2026-10-15">2026-10-15</time> · 09:00–17:00 · UTC+8
+        </p>
+      </div>
+
+      <div
+        class="gantt-scroll"
+        role="region"
+        aria-label="会话甘特图，可横向滚动"
+        tabindex="0"
+      >
+        <table class="gantt-table">
+          <caption class="sr-only">
+            28 个模拟会话在 2026 年 10 月 15 日的运行时间。
+            当前快照为 14:32，细竖线表示快照时间。
+          </caption>
+          <colgroup>
+            <col class="gantt-name-column">
+            <col>
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col" class="gantt-label">会话</th>
+              <th scope="col">
+                <span class="sr-only">运行时间，09:00 至 17:00</span>
+                <div class="time-axis" aria-hidden="true">
+                  <span style="--tick: 0%">09:00</span>
+                  <span style="--tick: 12.5%">10:00</span>
+                  <span style="--tick: 25%">11:00</span>
+                  <span style="--tick: 37.5%">12:00</span>
+                  <span style="--tick: 50%">13:00</span>
+                  <span style="--tick: 62.5%">14:00</span>
+                  <span style="--tick: 75%">15:00</span>
+                  <span style="--tick: 87.5%">16:00</span>
+                  <span style="--tick: 100%">17:00</span>
+                </div>
+              </th>
+            </tr>
+          </thead>
+        </table>
+      </div>
+
+      <div class="gantt-footnote">
+        <p>细竖线：14:32 快照时间 · 虚线条：detached</p>
+        <p>窄屏可在图表内横向滚动</p>
+      </div>
+    </section>
+
+    <p id="filter-announcement" class="sr-only" role="status" aria-live="polite"></p>
+
+    <footer class="page-footer">
+      <p id="footer-count">显示 28 / 28 个会话</p>
+      <p>本地模拟数据 · 不连接 tmux</p>
+    </footer>
+
+    <noscript>
+      <p class="empty-message">此原型需要 JavaScript 来显示会话数据与切换视图。</p>
+    </noscript>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const SNAPSHOT = new Date("2026-10-15T14:32:00+08:00");
+      const WINDOW_START = 9 * 60;
+      const WINDOW_DURATION = 8 * 60;
+      const SNAPSHOT_MINUTE = 14 * 60 + 32;
+
+      const projects = [
+        { id: "roambench", name: "roambench" },
+        { id: "atlas-api", name: "atlas-api" },
+        { id: "fieldnotes", name: "fieldnotes" },
+        { id: "infra-kit", name: "infra-kit" }
+      ];
+
+      // 四组各 7 个会话；总计 20 active / 3 idle / 1 exited / 4 detached。
+      // start / end 为当天分钟数；age 为距离快照的最近活动秒数。
+      const sessions = [
+        {
+          project: "roambench", name: "rb-board-v2",
+          status: "active", age: 8, start: 9 * 60 + 12
+        },
+        {
+          project: "roambench", name: "rb-tmux-watch",
+          status: "active", age: 16, start: 9 * 60
+        },
+        {
+          project: "roambench", name: "rb-api-dev",
+          status: "active", age: 24, start: 9 * 60 + 28
+        },
+        {
+          project: "roambench", name: "rb-web-vite",
+          status: "active", age: 42, start: 10 * 60 + 5
+        },
+        {
+          project: "roambench", name: "rb-event-stream",
+          status: "active", age: 68, start: 10 * 60 + 42
+        },
+        {
+          project: "roambench", name: "rb-ui-tests",
+          status: "active", age: 95, start: 13 * 60 + 18
+        },
+        {
+          project: "roambench", name: "rb-schema-review",
+          status: "idle", age: 12 * 60, start: 11 * 60 + 10
+        },
+
+        {
+          project: "atlas-api", name: "atlas-auth",
+          status: "active", age: 11, start: 9 * 60 + 20
+        },
+        {
+          project: "atlas-api", name: "atlas-worker",
+          status: "active", age: 31, start: 9 * 60 + 42
+        },
+        {
+          project: "atlas-api", name: "atlas-db-migrate",
+          status: "active", age: 51, start: 13 * 60 + 40
+        },
+        {
+          project: "atlas-api", name: "atlas-contracts",
+          status: "active", age: 83, start: 10 * 60 + 15
+        },
+        {
+          project: "atlas-api", name: "atlas-loadtest",
+          status: "active", age: 2 * 60, start: 14 * 60
+        },
+        {
+          project: "atlas-api", name: "atlas-query-plan",
+          status: "idle", age: 18 * 60, start: 11 * 60 + 32
+        },
+        {
+          project: "atlas-api", name: "atlas-staging",
+          status: "detached", age: 47 * 60, start: 9 * 60 + 8,
+          end: 13 * 60 + 45
+        },
+
+        {
+          project: "fieldnotes", name: "fn-editor",
+          status: "active", age: 5, start: 9 * 60 + 35
+        },
+        {
+          project: "fieldnotes", name: "fn-sync-engine",
+          status: "active", age: 19, start: 9 * 60 + 52
+        },
+        {
+          project: "fieldnotes", name: "fn-search-index",
+          status: "active", age: 37, start: 10 * 60 + 28
+        },
+        {
+          project: "fieldnotes", name: "fn-ios-build",
+          status: "active", age: 72, start: 13 * 60 + 52
+        },
+        {
+          project: "fieldnotes", name: "fn-export-tests",
+          status: "active", age: 3 * 60, start: 14 * 60 + 6
+        },
+        {
+          project: "fieldnotes", name: "fn-markdown-spec",
+          status: "idle", age: 26 * 60, start: 11 * 60 + 45
+        },
+        {
+          project: "fieldnotes", name: "fn-preview",
+          status: "detached", age: 62 * 60, start: 10 * 60 + 4,
+          end: 13 * 60 + 30
+        },
+
+        {
+          project: "infra-kit", name: "infra-compose",
+          status: "active", age: 14, start: 9 * 60
+        },
+        {
+          project: "infra-kit", name: "infra-ci-runner",
+          status: "active", age: 28, start: 9 * 60 + 18
+        },
+        {
+          project: "infra-kit", name: "infra-log-tail",
+          status: "active", age: 49, start: 10 * 60 + 12
+        },
+        {
+          project: "infra-kit", name: "infra-metrics",
+          status: "active", age: 110, start: 11 * 60 + 8
+        },
+        {
+          project: "infra-kit", name: "infra-backup",
+          status: "exited", age: 34 * 60, start: 12 * 60 + 48,
+          end: 13 * 60 + 58
+        },
+        {
+          project: "infra-kit", name: "infra-ssh-relay",
+          status: "detached", age: 90 * 60, start: 9 * 60 + 30,
+          end: 13 * 60 + 2
+        },
+        {
+          project: "infra-kit", name: "infra-cache-warm",
+          status: "detached", age: 2 * 60 * 60, start: 10 * 60 + 20,
+          end: 12 * 60 + 32
+        }
+      ];
+
+      const statusLabels = {
+        active: "运行中",
+        idle: "空闲",
+        exited: "已退出",
+        detached: "已分离"
+      };
+
+      const wall = document.getElementById("session-wall");
+      const gantt = document.querySelector(".gantt-table");
+      const filter = document.getElementById("project-filter");
+      const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+
+      function makeElement(tag, className, text) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (text !== undefined) element.textContent = text;
+        return element;
+      }
+
+      function statusDot(status) {
+        const dot = makeElement("span", "status-dot");
+        dot.dataset.status = status;
+        dot.setAttribute("aria-hidden", "true");
+        return dot;
+      }
+
+      function relativeTime(seconds) {
+        if (seconds < 30) return "刚刚";
+        if (seconds < 60) return seconds + " 秒前";
+        if (seconds < 3600) return Math.floor(seconds / 60) + " 分钟前";
+        return Math.floor(seconds / 3600) + " 小时前";
+      }
+
+      function clockTime(minutes) {
+        return String(Math.floor(minutes / 60)).padStart(2, "0") +
+          ":" + String(minutes % 60).padStart(2, "0");
+      }
+
+      function activityDate(session) {
+        return new Date(SNAPSHOT.getTime() - session.age * 1000);
+      }
+
+      function fullActivityTime(session) {
+        const local = new Date(activityDate(session).getTime() + 8 * 3600000);
+        return local.toISOString().slice(0, 19).replace("T", " ") + " UTC+8";
+      }
+
+      function makeSessionCell(session) {
+        const cell = makeElement("li", "session-cell");
+        cell.dataset.status = session.status;
+
+        const nameRow = makeElement("div", "session-name-row");
+        nameRow.append(
+          statusDot(session.status),
+          makeElement("p", "session-name", session.name)
+        );
+
+        const meta = makeElement("p", "session-meta");
+        const state = makeElement("span", "", session.status);
+        state.title = statusLabels[session.status];
+
+        const separator = makeElement("span", "", "·");
+        separator.setAttribute("aria-hidden", "true");
+
+        const time = makeElement("time", "", relativeTime(session.age));
+        time.dateTime = activityDate(session).toISOString();
+        time.title = "最近活动：" + fullActivityTime(session);
+
+        const prefix = makeElement("span", "sr-only", "最近活动：");
+        meta.append(state, separator, prefix, time);
+        cell.append(nameRow, meta);
+        return cell;
+      }
+
+      function renderWall(visible) {
+        const fragment = document.createDocumentFragment();
+
+        projects.forEach(project => {
+          const groupSessions = visible.filter(s => s.project === project.id);
+          if (!groupSessions.length) return;
+
+          const section = makeElement("section", "project-group");
+          const headingId = "project-" + project.id;
+          section.setAttribute("aria-labelledby", headingId);
+
+          const heading = makeElement("div", "project-heading");
+          const title = makeElement("h3", "", project.name);
+          title.id = headingId;
+          heading.append(
+            title,
+            makeElement("span", "project-count", groupSessions.length + " 个会话")
+          );
+
+          const list = makeElement("ul", "session-grid");
+          groupSessions.forEach(session => list.append(makeSessionCell(session)));
+          section.append(heading, list);
+          fragment.append(section);
+        });
+
+        wall.replaceChildren(fragment);
+      }
+
+      function makeGanttRow(session) {
+        const row = makeElement("tr", "gantt-session-row");
+        const nameCell = makeElement("th", "gantt-label");
+        nameCell.scope = "row";
+
+        const name = makeElement("span", "gantt-name");
+        name.append(statusDot(session.status), document.createTextNode(session.name));
+        nameCell.append(name);
+
+        const timeCell = makeElement("td");
+        const track = makeElement("div", "timeline-track");
+        const bar = makeElement("span", "timeline-bar");
+        const end = session.end ?? SNAPSHOT_MINUTE;
+
+        bar.dataset.status = session.status;
+        bar.style.setProperty(
+          "--start",
+          ((session.start - WINDOW_START) / WINDOW_DURATION * 100) + "%"
+        );
+        bar.style.setProperty(
+          "--duration",
+          ((end - session.start) / WINDOW_DURATION * 100) + "%"
+        );
+
+        const period = clockTime(session.start) + "–" + clockTime(end);
+        const detail = session.name + "，" + statusLabels[session.status] +
+          "，时间段 " + period +
+          (session.status === "active" ? "，截至当前快照仍在运行" : "");
+
+        bar.title = detail;
+        bar.setAttribute("aria-hidden", "true");
+        track.append(bar);
+        timeCell.append(makeElement("span", "sr-only", detail), track);
+        row.append(nameCell, timeCell);
+        return row;
+      }
+
+      function renderGantt(visible) {
+        gantt.querySelectorAll("tbody").forEach(body => body.remove());
+
+        const fragment = document.createDocumentFragment();
+
+        projects.forEach(project => {
+          const groupSessions = visible.filter(s => s.project === project.id);
+          if (!groupSessions.length) return;
+
+          const body = document.createElement("tbody");
+          body.setAttribute("aria-label", project.name);
+
+          const projectRow = makeElement("tr", "gantt-project");
+          const projectHeading = makeElement(
+            "th", "", project.name + " · " + groupSessions.length + " 个会话"
+          );
+          projectHeading.colSpan = 2;
+          projectHeading.scope = "rowgroup";
+          projectRow.append(projectHeading);
+          body.append(projectRow);
+
+          groupSessions.forEach(session => body.append(makeGanttRow(session)));
+          fragment.append(body);
+        });
+
+        gantt.append(fragment);
+
+        const caption = gantt.querySelector("caption");
+        caption.textContent = visible.length +
+          " 个模拟会话在 2026 年 10 月 15 日的运行时间。" +
+          "当前快照为 14:32，细竖线表示快照时间。";
+      }
+
+      function render() {
+        const visible = sessions.filter(session =>
+          filter.value === "all" || session.project === filter.value
+        );
+
+        renderWall(visible);
+        renderGantt(visible);
+
+        Object.keys(statusLabels).forEach(status => {
+          document.getElementById("count-" + status).textContent =
+            visible.filter(session => session.status === status).length;
+        });
+
+        document.getElementById("wall-note").textContent =
+          visible.length + " 个会话 · 按项目分组";
+
+        document.getElementById("footer-count").textContent =
+          "显示 " + visible.length + " / " + sessions.length + " 个会话";
+      }
+
+      function selectTab(selected, moveFocus) {
+        tabs.forEach(tab => {
+          const isSelected = tab === selected;
+          tab.setAttribute("aria-selected", String(isSelected));
+          tab.tabIndex = isSelected ? 0 : -1;
+          document.getElementById(tab.getAttribute("aria-controls")).hidden =
+            !isSelected;
+        });
+
+        if (moveFocus) selected.focus();
+      }
+
+      tabs.forEach((tab, index) => {
+        tab.addEventListener("click", () => selectTab(tab, false));
+
+        tab.addEventListener("keydown", event => {
+          let next;
+          if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+          if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+          if (event.key === "Home") next = 0;
+          if (event.key === "End") next = tabs.length - 1;
+          if (next === undefined) return;
+          event.preventDefault();
+          selectTab(tabs[next], true);
+        });
+      });
+
+      filter.addEventListener("change", () => {
+        render();
+        const label = filter.options[filter.selectedIndex].textContent;
+        document.getElementById("filter-announcement").textContent =
+          label + "，" + document.getElementById("footer-count").textContent;
+      });
+
+      const expectedCounts = { active: 20, idle: 3, exited: 1, detached: 4 };
+      const validData =
+        sessions.length === 28 &&
+        new Set(sessions.map(session => session.name)).size === 28 &&
+        projects.length === 4 &&
+        projects.every(project =>
+          sessions.filter(session => session.project === project.id).length === 7
+        ) &&
+        Object.entries(expectedCounts).every(([status, count]) =>
+          sessions.filter(session => session.status === status).length === count
+        );
+
+      if (!validData) {
+        throw new Error("模拟数据校验失败：请检查项目、会话名称与状态数量。");
+      }
+
+      render();
+    })();
+  </script>
+</body>
+</html>

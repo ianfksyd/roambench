@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>项目看板 · RoamBench</title>
+<style>
+@font-face{font-family:Inter;src:local("Inter Variable"),local("Inter");font-weight:400 590;font-display:swap}
+@font-face{font-family:"JetBrains Mono";src:local("JetBrains Mono");font-weight:400;font-display:swap}
+:root{color-scheme:dark;--bg:#08090a;--panel:#0f1011;--raised:#191a1b;--text:#f7f8f8;--muted:#8a8f98;--border:rgba(255,255,255,.08);--running:#7170ff;--review:#d4a72c;--done:#27a644;--blocked:#eb5f5f;--planned:#4d4f55;--sans:Inter,system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;--label:172px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;font-weight:400}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,.viewport:focus-visible{outline:2px solid var(--running);outline-offset:3px}
+main{max-width:1600px;margin:0 auto;padding:32px 32px 24px}
+.heading{display:flex;align-items:baseline;gap:18px;min-width:0}
+h1{margin:0;font-size:20px;line-height:28px;font-weight:510;letter-spacing:-.4px}
+.updated{font-family:var(--mono);color:var(--muted);font-size:11px;white-space:nowrap}
+.toolbar{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin:22px 0 14px}
+.ranges{display:flex;gap:2px;padding:3px;border:1px solid var(--border);border-radius:7px;background:var(--panel)}
+.range{min-width:43px;height:28px;border:0;border-radius:4px;background:none;font:11px var(--mono);color:var(--muted)}
+.range[aria-pressed="true"]{background:var(--raised);color:var(--text);font-weight:400}
+.range:hover,.refresh:hover{color:var(--text);background:var(--raised)}
+.refresh{display:flex;align-items:center;gap:7px;height:34px;padding:0 9px;border:1px solid transparent;border-radius:5px;background:none;color:var(--muted);font-size:12px}
+.refresh svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.5}
+.viewport{overflow:auto;isolation:isolate;border:1px solid var(--border);border-radius:7px;background:var(--panel);scrollbar-color:#36383d var(--panel);scrollbar-width:thin}
+.chart{width:100%;min-width:calc(var(--label) + 980px)}
+.axis,.row{display:grid;grid-template-columns:var(--label) minmax(0,1fr)}
+.axis{height:55px;border-bottom:1px solid var(--border)}
+.project-head,.project{position:sticky;left:0;z-index:5;background:var(--panel);border-right:1px solid var(--border)}
+.project-head{display:flex;align-items:center;padding:0 18px;font-size:11px;color:var(--muted);font-weight:510}
+.axis-track,.lane{position:relative;min-width:0}
+.tick{position:absolute;top:0;height:100%;padding:12px 0 0 9px;border-left:1px solid var(--border);color:var(--muted);font:10px var(--mono);white-space:nowrap;overflow:hidden}
+.tick:first-child{border-left:0}
+.tick.weekend{color:#646971}
+.today-label{position:absolute;bottom:6px;transform:translateX(-50%);color:var(--running);font:10px var(--mono);white-space:nowrap}
+.row{border-bottom:1px solid var(--border)}
+.row:last-child{border-bottom:0}
+.project{display:flex;align-items:center;gap:9px;padding:0 18px;min-width:0}
+.project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px var(--mono)}
+.dot{width:6px;height:6px;flex-shrink:0;border-radius:50%;background:var(--status)}
+.grid{position:absolute;inset:0;pointer-events:none;display:flex}
+.day{height:100%;flex:1;border-left:1px solid rgba(255,255,255,.035)}
+.day:first-child{border-left:0}
+.day.weekend{background:rgba(255,255,255,.012)}
+.rail{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(255,255,255,.04)}
+.now-line{position:absolute;top:0;bottom:0;width:1px;background:rgba(113,112,255,.4);pointer-events:none;z-index:3}
+.task{position:absolute;height:24px;padding:0 8px;overflow:hidden;border:0;border-radius:3px;background:var(--status);color:var(--bg);text-align:left;font:11px/24px var(--mono);white-space:nowrap;text-overflow:ellipsis;z-index:2}
+.task[data-state="planned"]{color:var(--text)}
+.task:hover,.task:focus-visible{z-index:4;outline:1px solid var(--text);outline-offset:2px}
+.task .elapsed{position:absolute;inset:0 auto 0 0;pointer-events:none;background:rgba(8,9,10,.14)}
+.task .name{position:relative}
+.task.compact{padding:0}
+.task.compact .name{visibility:hidden}
+.milestone{position:absolute;width:12px;height:12px;padding:0;border:2px solid var(--panel);border-radius:1px;background:var(--done);transform:translate(-50%,-50%) rotate(45deg);z-index:4}
+.milestone:hover,.milestone:focus-visible{outline:1px solid var(--text);outline-offset:2px}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.empty span{padding:4px 10px;background:var(--panel);color:#646971;font:11px var(--mono)}
+.footer{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-top:14px;color:var(--muted);font-size:10px}
+.legend{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px}
+.key{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.swatch{width:7px;height:7px;border-radius:2px;background:var(--status)}
+.swatch.diamond{width:6px;height:6px;border-radius:0;transform:rotate(45deg)}
+.window{font:10px/16px var(--mono);text-align:right;white-space:nowrap}
+.tooltip{position:fixed;z-index:50;width:304px;max-width:calc(100vw - 24px);padding:14px;background:var(--raised);border:1px solid rgba(255,255,255,.12);border-radius:6px;pointer-events:none}
+.tooltip[hidden]{display:none}
+.tip-name{margin:0 0 12px;font-size:12px;line-height:18px;font-weight:590;overflow-wrap:anywhere}
+.tip-state{display:flex;align-items:center;gap:7px;margin-bottom:12px;font-size:11px}
+.tooltip dl{display:grid;grid-template-columns:38px minmax(0,1fr);gap:8px;margin:0;font-size:10px;line-height:15px}
+.tooltip dt{color:var(--muted)}
+.tooltip dd{margin:0;font-family:var(--mono);overflow-wrap:anywhere}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media(min-width:1700px){main{padding-top:44px}}
+@media(max-width:600px){
+  :root{--label:128px}
+  main{padding:22px 16px}
+  .heading{gap:12px}
+  h1{letter-spacing:-.3px}
+  .updated{font-size:11px}
+  .toolbar{margin-top:20px;margin-bottom:12px}
+  .project,.project-head{padding-left:12px;padding-right:9px}
+  .project-name{font-size:10px}
+  .project{gap:7px}
+  .footer{flex-direction:column;gap:12px}
+  .window{text-align:left}
+  .legend{gap:10px 14px}
+}
+@media(prefers-reduced-motion:no-preference){
+  .range,.refresh{transition:background .12s,color .12s}
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="heading">
+    <h1>项目看板</h1>
+    <time id="updated" class="updated"></time>
+  </header>
+
+  <div class="toolbar" aria-label="时间轴工具">
+    <div class="ranges" role="group" aria-label="时间范围">
+      <button class="range" type="button" data-days="7" aria-pressed="false">7d</button>
+      <button class="range" type="button" data-days="14" aria-pressed="true">14d</button>
+      <button class="range" type="button" data-days="30" aria-pressed="false">30d</button>
+    </div>
+    <button class="refresh" id="refresh" type="button" aria-label="刷新项目时间轴">
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M16 8a6.2 6.2 0 1 0-.5 5M16 3v5h-5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>刷新</span>
+    </button>
+  </div>
+
+  <section class="viewport" id="viewport" tabindex="0"
+    aria-label="项目甘特图，可横向滚动" aria-describedby="chart-help">
+    <div class="chart" id="chart" role="table" aria-label="项目任务时间轴"></div>
+  </section>
+
+  <p id="chart-help" class="sr-only">
+    每个项目一行，任务长度对应持续时间。同项目并行任务分轨展示。
+    悬停或聚焦任务查看详情，点击或按回车打开任务。可横向滚动查看完整时间轴。
+  </p>
+
+  <footer class="footer">
+    <div class="legend" aria-label="图例">
+      <span class="key"><i class="swatch" style="--status:var(--running)" aria-hidden="true"></i>运行</span>
+      <span class="key"><i class="swatch" style="--status:var(--review)" aria-hidden="true"></i>等待审批</span>
+      <span class="key"><i class="swatch" style="--status:var(--done)" aria-hidden="true"></i>完成</span>
+      <span class="key"><i class="swatch" style="--status:var(--blocked)" aria-hidden="true"></i>阻塞</span>
+      <span class="key"><i class="swatch" style="--status:var(--planned)" aria-hidden="true"></i>计划中</span>
+      <span class="key"><i class="swatch diamond" style="--status:var(--done)" aria-hidden="true"></i>验收通过</span>
+    </div>
+    <div class="window" id="window"></div>
+  </footer>
+
+  <div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
+</main>
+<aside class="tooltip" id="tooltip" role="tooltip" hidden></aside>
+<noscript>请启用 JavaScript 查看项目时间轴。</noscript>
+
+<script>
+(() => {
+'use strict';
+
+const $ = id => document.getElementById(id);
+const STATES = {
+  running: {label:'运行',color:'#7170ff'},
+  review:  {label:'等待审批',color:'#d4a72c'},
+  done:    {label:'完成',color:'#27a644'},
+  blocked: {label:'阻塞',color:'#eb5f5f'},
+  planned: {label:'计划中',color:'#4d4f55'}
+};
+const state = {
+  days:14, now:new Date(), projects:[], tasks:new Map(), range:null
+};
+const md = new Intl.DateTimeFormat('zh-CN',{
+  month:'2-digit',day:'2-digit'
+});
+const hm = new Intl.DateTimeFormat('zh-CN',{
+  hour:'2-digit',minute:'2-digit',hour12:false
+});
+const full = new Intl.DateTimeFormat('sv-SE',{
+  year:'numeric',month:'2-digit',day:'2-digit',
+  hour:'2-digit',minute:'2-digit',hour12:false
+});
+const chart = $('chart');
+const viewport = $('viewport');
+const tip = $('tooltip');
+let active = null;
+
+// 使用本地日历计算刻度，兼容夏令时边界。
+function atDay(base,offset,hour=0) {
+  const value = new Date(base);
+  value.setHours(0,0,0,0);
+  value.setDate(value.getDate()+offset);
+  value.setHours(hour,0,0,0);
+  return value;
+}
+
+// 日期全部相对当前刷新时间生成。
+function mock(now) {
+  const ago = hours => new Date(+now + hours*3600000);
+  const task = (id,name,status,start,end,branch,accepted=false) => ({
+    id,name,status,start:ago(start),end:ago(end),branch,
+    milestone:accepted ? ago(end) : null
+  });
+  return [
+    {id:'roambench',name:'roambench',status:'running',tasks:[
+      task('RB-104','session persistence','done',-244,-187,'feat/session-store',true),
+      task('RB-108','workspace routing','done',-178,-116,'feat/workspace-route',true),
+      task('RB-112','board timeline','running',-94,22,'feat/board-gantt'),
+      task('RB-115','keyboard navigation','planned',30,60,'feat/board-keyboard')
+    ]},
+    {id:'terminal-gateway',name:'terminal-gateway',status:'review',tasks:[
+      task('TG-41','PTY reconnect','done',-226,-136,'fix/pty-reconnect',true),
+      task('TG-46','stream backpressure','review',-104,0,'feat/backpressure'),
+      task('TG-48','resize coalescing','running',-66,31,'fix/resize-events'),
+      task('TG-52','latency sampling','planned',36,64,'feat/latency-probe')
+    ]},
+    {id:'web-console',name:'web-console',status:'running',tasks:[
+      task('WC-63','terminal palette','done',-240,-181,'ui/terminal-palette'),
+      task('WC-67','virtual scroll','running',-156,18,'perf/virtual-scroll'),
+      task('WC-70','focus restoration','review',-72,0,'fix/focus-restore'),
+      task('WC-73','mobile viewport','planned',25,60,'fix/mobile-viewport')
+    ]},
+    {id:'agent-runtime',name:'agent-runtime',status:'blocked',tasks:[
+      task('AR-21','tool sandbox','done',-211,-136,'feat/tool-sandbox',true),
+      task('AR-24','permission bridge','blocked',-123,12,'fix/permission-bridge'),
+      task('AR-28','event replay','planned',28,63,'feat/event-replay')
+    ]},
+    {id:'docs-site',name:'docs-site',status:'done',tasks:[
+      task('DS-18','self-host guide','done',-206,-133,'docs/self-host',true),
+      task('DS-20','deployment recipes','done',-112,-41,'docs/deploy-recipes',true)
+    ]},
+    {id:'sandbox-lab',name:'sandbox-lab',status:'planned',tasks:[]}
+  ];
+}
+
+function make(tag,cls,text) {
+  const el = document.createElement(tag);
+  if(cls) el.className = cls;
+  if(text !== undefined) el.textContent = text;
+  return el;
+}
+
+function getRange() {
+  // 保留未来三天，以展示计划任务。
+  const start = atDay(state.now,-(state.days-3));
+  const end = atDay(start,state.days);
+  const dates = Array.from(
+    {length:state.days+1},(_,i)=>atDay(start,i)
+  );
+  return {start,end,dates};
+}
+
+function pct(time) {
+  return (+time - +state.range.start) /
+    (+state.range.end - +state.range.start)*100;
+}
+
+function position(el,time) {
+  el.style.left = pct(time)+'%';
+}
+
+function grid() {
+  const el = make('div','grid');
+  el.setAttribute('aria-hidden','true');
+  for(let i=0;i<state.days;i++) {
+    const weekend = [0,6].includes(state.range.dates[i].getDay());
+    const day = make('div','day'+(weekend?' weekend':''));
+    day.style.flex = '0 0 '+
+      (pct(state.range.dates[i+1])-pct(state.range.dates[i]))+'%';
+    el.append(day);
+  }
+  return el;
+}
+
+function nowLine() {
+  const line = make('div','now-line');
+  position(line,state.now);
+  line.setAttribute('aria-hidden','true');
+  return line;
+}
+
+// 并行任务在同一项目行内分轨。
+// 末端保留 12px 间距，避免验收菱形与相邻任务重叠。
+function pack(tasks,plotWidth) {
+  const ends = [];
+  const gap = (+state.range.end - +state.range.start)*12/plotWidth;
+  return [...tasks].sort((a,b)=>a.start-b.start).map(task=>{
+    let track = ends.findIndex(end=>+task.start >= end+gap);
+    if(track<0) track = ends.length;
+    ends[track] = +task.end;
+    return {task,track};
+  });
+}
+
+function render() {
+  hideTip();
+  state.range = getRange();
+  state.tasks.clear();
+  chart.replaceChildren();
+
+  const head = make('div','axis');
+  head.setAttribute('role','row');
+  const projectHead = make('div','project-head','项目');
+  projectHead.setAttribute('role','columnheader');
+
+  const axis = make('div','axis-track');
+  axis.setAttribute('role','columnheader');
+  axis.setAttribute('aria-label','时间');
+
+  const step = state.days === 30 ? 3 : 1;
+  for(let i=0;i<state.days;i+=step) {
+    const date = state.range.dates[i];
+    const weekend = [0,6].includes(date.getDay());
+    const tick = make(
+      'div','tick'+(weekend?' weekend':''),md.format(date)
+    );
+    position(tick,date);
+    tick.style.width = (
+      pct(state.range.dates[Math.min(i+step,state.days)])-pct(date)
+    )+'%';
+    axis.append(tick);
+  }
+
+  const today = make('span','today-label','今日');
+  position(today,state.now);
+  axis.append(nowLine(),today);
+  head.append(projectHead,axis);
+  chart.append(head);
+
+  const labelWidth = parseFloat(
+    getComputedStyle(document.documentElement)
+      .getPropertyValue('--label')
+  );
+  const plotWidth = Math.max(980,viewport.clientWidth-labelWidth);
+
+  for(const project of state.projects) {
+    const visible = project.tasks.filter(
+      t=>t.end>state.range.start && t.start<state.range.end
+    );
+    const packed = pack(visible,plotWidth);
+    const tracks = packed.length
+      ? Math.max(...packed.map(t=>t.track))+1 : 1;
+    const height = Math.max(76,tracks*32+24);
+
+    const row = make('div','row');
+    row.style.height = height+'px';
+    row.setAttribute('role','row');
+
+    const label = make('div','project');
+    label.setAttribute('role','rowheader');
+    label.setAttribute(
+      'aria-label',project.name+' · '+STATES[project.status].label
+    );
+
+    const dot = make('i','dot');
+    dot.style.setProperty('--status',STATES[project.status].color);
+    dot.setAttribute('aria-hidden','true');
+    label.append(dot,make('span','project-name',project.name));
+
+    const lane = make('div','lane');
+    lane.setAttribute('role','cell');
+    lane.append(grid());
+
+    if(!packed.length) {
+      lane.append(make('div','rail'));
+      const empty = make('div','empty');
+      empty.append(make(
+        'span','',project.tasks.length ? '本时段无任务' : '无任务'
+      ));
+      lane.append(empty);
+    }
+
+    for(const {task,track} of packed) {
+      state.tasks.set(task.id,{
+        ...task,project:project.name,projectId:project.id
+      });
+
+      const start = Math.max(+task.start,+state.range.start);
+      const end = Math.min(+task.end,+state.range.end);
+      const left = pct(start);
+      const width = pct(end)-left;
+      const top = (height-tracks*32)/2 + track*32 + 4;
+
+      const bar = make('button','task');
+      bar.type = 'button';
+      bar.dataset.task = task.id;
+      bar.dataset.state = task.status;
+      bar.style.setProperty('--status',STATES[task.status].color);
+      bar.style.left = left+'%';
+      bar.style.width = width+'%';
+      bar.style.top = top+'px';
+
+      if(width/100*plotWidth < 32) bar.classList.add('compact');
+
+      bar.setAttribute('aria-label',
+        task.id+' '+task.name+'，'+STATES[task.status].label+
+        '，'+full.format(task.start)+' 至 '+full.format(task.end)+
+        '，分支 '+task.branch
+      );
+
+      if(task.status==='running') {
+        const elapsed = make('span','elapsed');
+        elapsed.style.width = Math.max(
+          0,Math.min(100,(+state.now-start)/(end-start)*100)
+        )+'%';
+        bar.append(elapsed);
+      }
+
+      bar.append(make('span','name',task.name));
+      lane.append(bar);
+
+      if(task.milestone &&
+        task.milestone>=state.range.start &&
+        task.milestone<state.range.end) {
+        const diamond = make('button','milestone');
+        diamond.type = 'button';
+        diamond.dataset.task = task.id;
+        diamond.dataset.milestone = 'true';
+        position(diamond,task.milestone);
+        diamond.style.top = (top+12)+'px';
+        diamond.setAttribute('aria-label',
+          task.name+'，验收通过，'+full.format(task.milestone)
+        );
+        lane.append(diamond);
+      }
+    }
+
+    lane.append(nowLine());
+    row.append(label,lane);
+    chart.append(row);
+  }
+
+  const last = atDay(state.range.end,-1);
+  $('window').textContent =
+    md.format(state.range.start)+' – '+md.format(last)+' · 本地时间';
+  $('updated').textContent = '更新于 '+hm.format(state.now);
+  $('updated').dateTime = state.now.toISOString();
+
+  document.querySelectorAll('[data-days]').forEach(button=>{
+    button.setAttribute(
+      'aria-pressed',String(Number(button.dataset.days)===state.days)
+    );
+  });
+}
+
+function hideTip() {
+  if(active) active.removeAttribute('aria-describedby');
+  active = null;
+  tip.hidden = true;
+}
+
+function locateTip(anchor) {
+  const rect = anchor.getBoundingClientRect();
+  const margin = 12;
+  const width = tip.offsetWidth;
+  const height = tip.offsetHeight;
+  const left = Math.max(
+    margin,Math.min(rect.left,innerWidth-width-margin)
+  );
+
+  let top = rect.bottom+10;
+  if(top+height>innerHeight-margin) top = rect.top-height-10;
+
+  tip.style.left = left+'px';
+  tip.style.top = Math.max(
+    margin,Math.min(top,innerHeight-height-margin)
+  )+'px';
+}
+
+function showTip(anchor) {
+  const task = state.tasks.get(anchor.dataset.task);
+  if(!task) return;
+
+  hideTip();
+  active = anchor;
+  tip.replaceChildren();
+  tip.append(make('h2','tip-name',task.name));
+
+  const status = make('div','tip-state');
+  const dot = make('i','dot');
+  dot.style.setProperty('--status',STATES[task.status].color);
+  const isMilestone = anchor.dataset.milestone === 'true';
+
+  status.append(dot,make(
+    'span','',isMilestone?'验收通过':STATES[task.status].label
+  ));
+  tip.append(status);
+
+  const details = make('dl');
+  const fields = [
+    ['编号',task.id],
+    ['开始',full.format(task.start)],
+    ['结束',full.format(task.end)],
+    ['分支',task.branch]
+  ];
+  if(isMilestone) fields.push(['验收',full.format(task.milestone)]);
+
+  for(const [key,value] of fields) {
+    details.append(make('dt','',key),make('dd','',value));
+  }
+
+  tip.append(details);
+  anchor.setAttribute('aria-describedby','tooltip');
+  tip.hidden = false;
+  locateTip(anchor);
+}
+
+function target(event) {
+  return event.target.closest('[data-task]');
+}
+
+chart.addEventListener('pointerover',event=>{
+  if(event.pointerType==='touch') return;
+  const anchor = target(event);
+  if(anchor && anchor !== active) showTip(anchor);
+});
+
+chart.addEventListener('pointerout',event=>{
+  const anchor = target(event);
+  if(anchor && !anchor.contains(event.relatedTarget) &&
+    document.activeElement!==anchor) hideTip();
+});
+
+chart.addEventListener('focusin',event=>{
+  const anchor = target(event);
+  if(anchor) showTip(anchor);
+});
+
+chart.addEventListener('focusout',hideTip);
+
+chart.addEventListener('click',event=>{
+  const anchor = target(event);
+  if(!anchor) return;
+  showTip(anchor);
+  const task = state.tasks.get(anchor.dataset.task);
+
+  console.log('[RoamBench] openTask',{
+    projectId:task.projectId,taskId:task.id
+  });
+
+  $('announcement').textContent =
+    '打开任务 '+task.id+'：'+task.name+'（原型已记录到控制台）';
+});
+
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape') hideTip();
+});
+
+document.addEventListener('pointerdown',event=>{
+  if(!event.target.closest('[data-task]')) hideTip();
+});
+
+viewport.addEventListener('scroll',hideTip,{passive:true});
+window.addEventListener('scroll',hideTip,{passive:true});
+
+document.querySelector('.ranges').addEventListener('click',event=>{
+  const button = event.target.closest('[data-days]');
+  if(!button || Number(button.dataset.days)===state.days) return;
+  state.days = Number(button.dataset.days);
+  render();
+  $('announcement').textContent =
+    '已切换为 '+state.days+' 天时间轴';
+});
+
+function refresh() {
+  state.now = new Date();
+  state.projects = mock(state.now);
+  render();
+}
+
+$('refresh').addEventListener('click',()=>{
+  refresh();
+  $('announcement').textContent = '时间轴已刷新，'+hm.format(state.now);
+});
+
+let resizeFrame = 0;
+new ResizeObserver(()=>{
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame = requestAnimationFrame(render);
+}).observe(viewport);
+
+refresh();
+
+setInterval(()=>{
+  const now = new Date();
+  const crossedDay = now.toDateString()!==state.now.toDateString();
+  state.now = now;
+
+  if(crossedDay) {
+    state.projects = mock(now);
+    render();
+  } else {
+    document.querySelectorAll('.now-line,.today-label')
+      .forEach(el=>position(el,now));
+
+    document.querySelectorAll('.task[data-state="running"]')
+      .forEach(bar=>{
+        const task = state.tasks.get(bar.dataset.task);
+        const start = Math.max(+task.start,+state.range.start);
+        const end = Math.min(+task.end,+state.range.end);
+        bar.querySelector('.elapsed').style.width = Math.max(
+          0,Math.min(100,(+now-start)/(end-start)*100)
+        )+'%';
+      });
+  }
+},60000);
+})();
+</script>
+</body>
+</html>
