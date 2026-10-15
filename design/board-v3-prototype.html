@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>RoamBench · 项目看板 v3.2</title>
+  <title>RoamBench · 项目看板 v3.3</title>
   <style>
     :root {
       --bg: #1e1e1e;
@@ -709,6 +709,64 @@
     @media (prefers-reduced-motion: reduce) {
       * { scroll-behavior: auto !important; }
     }
+  
+    /* v3.3：徽标旁显示暂停状态。 */
+    .hermes-indicator {
+      position: absolute;
+      top: 10px;
+      right: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .hermes-indicator .hermes-badge { position: static; }
+    .hermes-paused {
+      color: var(--muted);
+      font: 10px/1.5 var(--sans);
+      white-space: nowrap;
+    }
+    .session-cell:has(.hermes-paused) .session-name-row {
+      margin-right: 70px;
+    }
+    .hermes-badge[data-mode="queued"] {
+      border-color: var(--idle);
+    }
+    .hermes-badge[data-mode="unmanaged"],
+    .hermes-badge[data-mode="unknown"] {
+      color: var(--muted);
+      border-color: var(--muted);
+      border-style: dashed;
+    }
+    .hermes-badge[data-mode="managed"][data-paused="true"] {
+      color: var(--muted);
+      border-color: var(--muted);
+      background: transparent;
+    }
+
+    /* v3.3：时长标签不改变原任务条的位置和分段。 */
+    .timeline-duration {
+      position: absolute;
+      top: 0;
+      right: 4px;
+      color: var(--bg);
+      font: 10px/14px var(--mono);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    .timeline-bar[data-status="active"] .timeline-duration {
+      right: 14px;
+    }
+    .timeline-bar[data-status="detached"] .timeline-duration {
+      color: var(--muted);
+      line-height: 12px;
+    }
+    .hover-duration {
+      margin: 6px 0;
+      color: var(--text);
+      font: 11px/1.7 var(--mono);
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body>
@@ -716,7 +774,7 @@
     <div class="header-inner">
       <div class="brand">
         <span class="brand-name">RoamBench</span>
-        <span class="version">v3.2</span>
+        <span class="version">v3.3</span>
         <span class="brand-location">本地工作区 / 项目看板</span>
       </div>
       <div class="snapshot">
@@ -729,7 +787,7 @@
     <div class="page-heading">
       <div>
         <h1>项目看板</h1>
-        <p class="page-meta" id="page-meta">4 个项目 · 28 个 tmux 会话</p>
+        <p class="page-meta" id="page-meta">4 个项目 · 28 个 终端会话</p>
       </div>
       <div class="heading-actions">
         <label class="project-filter">
@@ -754,13 +812,13 @@
         <button class="view-tab" id="tab-wall" type="button" role="tab"
           aria-selected="true" aria-controls="panel-wall" tabindex="0">状态墙</button>
         <button class="view-tab" id="tab-gantt" type="button" role="tab"
-          aria-selected="false" aria-controls="panel-gantt" tabindex="-1">甘特时间轴</button>
+          aria-selected="false" aria-controls="panel-gantt" tabindex="-1">时间轴</button>
       </div>
       <ul class="legend" aria-label="当前筛选下的会话状态统计">
-        <li><span class="status-dot" data-status="active" aria-hidden="true"></span>active <span class="legend-count" id="count-active">20</span></li>
-        <li><span class="status-dot" data-status="idle" aria-hidden="true"></span>idle <span class="legend-count" id="count-idle">3</span></li>
-        <li><span class="status-dot" data-status="exited" aria-hidden="true"></span>exited <span class="legend-count" id="count-exited">1</span></li>
-        <li><span class="status-dot" data-status="detached" aria-hidden="true"></span>detached <span class="legend-count" id="count-detached">4</span></li>
+        <li><span class="status-dot" data-status="active" aria-hidden="true"></span>运行中 <span class="legend-count" id="count-active">20</span></li>
+        <li><span class="status-dot" data-status="idle" aria-hidden="true"></span>空闲 <span class="legend-count" id="count-idle">3</span></li>
+        <li><span class="status-dot" data-status="exited" aria-hidden="true"></span>已退出 <span class="legend-count" id="count-exited">1</span></li>
+        <li><span class="status-dot" data-status="detached" aria-hidden="true"></span>已分离 <span class="legend-count" id="count-detached">4</span></li>
       </ul>
     </div>
 
@@ -771,7 +829,7 @@
       </div>
       <div id="session-wall"></div>
       <p class="panel-note" style="margin-top:16px">
-        H = HERMES · 绿：已接管 / 黄虚线：待派发 / 灰实线：未接管 / 灰虚线：未知 · 数据均为模拟
+        H = Hermes · 绿实线：自动执行中 / 黄虚线：待派发 / 灰虚线：未接管 / 灰虚线：未知 · 数据均为模拟
       </p>
     </section>
 
@@ -780,7 +838,7 @@
         <h2>会话时间轴</h2>
         <p class="panel-note"><time datetime="2026-10-15">2026-10-15</time> · 09:00–17:00 · UTC+8</p>
       </div>
-      <div class="gantt-scroll" role="region" aria-label="会话甘特图，可横向滚动" tabindex="0">
+      <div class="gantt-scroll" role="region" aria-label="会话时间轴，可横向滚动" tabindex="0">
         <table class="gantt-table">
           <caption class="sr-only">28 个模拟会话的运行时间；细竖线表示 14:32 快照时间。</caption>
           <colgroup><col class="gantt-name-column"><col></colgroup>
@@ -806,7 +864,7 @@
         </table>
       </div>
       <div class="gantt-footnote">
-        <p>细竖线：14:32 快照时间 · 虚线条：detached</p>
+        <p>细竖线：14:32 快照时间 · 虚线条：已分离</p>
         <p>窄屏可横向滚动；会话状态不代表任务完成</p>
       </div>
     </section>
@@ -814,7 +872,7 @@
     <p id="filter-announcement" class="sr-only" role="status" aria-live="polite"></p>
     <footer class="page-footer">
       <p id="footer-count">显示 28 / 28 个会话</p>
-      <p>本地模拟数据 · 不连接 tmux / HERMES · 新建结果仅保留至刷新</p>
+      <p>本地模拟数据 · 不连接真实终端 / Hermes · 新建结果仅保留至刷新</p>
     </footer>
     <noscript><p class="empty-message">此原型需要 JavaScript 来显示数据和操作交互。</p></noscript>
   </main>
@@ -904,7 +962,7 @@
             </label>
 
             <label class="field" id="git-field" hidden>
-              <span>Git 仓库 URL *</span>
+              <span>Git 仓库地址 *</span>
               <input id="project-repo" required maxlength="1000" autocomplete="off"
                 placeholder="https://…/xxx.git" spellcheck="false" disabled>
               <small>支持 GitHub / Gitea，接受 HTTPS、SSH 或 git@host:path 地址。</small>
@@ -913,18 +971,18 @@
             <label class="field">
               <span>目标一句话 *</span>
               <input id="project-goal" required maxlength="300" autocomplete="off"
-                placeholder="例如：完成看板 v3.2，简化详情和新建流程。">
+                placeholder="例如：完成看板 v3.3，统一界面文案并显示任务时长。">
             </label>
           </fieldset>
           <p class="draft-progress" id="draft-progress" role="status" aria-live="polite" hidden>
-            Hermes 正在起草验收命令与 out-of-scope，约 2 秒…
+            Hermes 正在起草验收命令与本次不做的事项，约 2 秒…
           </p>
         </section>
 
         <section id="create-draft" aria-labelledby="draft-title" hidden>
           <div class="draft-card">
             <h3 id="draft-title" tabindex="-1">Hermes 草案</h3>
-            <p class="source-note">核对草案后批准；验收命令与 out-of-scope 均可编辑。</p>
+            <p class="source-note">核对草案后批准；验收命令与本次不做的事项 均可编辑。</p>
             <dl id="draft-summary"></dl>
 
             <label class="field">
@@ -935,7 +993,7 @@
             </label>
 
             <label class="field">
-              <span>out-of-scope *</span>
+              <span>本次不做的事项 *</span>
               <textarea id="draft-out-of-scope" required maxlength="2000"></textarea>
             </label>
 
@@ -1027,10 +1085,10 @@
         planned: "待领取", running: "进行中", blocked: "阻塞", done: "已完成"
       };
       const hermesModes = {
-        managed: "已接管", queued: "待派发", unmanaged: "未接管", unknown: "未知"
+        managed: "自动执行中", queued: "待派发", unmanaged: "未接管", unknown: "未知"
       };
       const hermesLabels = Object.fromEntries(
-        Object.entries(hermesModes).map(([mode, label]) => [mode, "HERMES · " + label])
+        Object.entries(hermesModes).map(([mode, label]) => [mode, "Hermes · " + label])
       );
 
       const tasks = [
@@ -1044,12 +1102,12 @@
           id: "RB-302", project: "roambench", title: "打通会话观测链路",
           goal: "会话事件包含来源与时间戳，断开时可区分缺失数据。",
           status: "blocked", owner: "平台", source: "模拟任务登记",
-          blocker: "等待 schema 字段确认。",
+          blocker: "等待 数据结构字段确认。",
           members: ["rb-tmux-watch", "rb-api-dev", "rb-event-stream", "rb-schema-review"]
         },
         {
           id: "AT-201", project: "atlas-api", title: "认证与异步工作流",
-          goal: "认证契约与 worker 重试策略通过项目验收。",
+          goal: "认证契约与 后台任务重试策略通过项目验收。",
           status: "running", owner: "API", source: "模拟任务登记",
           members: ["atlas-auth", "atlas-worker", "atlas-contracts"]
         },
@@ -1067,14 +1125,14 @@
         },
         {
           id: "FN-102", project: "fieldnotes", title: "导出与移动端回归",
-          goal: "导出格式与 markdown 规范一致，移动端构建完成验收。",
+          goal: "导出格式与 Markdown 规范一致，移动端构建完成验收。",
           status: "blocked", owner: "质量", source: "模拟任务登记",
           blocker: "等待移动端签名配置。",
           members: ["fn-ios-build", "fn-export-tests", "fn-markdown-spec"]
         },
         {
           id: "IF-401", project: "infra-kit", title: "本地基础设施巡检",
-          goal: "确认 compose、CI runner、日志与指标链路可用。",
+          goal: "确认容器编排、持续集成执行器、日志与指标链路可用。",
           status: "running", owner: "基础设施", source: "模拟任务登记",
           members: ["infra-compose", "infra-ci-runner", "infra-log-tail", "infra-metrics"]
         },
@@ -1105,7 +1163,7 @@
         },
         "rb-ui-tests": {
           text: "用例：自述全部通过\n待办：窄屏 / 键盘检查",
-          author: "Shell worker", time: "2026-10-15T14:29:00+08:00"
+          author: "命令行执行者", time: "2026-10-15T14:29:00+08:00"
         },
         "atlas-auth": {
           text: "已调整：认证契约\n当前：刷新令牌边界检查",
@@ -1204,6 +1262,14 @@
       const fineHover = window.matchMedia("(hover: hover) and (pointer: fine)");
       const coarsePointer = window.matchMedia("(pointer: coarse)");
       const claimTimers = new Map();
+      const durationObserver = new ResizeObserver(entries => {
+        entries.forEach(({ target }) => {
+          const label = target.querySelector(".timeline-duration");
+          if (label) {
+            label.hidden = target.getBoundingClientRect().width < 80;
+          }
+        });
+      });
 
       let activeTaskId = null;
       let serial = 0;
@@ -1247,7 +1313,7 @@
         const badge = el("span", "source-badge", label);
         badge.dataset.source = label;
         badge.setAttribute("aria-label",
-          label === "输出" ? "终端输出" : label === "自述" ? "agent 自述" : "本页登记");
+          label === "输出" ? "终端输出" : label === "自述" ? "执行者自述" : "本页登记");
         return badge;
       }
 
@@ -1258,6 +1324,64 @@
         if (seconds < 3600) return Math.floor(seconds / 60) + "m前";
         if (seconds < 86400) return Math.floor(seconds / 3600) + "h前";
         return Math.floor(seconds / 86400) + "天前";
+      }
+
+      // 单位为毫秒；历史运行区间沿用原模拟数据。
+      function formatDuration(ms) {
+        if (ms <= 0) return "0";
+        const minutes = Math.floor(ms / 60000);
+        if (!minutes) return "<1m";
+        const hours = Math.floor(minutes / 60);
+        const rest = minutes % 60;
+        return (hours ? hours + "h" : "") +
+          (rest ? rest + "m" : "");
+      }
+
+      function durationBreakdown(session, now = Date.now()) {
+        const totals = session.durationState
+          ? { ...session.durationState.totals }
+          : {
+              execution: Math.max(
+                0, (session.end ?? SNAPSHOT_MINUTE) - session.start
+              ) * 60000,
+              approval: 0,
+              queued: 0,
+              paused: 0
+            };
+        const state = session.durationState;
+        if (state?.phase) {
+          totals[state.phase] += Math.max(0, now - state.since);
+        }
+        return {
+          ...totals,
+          total: totals.execution + totals.approval +
+            totals.queued + totals.paused
+        };
+      }
+
+      function durationText(session) {
+        const durations = durationBreakdown(session);
+        return [
+          ["execution", "执行"],
+          ["approval", "待审批"],
+          ["queued", "排队"],
+          ["paused", "暂停"],
+          ["total", "共"]
+        ]
+          .filter(([key]) => durations[key] > 0)
+          .map(([key, label]) =>
+            label + " " + formatDuration(durations[key]))
+          .join(" · ");
+      }
+
+      function setDurationPhase(session, phase, now) {
+        const { total, ...totals } =
+          durationBreakdown(session, Date.parse(now));
+        session.durationState = {
+          totals,
+          phase,
+          since: Date.parse(now)
+        };
       }
 
       function clockTime(minutes) {
@@ -1331,7 +1455,7 @@
         };
       }
 
-      function fillPreview(session) {
+function fillPreview(session) {
         const text = previewText(session);
         const head = el("div", "hover-head");
         const age = relativeNode(activityDate(session), referenceDate(session));
@@ -1342,17 +1466,21 @@
           el("span", "hover-name", session.name),
           age
         );
+        const duration = el("p", "hover-duration", durationText(session));
+        duration.hidden = !duration.textContent;
         const updated = el("p", "hover-updated", "更新 ");
         updated.append(timeNode(session.updatedAt, true));
         preview.replaceChildren(
           head,
           el("p", "hover-task", text.task),
+          duration,
           el("p", "hover-evidence", text.evidence),
           updated
         );
         return statusLabels[session.status] + "，" + session.name + "，" +
-          age.textContent + "；" + text.task + "；" + text.evidence +
-          "；更新 " + stamp(session.updatedAt);
+          age.textContent + "；" + text.task +
+          (duration.textContent ? "；" + duration.textContent : "") +
+          "；" + text.evidence + "；更新 " + stamp(session.updatedAt);
       }
 
       function positionPreview() {
@@ -1529,20 +1657,30 @@
         });
       });
 
-      function hermesState(session) {
-        return session.hermes.paused
-          ? hermesModes[session.hermes.mode] + " · 已暂停"
-          : hermesModes[session.hermes.mode];
+function hermesState(session) {
+        if (session.hermes.mode === "managed" && session.hermes.paused) {
+          return "已接管 · 已暂停";
+        }
+        return hermesModes[session.hermes.mode];
       }
 
-      function hermesBadge(session) {
+function hermesBadge(session) {
+        const group = el("span", "hermes-indicator");
         const badge = button("H", "hermes", session.id, "hermes-badge");
         badge.dataset.mode = session.hermes.mode;
-        badge.title = "HERMES · " + hermesState(session);
+        badge.dataset.paused = String(session.hermes.paused);
+        badge.title = "Hermes · " + hermesState(session);
         badge.setAttribute("aria-label",
-          session.name + "，HERMES " + hermesState(session) + "，查看接管详情");
+          session.name + "，Hermes " + hermesState(session) +
+          "，查看接管详情");
         badge.setAttribute("aria-haspopup", "dialog");
-        return badge;
+        group.append(badge);
+        if (session.hermes.mode === "managed" && session.hermes.paused) {
+          const paused = el("span", "hermes-paused", "已暂停");
+          paused.setAttribute("aria-hidden", "true");
+          group.append(paused);
+        }
+        return group;
       }
 
       function makeSessionCell(session) {
@@ -1561,7 +1699,7 @@
         const stateTime = el("span", "session-state-time");
         const separator = el("span", "", "·");
         separator.setAttribute("aria-hidden", "true");
-        stateTime.append(el("span", "", session.status), separator, age);
+        stateTime.append(el("span", "", statusLabels[session.status]), separator, age);
         meta.append(stateTime);
         if (session.taskId) meta.append(el("span", "task-mini", session.taskId));
         open.append(row, meta);
@@ -1624,15 +1762,24 @@
           "，时间段 " + clockTime(session.start) + "–" + clockTime(end) +
           (session.localOnly ? "，本页模拟领取，未启动外部进程" :
             session.status === "active" ? "，截至快照仍在运行" : "");
-        bar.title = detail;
+        const duration = el("span", "timeline-duration",
+          formatDuration(durationBreakdown(session).execution));
+        duration.hidden = true;
+        bar.append(duration);
         bar.setAttribute("aria-hidden", "true");
         track.append(bar);
-        timeCell.append(el("span", "sr-only", detail), track);
+        durationObserver.observe(bar);
+        bindPreview(track, session);
+        timeCell.append(
+          el("span", "sr-only", detail + "；" + durationText(session)),
+          track
+        );
         row.append(nameCell, timeCell);
         return row;
       }
 
       function renderGantt(visible) {
+        durationObserver.disconnect();
         gantt.querySelectorAll("tbody").forEach(body => body.remove());
         projects.forEach(project => {
           const group = visible.filter(s => s.project === project.id);
@@ -1663,7 +1810,7 @@
         $("wall-note").textContent = visible.length + " 个会话 · 按项目分组 · " +
           (canPointerPreview() ? "悬停快照 / 点击详情" : "点击详情");
         $("footer-count").textContent = "显示 " + visible.length + " / " + sessions.length + " 个会话";
-        $("page-meta").textContent = projects.length + " 个项目 · " + sessions.length + " 个模拟 tmux 会话";
+        $("page-meta").textContent = projects.length + " 个项目 · " + sessions.length + " 个模拟 终端会话";
         $("task-count").textContent = tasks.filter(t =>
           filter.value === "all" || t.project === filter.value).length;
       }
@@ -1738,7 +1885,7 @@
         body.replaceChildren();
 
         const summary = el("div", "detail-summary");
-        const state = pill(session.status, session.status === "active");
+        const state = pill(statusLabels[session.status], session.status === "active");
         state.setAttribute("aria-label", statusLabels[session.status]);
         const snapshot = pill(session.localOnly ? "本页模拟" : "模拟快照");
         snapshot.title = "更新 " + stamp(session.updatedAt);
@@ -1748,7 +1895,7 @@
         const hermes = el("section", "info-card");
         hermes.id = "hermes-detail";
         const hermesHeading = el("div", "card-heading");
-        const hermesTitle = el("h3", "", "HERMES");
+        const hermesTitle = el("h3", "", "Hermes");
         hermesTitle.tabIndex = -1;
         const identity = pill(session.hermes.dispatch
           ? session.hermes.dispatch + " · " + session.hermes.agent
@@ -1874,7 +2021,7 @@
         definition(details, "阶段", task.phase || "未记录");
         definition(details, "目标", task.goal);
         definition(details, "验收命令", el("span", "pre-line", task.acceptance));
-        definition(details, "out-of-scope", task.outOfScope);
+        definition(details, "本次不做的事项", task.outOfScope);
         definition(details, "自动接管", task.autoTakeover ? "是" : "否");
         if (task.blocker) definition(details, "阻塞", task.blocker.replace(/。$/, ""));
         card.append(details);
@@ -1914,7 +2061,7 @@
               session.name + "，" + statusLabels[session.status] + "，查看详情");
             name.setAttribute("aria-haspopup", "dialog");
             const mode = el("span", "source-note", hermesState(session));
-            mode.setAttribute("aria-label", "HERMES · " + hermesState(session));
+            mode.setAttribute("aria-label", "Hermes · " + hermesState(session));
             li.append(statusDot(session.status), name, mode);
             list.append(li);
           });
@@ -2041,7 +2188,7 @@
         const goal = $("project-goal").value.trim();
         [input, $("project-goal")].forEach(control => control.setCustomValidity(""));
 
-        if (!value) return failControl(input, "请填写项目文件夹路径或 Git 仓库 URL。");
+        if (!value) return failControl(input, "请填写项目文件夹路径或 Git 仓库地址。");
         if (!input.checkValidity()) {
           input.reportValidity();
           return false;
@@ -2110,7 +2257,7 @@
       function validateDraft() {
         for (const [id, message] of [
           ["draft-acceptance", "请填写验收命令。"],
-          ["draft-out-of-scope", "请填写 out-of-scope。"]
+          ["draft-out-of-scope", "请填写本次不做的事项。"]
         ]) {
           const control = $(id);
           control.setCustomValidity("");
@@ -2203,6 +2350,7 @@
             sessions.push(session);
           }
           attachSessionToTask(session, task);
+          setDurationPhase(session, "execution", now);
           session.status = "active";
           session.age = 0;
           session.localOnly = true;
@@ -2320,6 +2468,7 @@
         task.updatedAt = now;
         sessions.filter(session => session.taskId === task.id &&
           session.hermes.mode === "managed").forEach(session => {
+          setDurationPhase(session, "paused", now);
           session.hermes.paused = true;
           session.status = "idle";
           session.age = 0;
