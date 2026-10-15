@@ -787,6 +787,25 @@
     }
     .gantt-project .gantt-label { background: var(--bg); }
     .gantt-project .project-open { min-height: 34px; }
+    .project-mode-summary {
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--surface);
+      font: 11px/1.6 var(--mono);
+    }
+    .project-mode-stats {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      background: var(--surface);
+      font: 10px/1.6 var(--mono);
+    }
+    .project-mode-stats.is-managed { color: var(--accent); border-color: #37665c; }
     .project-mode-filters {
       display: flex;
       align-items: center;
@@ -998,8 +1017,8 @@
       <div>
         <div class="project-title-row">
           <h2 id="project-detail-title">项目详情</h2>
-          <button class="btn small project-mode-toggle" id="project-mode-toggle"
-            type="button" aria-pressed="false">人工模式</button>
+          <span class="project-mode-stats" id="project-mode-toggle"
+            role="status">接管中</span>
         </div>
         <p class="project-stats" id="project-detail-stats"></p>
       </div>
@@ -2733,28 +2752,22 @@ function hermesBadge(session) {
       }
 
       function syncProjectModeFilters() {
-        document.querySelectorAll('[data-action="project-mode-filter"]').forEach(node => {
-          node.setAttribute("aria-pressed",
-            String(node.dataset.value === projectViewState.mode));
-        });
+        const managedCount = projects.filter(project => projectIsManaged(project.id)).length;
+        const total = projects.length;
+        const summary = document.querySelector(".project-mode-summary");
+        if (summary) summary.textContent =
+          total + " 个项目 · " + managedCount + " 接管 · " + (total - managedCount) + " 人工";
       }
 
       function installProjectModeFilters(panelId) {
         const controls = el("div", "project-mode-filters");
         controls.setAttribute("role", "group");
-        controls.setAttribute("aria-label", "按项目接管模式筛选");
-        [
-          ["all", "全部"],
-          ["managed", "接管中"],
-          ["manual", "人工模式"]
-        ].forEach(([value, label]) => {
-          const control = button(
-            label, "project-mode-filter", value, "pill project-mode-pill"
-          );
-          control.setAttribute("aria-pressed",
-            String(projectViewState.mode === value));
-          controls.append(control);
-        });
+        controls.setAttribute("aria-label", "项目总览");
+        const managedCount = projects.filter(project => projectIsManaged(project.id)).length;
+        const total = projects.length;
+        const summary = el("span", "project-mode-summary",
+          total + " 个项目 · " + managedCount + " 接管 · " + (total - managedCount) + " 人工");
+        controls.append(summary);
         const heading = $(panelId).querySelector(".panel-heading");
         heading.insertAdjacentElement("afterend", controls);
       }
@@ -2768,9 +2781,6 @@ function hermesBadge(session) {
         const toggle = $("project-mode-toggle");
         toggle.classList.toggle("is-managed", managed);
         toggle.textContent = managed ? "接管中" : "人工模式";
-        toggle.setAttribute("aria-pressed", String(managed));
-        toggle.setAttribute("aria-label", project.name + "，" +
-          (managed ? "接管中，切换人工模式" : "人工模式，切换接管"));
 
         // 累计执行与运行中按完整项目会话现算；待领取按项目任务现算。
         const group = sessions.filter(session => session.project === project.id);
@@ -2845,9 +2855,7 @@ function hermesBadge(session) {
           list.append(row);
           issues.append(list);
         } else {
-          issues.append(el("p", "project-clear", managed
-            ? "无阻断 · 自动接管中"
-            : "无阻断 · 人工模式"));
+          issues.append(el("p", "project-clear", "无阻断 · 自动接管中"));
         }
         body.append(issues);
       }
@@ -2859,13 +2867,7 @@ function hermesBadge(session) {
       }
 
       $("project-mode-toggle").addEventListener("click", () => {
-        const id = $("project-dialog").dataset.project;
-        const project = projects.find(item => item.id === id);
-        if (!project) return;
-        projectViewState.managed.set(id, !projectIsManaged(id));
-        render();
-        $("filter-announcement").textContent = project.name + " 已切换为" +
-          (projectIsManaged(id) ? "接管中" : "人工模式");
+        // 统计标签只读，无切换行为
       });
 
       document.addEventListener("click", event => {
@@ -2877,13 +2879,7 @@ function hermesBadge(session) {
         if (action === "project-open") {
           openProjectModal(projects.find(project => project.id === value));
         }
-        if (action === "project-mode-filter") {
-          if (!["all", "managed", "manual"].includes(value)) return;
-          projectViewState.mode = value;
-          render();
-          $("filter-announcement").textContent =
-            trigger.textContent + "，" + $("footer-count").textContent;
-        }
+        if (action === "project-mode-filter") { /* 已移除筛选，保留兼容 */ }
         if (action === "project-handle") {
           const issue = projectIssues[value];
           if (!issue) return;
@@ -2897,7 +2893,7 @@ function hermesBadge(session) {
         }
       });
 
-      installProjectModeFilters("panel-wall");
+      installProjectModeFilters("panel-wall"); // 项目总览统计
       installProjectModeFilters("panel-gantt");
 
       projectOptions($("task-project"), true, "all");
