@@ -1084,7 +1084,21 @@
             'project.noTasksInLane': 'No tasks in this lane yet',
             'project.noTasksInLaneCopy': 'Add one concrete next step when this lane is ready to move.',
             'project.evidenceHistory': 'Evidence & history',
-            'project.evidenceHistorySubtitle': 'Timeline, files, sessions, audit'
+            'project.evidenceHistorySubtitle': 'Timeline, files, sessions, audit',
+            'project.boardNav': 'Status Board',
+            'project.boardNavBadge': 'projects',
+            'project.boardKicker': 'Status Board',
+            'project.boardTitle': 'Project Board',
+            'project.boardUpdated': 'Updated {time}',
+            'project.boardRefreshing': 'Refreshing…',
+            'project.boardRefresh': 'Refresh',
+            'project.boardRefreshFailed': 'Board refresh failed',
+            'project.boardEmpty': 'No projects on the board yet.',
+            'project.boardNoTask': 'No task in progress',
+            'project.boardWorktreeCurrent': 'current',
+            'project.boardWorktreeCount': '{count} worktree',
+            'project.boardGitUnavailable': 'Git unavailable',
+            'project.boardDirtyCount': '{count} changed'
         },
         'zh-CN': {
             'header.terminal': '终端',
@@ -1475,7 +1489,21 @@
             'project.noTasksInLane': '该通道暂无任务',
             'project.noTasksInLaneCopy': '通道准备推进时，添加一个明确的下一步。',
             'project.evidenceHistory': '证据与历史',
-            'project.evidenceHistorySubtitle': '时间线、文件、会话、审计'
+            'project.evidenceHistorySubtitle': '时间线、文件、会话、审计',
+            'project.boardNav': '状态看板',
+            'project.boardNavBadge': '个项目',
+            'project.boardKicker': '状态看板',
+            'project.boardTitle': '项目看板',
+            'project.boardUpdated': '更新于 {time}',
+            'project.boardRefreshing': '刷新中…',
+            'project.boardRefresh': '刷新',
+            'project.boardRefreshFailed': '看板刷新失败',
+            'project.boardEmpty': '看板上还没有项目。',
+            'project.boardNoTask': '无进行中任务',
+            'project.boardWorktreeCurrent': '当前',
+            'project.boardWorktreeCount': '{count} 个工作树',
+            'project.boardGitUnavailable': 'Git 不可用',
+            'project.boardDirtyCount': '{count} 处改动'
         },
         ja: {
             'header.terminal': '端末',
@@ -1866,7 +1894,21 @@
             'project.noTasksInLane': 'このレーンにタスクはまだありません',
             'project.noTasksInLaneCopy': 'このレーンを進める準備ができたら、具体的な次の一歩を追加してください。',
             'project.evidenceHistory': '証跡と履歴',
-            'project.evidenceHistorySubtitle': 'タイムライン、ファイル、セッション、監査'
+            'project.evidenceHistorySubtitle': 'タイムライン、ファイル、セッション、監査',
+            'project.boardNav': 'ステータスボード',
+            'project.boardNavBadge': 'プロジェクト',
+            'project.boardKicker': 'ステータスボード',
+            'project.boardTitle': 'プロジェクトボード',
+            'project.boardUpdated': '{time} 更新',
+            'project.boardRefreshing': '更新中…',
+            'project.boardRefresh': '更新',
+            'project.boardRefreshFailed': 'ボードの更新に失敗しました',
+            'project.boardEmpty': 'ボードにプロジェクトがありません。',
+            'project.boardNoTask': '進行中のタスクはありません',
+            'project.boardWorktreeCurrent': '現在',
+            'project.boardWorktreeCount': '{count} ワークツリー',
+            'project.boardGitUnavailable': 'Git 利用不可',
+            'project.boardDirtyCount': '{count} 件の変更'
         }
     };
 

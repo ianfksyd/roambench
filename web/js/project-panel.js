@@ -37,13 +37,20 @@
         creatingTaskStep: 1,
         creatingTaskSaving: false,
         phaseUpdatingTaskId: '',
-        toolRunRefreshTimer: null
+        toolRunRefreshTimer: null,
+        boardLoading: false,
+        boardError: '',
+        boardGeneratedAt: '',
+        boardProjects: [],
+        boardExpanded: {},
+        boardTimer: null
     };
 
     var TOOL_RUN_REFRESH_INTERVAL_MS = 1200;
     var TOOL_RUN_REFRESH_ATTEMPTS = 130;
     var TASK_WIZARD_TOTAL_STEPS = 3;
     var TASK_DETAIL_TABS = ['overview', 'timeline', 'evidence', 'files_diff', 'sessions', 'audit'];
+    var BOARD_REFRESH_INTERVAL_MS = 30000;
 
     function app() {
         return window.RoamBenchApp || null;
@@ -3451,6 +3458,10 @@
             + '</div>'
             + '<div class="project-sidebar-section">'
             + '<div class="project-sidebar-kicker">' + escapeHTML(tr('project.sidebarActions', 'Actions')) + '</div>'
+            + '<button type="button" class="project-nav-btn project-nav-compact project-nav-action' + (state.currentView === 'board' ? ' active' : '') + '" data-open-board="1">'
+            + '<span class="project-nav-row"><span class="project-nav-main">' + renderSidebarSignal(state.boardError ? 'warning' : 'info') + '<span class="project-nav-title">' + escapeHTML(tr('project.boardNav', 'Status Board')) + '</span></span>'
+            + renderSidebarBadge((state.boardProjects || []).length, 'neutral', tr('project.boardNavBadge', 'projects')) + '</span>'
+            + '</button>'
             + '<button type="button" class="project-nav-btn project-nav-compact project-nav-action' + (state.currentView === 'approvals' ? ' active' : '') + '" data-open-approvals="1">'
             + '<span class="project-nav-row"><span class="project-nav-main">' + renderSidebarSignal(approvalsPending.length ? 'warning' : 'success') + '<span class="project-nav-title">' + escapeHTML(tr('project.approvals', 'Approvals')) + '</span></span>'
             + renderSidebarBadge(approvalsPending.length, approvalsPending.length ? 'warning' : 'success', approvalsPending.length === 1 ? tr('project.itemSingular', 'item') : tr('project.itemPlural', 'items')) + '</span>'
@@ -3488,6 +3499,9 @@
         }
         if (session) {
             crumbs.push('<span class="project-breadcrumb current">' + escapeHTML(session.name) + '</span>');
+        }
+        if (state.currentView === 'board') {
+            crumbs.push('<span class="project-breadcrumb current">' + escapeHTML(tr('project.boardNav', 'Status Board')) + '</span>');
         }
         if (state.currentView === 'approvals') {
             crumbs.push('<span class="project-breadcrumb current">' + escapeHTML(tr('project.approvals', 'Approvals Inbox')) + '</span>');
@@ -4126,9 +4140,210 @@
             + '</section>';
     }
 
+    // --- F1 status board (task card C3) ---
+
+    function boardModels() {
+        var bridge = window.RoamBenchBoardStatus;
+        if (!bridge || typeof bridge.cardModel !== 'function') {
+            return [];
+        }
+        return (state.boardProjects || []).map(function(project) {
+            return bridge.cardModel(project);
+        });
+    }
+
+    function boardTaskStateLabel(value) {
+        switch (String(value || '').trim().toLowerCase()) {
+        case 'planned':
+        case 'queued':
+            return tr('project.statusNext', 'Next');
+        case 'running':
+            return tr('project.statusRunning', 'Running');
+        case 'waiting_human':
+        case 'waiting_review':
+            return tr('project.statusReview', 'Review');
+        case 'blocked':
+        case 'failed':
+            return tr('project.statusBlocked', 'Blocked');
+        case 'execution_complete':
+            return tr('project.statusDone', 'Done');
+        case 'archived':
+            return tr('project.statusArchive', 'Archive');
+        default:
+            return value ? humanizeToken(value) : tr('project.statusActive', 'Active');
+        }
+    }
+
+    function boardPhaseLabel(value) {
+        return value ? humanizePhase(value) : '';
+    }
+
+    function boardWorktreeRow(item, index) {
+        return '<div class="board-worktree-row">'
+            + '<span class="board-worktree-path" title="' + escapeHTML(item.path) + '">' + escapeHTML(item.path) + '</span>'
+            + '<span class="board-worktree-branch">' + escapeHTML(item.branch || '—') + '</span>'
+            + (item.headSha ? '<span class="board-worktree-sha">' + escapeHTML(boardShortSha(item.headSha)) + '</span>' : '')
+            + (item.isCurrent ? '<span class="project-pill tone-info">' + escapeHTML(tr('project.boardWorktreeCurrent', 'current')) + '</span>' : '')
+            + '</div>';
+    }
+
+    function boardShortSha(sha) {
+        var bridge = window.RoamBenchBoardStatus;
+        return bridge && typeof bridge.shortSha === 'function' ? bridge.shortSha(sha) : String(sha || '').slice(0, 7);
+    }
+
+    function renderBoardGitSection(model) {
+        var git = model.git;
+        if (!git.available) {
+            return '<div class="board-git-error" role="status">'
+                + escapeHTML(tr('project.boardGitUnavailable', 'Git unavailable'))
+                + (git.error ? ': ' + escapeHTML(git.error) : '')
+                + '</div>';
+        }
+        var chips = [];
+        if (git.branchLabel) {
+            chips.push('<span class="board-git-chip" title="' + escapeHTML(git.repoPath) + '">⎇ ' + escapeHTML(git.branchLabel) + '</span>');
+        }
+        if (git.hasUpstream) {
+            chips.push('<span class="board-git-chip">↑' + escapeHTML(String(git.ahead)) + ' ↓' + escapeHTML(String(git.behind)) + '</span>');
+        }
+        if (git.dirty) {
+            chips.push('<span class="board-git-chip board-git-dirty">● ' + escapeHTML(tr('project.boardDirtyCount', '{count} changed', { count: git.dirtyCount })) + '</span>');
+        }
+        if (git.worktreeCount) {
+            chips.push('<button type="button" class="board-git-chip board-git-worktrees" data-board-worktrees="' + escapeHTML(model.projectId) + '" aria-expanded="' + (state.boardExpanded[model.projectId] ? 'true' : 'false') + '">'
+                + escapeHTML(tr('project.boardWorktreeCount', '{count} worktree', { count: git.worktreeCount }))
+                + '</button>');
+        }
+        var expanded = state.boardExpanded[model.projectId] && git.worktreeCount
+            ? '<div class="board-worktree-list">' + git.worktrees.map(boardWorktreeRow).join('') + '</div>'
+            : '';
+        return '<div class="board-git-row">' + chips.join('') + '</div>' + expanded;
+    }
+
+    function renderBoardCard(model) {
+        var taskHTML = model.currentTask
+            ? '<div class="board-card-task">'
+                + '<span class="board-card-task-title">' + escapeHTML(model.currentTask.title) + '</span>'
+                + '<span class="project-pill tone-' + escapeHTML(statusTone(model.currentTask.state)) + '">' + escapeHTML(boardTaskStateLabel(model.currentTask.state)) + '</span>'
+                + (model.currentTask.currentPhase
+                    ? '<span class="board-card-task-phase">' + escapeHTML(boardPhaseLabel(model.currentTask.currentPhase)) + '</span>'
+                    : '')
+                + '</div>'
+            : '<div class="board-card-task board-card-task-empty">' + escapeHTML(tr('project.boardNoTask', 'No task in progress')) + '</div>';
+        return '<article class="board-card tone-' + escapeHTML(statusTone(model.status)) + '" data-board-project="' + escapeHTML(model.projectId) + '">'
+            + '<header class="board-card-header">'
+            + '<h3 class="board-card-name">' + escapeHTML(model.name || model.projectId) + '</h3>'
+            + '<span class="project-pill tone-' + escapeHTML(statusTone(model.status)) + '">' + escapeHTML(shortStatusLabel(model.status)) + '</span>'
+            + '</header>'
+            + taskHTML
+            + (model.lastActivitySummary
+                ? '<div class="board-card-activity">'
+                    + '<span class="board-card-activity-time">' + escapeHTML(formatTime(model.lastActivityAt)) + '</span>'
+                    + '<span class="board-card-activity-summary">' + escapeHTML(model.lastActivitySummary) + '</span>'
+                    + '</div>'
+                : '')
+            + renderBoardGitSection(model)
+            + '</article>';
+    }
+
+    function renderBoard() {
+        var models = boardModels();
+        var cards = models.map(renderBoardCard).join('');
+        var empty = models.length
+            ? ''
+            : '<div class="project-empty-state">' + escapeHTML(tr('project.boardEmpty', 'No projects on the board yet.')) + '</div>';
+        var errorHTML = state.boardError
+            ? '<div class="board-inline-error" role="alert">'
+                + escapeHTML(tr('project.boardRefreshFailed', 'Board refresh failed')) + ': ' + escapeHTML(state.boardError)
+                + '</div>'
+            : '';
+        var loadingMark = state.boardLoading ? ' <span class="board-refreshing">' + escapeHTML(tr('project.boardRefreshing', 'Refreshing…')) + '</span>' : '';
+        return '<section class="project-main-section project-board-view">'
+            + '<div class="project-section-header">'
+            + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.boardKicker', 'Status Board')) + '</div>'
+            + '<h2>' + escapeHTML(tr('project.boardTitle', 'Project Board')) + '</h2>'
+            + '<p>' + escapeHTML(tr('project.boardUpdated', 'Updated {time}', { time: formatTime(state.boardGeneratedAt) })) + loadingMark + '</p></div>'
+            + '<div class="project-header-actions">'
+            + '<button type="button" class="project-inline-btn primary" data-board-refresh="1">' + escapeHTML(tr('project.boardRefresh', 'Refresh')) + '</button>'
+            + '</div>'
+            + '</div>'
+            + errorHTML
+            + '<div class="board-grid">' + cards + '</div>'
+            + empty
+            + '</section>';
+    }
+
+    function loadBoard(options) {
+        if (!state.authenticated) {
+            return Promise.resolve(null);
+        }
+        options = options || {};
+        state.boardLoading = true;
+        if (!options.silent) {
+            state.boardError = '';
+        }
+        render();
+        return fetchJSON('/api/project-control/board').then(function(data) {
+            state.boardLoading = false;
+            state.boardError = '';
+            state.boardGeneratedAt = data && data.generatedAt ? data.generatedAt : '';
+            state.boardProjects = data && Array.isArray(data.projects) ? data.projects : [];
+            render();
+            scheduleBoardRefresh();
+            return data;
+        }).catch(function(err) {
+            // Inline-only failure: the board keeps showing the previous data
+            // and surfaces the problem inside the view, never as a global error.
+            state.boardLoading = false;
+            state.boardError = (err && err.message) || tr('project.boardRefreshFailed', 'Board refresh failed');
+            render();
+            scheduleBoardRefresh();
+            return null;
+        });
+    }
+
+    function scheduleBoardRefresh() {
+        if (state.boardTimer) {
+            window.clearTimeout(state.boardTimer);
+            state.boardTimer = null;
+        }
+        if (!state.authenticated || state.currentView !== 'board') {
+            return;
+        }
+        state.boardTimer = window.setTimeout(function() {
+            state.boardTimer = null;
+            if (state.authenticated && state.currentView === 'board') {
+                loadBoard({ silent: true });
+            }
+        }, BOARD_REFRESH_INTERVAL_MS);
+    }
+
+    function openBoard() {
+        resetWorkstreamWizard();
+        resetTaskWizard();
+        state.currentView = 'board';
+        state.selectedTaskId = '';
+        state.selectedSessionId = '';
+        state.error = '';
+        render();
+        loadBoard();
+    }
+
+    function toggleBoardWorktrees(projectId) {
+        if (!projectId) {
+            return;
+        }
+        state.boardExpanded[projectId] = !state.boardExpanded[projectId];
+        render();
+    }
+
     function renderMain() {
         if (!state.snapshot) {
             return '<div class="project-empty-state">' + escapeHTML(tr('project.empty', 'No project data yet.')) + '</div>';
+        }
+        if (state.currentView === 'board') {
+            return renderBoard();
         }
         if (state.currentView === 'workstream') {
             return renderWorkstreamBoard();
@@ -4421,6 +4636,19 @@
         panel.querySelectorAll('[data-open-approvals]').forEach(function(node) {
             node.addEventListener('click', openApprovals);
         });
+        panel.querySelectorAll('[data-open-board]').forEach(function(node) {
+            node.addEventListener('click', openBoard);
+        });
+        panel.querySelectorAll('[data-board-refresh]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                loadBoard();
+            });
+        });
+        panel.querySelectorAll('[data-board-worktrees]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                toggleBoardWorktrees(node.getAttribute('data-board-worktrees'));
+            });
+        });
         panel.querySelectorAll('[data-project-history]').forEach(function(node) {
             node.addEventListener('click', function() {
                 openProjectHistory(node.getAttribute('data-project-history'));
@@ -4669,6 +4897,10 @@
         if (!panel) {
             return;
         }
+        if (state.currentView !== 'board' && state.boardTimer) {
+            window.clearTimeout(state.boardTimer);
+            state.boardTimer = null;
+        }
         updateBadge();
         if (!state.authenticated) {
             panel.innerHTML = '';
@@ -4695,6 +4927,14 @@
             state.snapshot = null;
             state.error = '';
             state.currentView = 'dashboard';
+            state.boardProjects = [];
+            state.boardError = '';
+            state.boardGeneratedAt = '';
+            state.boardExpanded = {};
+            if (state.boardTimer) {
+                window.clearTimeout(state.boardTimer);
+                state.boardTimer = null;
+            }
             render();
             return;
         }

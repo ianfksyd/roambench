@@ -6795,3 +6795,190 @@ button.tab-action:focus-visible {
         flex-direction: column;
     }
 }
+
+/* --- F1 status board (task card C3) --- */
+
+.board-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+}
+
+.board-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+    border-radius: 8px;
+    background: var(--glass-card, rgba(255, 255, 255, 0.04));
+    backdrop-filter: blur(18px);
+}
+
+.board-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.board-card-name {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.board-card-task {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.board-card-task-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
+.board-card-task-phase {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 12px;
+}
+
+.board-card-task-empty {
+    color: rgba(255, 255, 255, 0.46);
+    font-size: 13px;
+}
+
+.board-card-activity {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 12px;
+}
+
+.board-card-activity-time {
+    font-size: 11px;
+}
+
+.board-card-activity-summary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.board-git-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.board-git-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    padding: 2px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    color: inherit;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1.6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.board-git-dirty {
+    border-color: rgba(216, 164, 75, 0.45);
+    color: var(--tone-warning, #d8a44b);
+}
+
+button.board-git-worktrees {
+    cursor: pointer;
+}
+
+button.board-git-worktrees:hover {
+    border-color: rgba(98, 176, 255, 0.45);
+    background: rgba(98, 176, 255, 0.12);
+}
+
+.board-worktree-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.board-worktree-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.board-worktree-path {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+}
+
+.board-worktree-branch,
+.board-worktree-sha {
+    color: rgba(255, 255, 255, 0.55);
+    font-family: monospace;
+}
+
+.board-git-error {
+    color: var(--tone-danger, #df6a6a);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.board-inline-error {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border: 1px solid rgba(223, 106, 106, 0.4);
+    border-radius: 8px;
+    background: rgba(223, 106, 106, 0.12);
+    color: var(--tone-danger, #df6a6a);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.board-refreshing {
+    color: rgba(255, 255, 255, 0.46);
+    font-size: 11px;
+}
+
+@media (max-width: 860px) {
+    .board-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .board-card,
+    .board-git-row,
+    .board-worktree-row {
+        max-width: 100%;
+        min-width: 0;
+    }
+}

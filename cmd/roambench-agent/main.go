@@ -28,6 +28,12 @@ func main() {
 		cmdCheckpoint()
 	case "notify":
 		cmdNotify()
+	case "claim":
+		cmdClaim(os.Args[2:])
+	case "heartbeat":
+		cmdHeartbeat(os.Args[2:])
+	case "release":
+		cmdRelease(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("roambench-agent " + version)
 	case "help", "--help", "-h":
@@ -40,19 +46,30 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `Usage: roambench-agent <command> [flags]
+	fmt.Fprintln(stderrTarget, `Usage: roambench-agent <command> [flags]
 
 Commands:
   status                          Show current task and phase
+  claim --runtime-id <id> --agent-label <l>
+                                  Claim the next dispatch-ready task (204 = no task)
+  heartbeat --lease-id <id> [--interval <d>]
+                                  Renew a claim lease once, or loop every <interval>
+  release --lease-id <id> --outcome done|failed|released
+                                  Close a claim lease and report the outcome
   artifact --kind <k> --outcome <o> [--label <l>] [--value <v>] [--file <f>]
                                   Submit an artifact for the current phase
   checkpoint --reason <r>         Request human review
   notify --title <t> [--body <b>] Send a terminal notification (OSC 777)
   version                         Print version
 
+Claim flags (all accept --json for machine-readable output):
+  claim     --server <url> --token <t> --runtime-id <id> --agent-label <l> [--json]
+  heartbeat --server <url> --token <t> --lease-id <id> [--interval 60s] [--json]
+  release   --server <url> --token <t> --lease-id <id> --outcome <o> [--json]
+
 Environment:
-  ROAMBENCH_URL    Base URL (e.g. http://localhost:3000)
-  ROAMBENCH_TOKEN  Agent bearer token`)
+  ROAMBENCH_URL    Base URL (e.g. http://localhost:3000); --server overrides
+  ROAMBENCH_TOKEN  Agent bearer token; --token overrides and ROAMBENCH_AGENT_TOKEN works too`)
 }
 
 func env(key, fallback string) string {
@@ -79,8 +96,7 @@ func token() string {
 }
 
 func fatal(msg string) {
-	fmt.Fprintln(os.Stderr, "error: "+msg)
-	os.Exit(1)
+	fatalCode(1, msg)
 }
 
 func flag(args []string, name string) string {
@@ -265,5 +281,302 @@ func cmdNotify() {
 		fmt.Printf("\033]777;notify;%s;%s\007", title, body)
 	} else {
 		fmt.Printf("\033]777;notify;%s;\007", title)
+	}
+}
+
+// ---- Claim / heartbeat / release (K5, WS-20261015-001 task card C6) ----
+
+// claimOverrides carries the per-invocation flags that differ from the
+// legacy status/artifact commands: --server and --token override the
+// environment, and --json switches to machine-readable output.
+type claimOverrides struct {
+	server string
+	token  string
+	json   bool
+}
+
+func parseOverrides(args []string) claimOverrides {
+	return claimOverrides{
+		server: flag(args, "--server"),
+		token:  flag(args, "--token"),
+		json:   hasFlag(args, "--json"),
+	}
+}
+
+func hasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == name || strings.HasPrefix(a, name+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+// claimBaseURL resolves the server base URL for claim commands.
+func claimBaseURL(o claimOverrides) string {
+	u := o.server
+	if u == "" {
+		u = env("ROAMBENCH_URL", "")
+	}
+	if u == "" {
+		fatal("server URL is required: pass --server or set ROAMBENCH_URL")
+	}
+	return strings.TrimRight(u, "/")
+}
+
+// claimToken resolves the agent bearer token for claim commands.
+// ROAMBENCH_AGENT_TOKEN is accepted as a fallback so a Hermes-side
+// environment variable does not have to be renamed.
+func claimToken(o claimOverrides) string {
+	t := o.token
+	if t == "" {
+		t = env("ROAMBENCH_TOKEN", "")
+	}
+	if t == "" {
+		t = env("ROAMBENCH_AGENT_TOKEN", "")
+	}
+	if t == "" {
+		fatal("agent token is required: pass --token or set ROAMBENCH_TOKEN / ROAMBENCH_AGENT_TOKEN")
+	}
+	return t
+}
+
+// claimAPIPost issues a POST against the claim API with retries on
+// transport errors. Status codes are returned to the caller for handling:
+// 200/201 = ok, 204 = no task, 401 = bad token, 404 = lease gone,
+// 5xx = server-side problem. Only network/transport failures are retried;
+// HTTP error statuses are answered once by the server and never retried.
+func claimAPIPost(o claimOverrides, path string, payload interface{}) (int, []byte, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return 0, nil, err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			// Exponential backoff: 1s, 2s before the 2nd/3rd try.
+			time.Sleep(time.Duration(1<<(i-1)) * time.Second)
+		}
+		req, err := http.NewRequest(http.MethodPost, claimBaseURL(o)+path, bytes.NewReader(data))
+		if err != nil {
+			return 0, nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+claimToken(o))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, body, nil
+	}
+	return 0, nil, lastErr
+}
+
+// printClaimResult prints a claim response either as JSON or human-readable.
+func printClaimResult(asJSON bool, body []byte) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		fatal("invalid JSON response from server: " + err.Error())
+	}
+	if asJSON {
+		out, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Println(string(out))
+		return
+	}
+	fmt.Printf("Task:    %s\n", strOr(payload["title"], payload["taskId"]))
+	fmt.Printf("ID:      %s\n", payload["taskId"])
+	fmt.Printf("Lease:   %s (expires %s, ttl %vs)\n", payload["leaseId"], payload["leaseExpiresAt"], payload["leaseTtlSeconds"])
+	if v, _ := payload["state"].(string); v != "" {
+		fmt.Printf("State:   %s\n", v)
+	}
+	if v, _ := payload["currentPhase"].(string); v != "" {
+		fmt.Printf("Phase:   %s\n", v)
+	}
+	if v, _ := payload["nextStep"].(string); v != "" {
+		fmt.Printf("Next:    %s\n", v)
+	}
+	if missing, ok := payload["missingEvidence"].([]interface{}); ok && len(missing) > 0 {
+		fmt.Printf("Missing: %v\n", missing)
+	}
+}
+
+func strOr(values ...interface{}) string {
+	for _, v := range values {
+		if s, _ := v.(string); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// exitCodeFor maps non-retryable HTTP error statuses onto exit codes so a
+// calling script can branch (401/404 are distinct failure modes).
+const (
+	exitUnauthorized = 3 // 401: token invalid
+	exitLeaseGone    = 4 // 404: lease expired, released or unknown
+)
+
+func fatalCode(exitCode int, msg string) {
+	fmt.Fprintln(stderrTarget, "error: "+msg)
+	osExit(exitCode)
+}
+
+// Indirection points so tests can capture exit codes and stderr without
+// ending the test process.
+var osExit = os.Exit
+
+var stderrTarget io.Writer = os.Stderr
+
+// cmdClaim claims the next dispatch-ready task.
+func cmdClaim(args []string) {
+	o := parseOverrides(args)
+	runtimeID := flag(args, "--runtime-id")
+	agentLabel := flag(args, "--agent-label")
+	if runtimeID == "" {
+		fatal("--runtime-id is required")
+	}
+	if agentLabel == "" {
+		fatal("--agent-label is required")
+	}
+
+	status, body, err := claimAPIPost(o, "/api/agent/v1/claim", map[string]string{
+		"runtimeId":  runtimeID,
+		"agentLabel": agentLabel,
+	})
+	if err != nil {
+		fatal("network error after 3 attempts: " + err.Error())
+	}
+	switch status {
+	case http.StatusOK:
+		printClaimResult(o.json, body)
+	case http.StatusNoContent:
+		// Silent in both modes except a stable machine-readable marker.
+		if o.json {
+			fmt.Println(`{"claimed":false}`)
+		} else {
+			fmt.Println("no-task")
+		}
+		return
+	case http.StatusUnauthorized:
+		fatalCode(exitUnauthorized, "agent token rejected (HTTP 401): the token is invalid or was regenerated; get a fresh one via POST /api/project-control/agent-token and update ROAMBENCH_AGENT_TOKEN")
+	default:
+		fatal(fmt.Sprintf("HTTP %d: %s", status, strings.TrimSpace(string(body))))
+	}
+}
+
+// cmdHeartbeat renews a lease once, or loops every --interval until the
+// process is interrupted.
+func cmdHeartbeat(args []string) {
+	o := parseOverrides(args)
+	leaseID := flag(args, "--lease-id")
+	interval := flag(args, "--interval")
+	if leaseID == "" {
+		fatal("--lease-id is required")
+	}
+
+	once := func() (int, []byte, error) {
+		return claimAPIPost(o, "/api/agent/v1/heartbeat", map[string]string{"leaseId": leaseID})
+	}
+	printHeartbeat := func(status int, body []byte) {
+		var payload map[string]interface{}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			fatal("invalid JSON response from server: " + err.Error())
+		}
+		if o.json {
+			out, _ := json.MarshalIndent(payload, "", "  ")
+			fmt.Println(string(out))
+			return
+		}
+		fmt.Printf("Lease %s renewed until %s\n", payload["leaseId"], payload["leaseExpiresAt"])
+	}
+
+	if interval == "" {
+		status, body, err := once()
+		if err != nil {
+			fatal("network error after 3 attempts: " + err.Error())
+		}
+		handleHeartbeatStatus(status, body, printHeartbeat)
+		return
+	}
+
+	d, err := time.ParseDuration(interval)
+	if err != nil || d <= 0 {
+		fatal("--interval must be a positive duration (e.g. 60s)")
+	}
+	// Loop mode: heartbeat immediately, then every interval. The lease TTL
+	// is 120s server-side, so the interval must stay well below that.
+	fmt.Fprintf(os.Stderr, "heartbeat loop started (interval %s, lease ttl 120s); stop with Ctrl+C\n", d)
+	for {
+		status, body, hbErr := once()
+		if hbErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: network error after 3 attempts: %v\n", hbErr)
+		} else {
+			handleHeartbeatStatus(status, body, printHeartbeat)
+		}
+		time.Sleep(d)
+	}
+}
+
+// handleHeartbeatStatus interprets one heartbeat response. 200 prints the
+// renewal; 401/404 exit with a distinct message and exit code (in loop mode
+// the lease is unrecoverable: expired leases cannot be renewed).
+func handleHeartbeatStatus(status int, body []byte, printOK func(int, []byte)) {
+	switch status {
+	case http.StatusOK:
+		printOK(status, body)
+	case http.StatusUnauthorized:
+		fatalCode(exitUnauthorized, "agent token rejected (HTTP 401): the token is invalid or was regenerated")
+	case http.StatusNotFound:
+		fatalCode(exitLeaseGone, "lease expired or no longer active (HTTP 404): the lease is gone; re-claim the task with `roambench-agent claim` and continue with the new leaseId")
+	default:
+		fatal(fmt.Sprintf("HTTP %d: %s", status, strings.TrimSpace(string(body))))
+	}
+}
+
+// cmdRelease closes a lease with an explicit outcome.
+func cmdRelease(args []string) {
+	o := parseOverrides(args)
+	leaseID := flag(args, "--lease-id")
+	outcome := flag(args, "--outcome")
+	if leaseID == "" {
+		fatal("--lease-id is required")
+	}
+	switch outcome {
+	case "done", "failed", "released":
+	default:
+		fatal("--outcome must be one of done|failed|released")
+	}
+
+	status, body, err := claimAPIPost(o, "/api/agent/v1/release", map[string]string{
+		"leaseId": leaseID,
+		"outcome": outcome,
+	})
+	if err != nil {
+		fatal("network error after 3 attempts: " + err.Error())
+	}
+	switch status {
+	case http.StatusOK:
+		var payload map[string]interface{}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			fatal("invalid JSON response from server: " + err.Error())
+		}
+		if o.json {
+			out, _ := json.MarshalIndent(payload, "", "  ")
+			fmt.Println(string(out))
+			return
+		}
+		fmt.Printf("Released: task %s outcome %s (dispatchState -> %s)\n",
+			payload["taskId"], payload["outcome"], payload["dispatchState"])
+	case http.StatusUnauthorized:
+		fatalCode(exitUnauthorized, "agent token rejected (HTTP 401): the token is invalid or was regenerated")
+	case http.StatusNotFound:
+		fatalCode(exitLeaseGone, "lease expired or no longer active (HTTP 404): nothing to release; re-claim with `roambench-agent claim` if the work is still needed")
+	default:
+		fatal(fmt.Sprintf("HTTP %d: %s", status, strings.TrimSpace(string(body))))
 	}
 }
