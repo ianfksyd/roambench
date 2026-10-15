@@ -767,6 +767,107 @@
       font: 11px/1.7 var(--mono);
       font-variant-numeric: tabular-nums;
     }
+
+    /* v3.3：项目详情与共享接管筛选。 */
+    .project-open {
+      padding: 0;
+      border: 0;
+      color: inherit;
+      background: transparent;
+      font: inherit;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+    .project-open:hover { color: var(--accent); }
+    .project-heading .project-open {
+      display: inline-flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .gantt-project .gantt-label { background: var(--bg); }
+    .gantt-project .project-open { min-height: 34px; }
+    .project-mode-filters {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 0 0 14px;
+    }
+    .project-mode-pill {
+      min-height: 32px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+    }
+    .project-mode-pill[aria-pressed="true"] {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: #23312d;
+    }
+    .project-dialog { width: 840px; }
+    .project-title-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .project-mode-toggle {
+      min-height: 32px;
+      border: 1px solid var(--muted);
+      color: var(--muted);
+      background: transparent;
+    }
+    .project-mode-toggle.is-managed {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: #23312d;
+    }
+    .project-stats,
+    .project-mono { font: 12px/1.8 var(--mono); }
+    .project-metrics {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+    .project-metrics > .info-card { min-width: 0; }
+    .project-activity-bar {
+      display: flex;
+      width: 100%;
+      height: 8px;
+      margin: 14px 0 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #4d4f55;
+    }
+    .project-activity-segment {
+      flex: 0 0 auto;
+      height: 8px;
+    }
+    .project-activity-legend { overflow-wrap: anywhere; }
+    .project-issues { margin: 0; padding: 0; list-style: none; }
+    .project-issue {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 0;
+    }
+    .project-issue + .project-issue { border-top: 1px solid var(--border); }
+    .project-issue-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .project-ghost { flex: 0 0 auto; background: transparent; }
+    .project-clear { color: var(--accent); }
+    @media (max-width: 700px) {
+      .project-metrics { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    }
+    @media (max-width: 480px) {
+      .project-dialog .dialog-header { align-items: flex-start; gap: 8px; }
+      .project-dialog .dialog-body { padding: 14px; }
+      .project-dialog .info-card { padding: 12px; }
+      .project-stats { overflow-wrap: anywhere; }
+      .project-issue { flex-wrap: wrap; gap: 8px; }
+      .project-issue-text { flex-basis: calc(100% - 25px); }
+      .project-ghost { margin-left: 15px; }
+    }
   </style>
 </head>
 <body>
@@ -890,6 +991,22 @@
         aria-label="关闭会话详情" autofocus>关闭</button>
     </header>
     <div class="dialog-body" id="detail-body"></div>
+  </dialog>
+
+  <dialog class="project-dialog" id="project-dialog" aria-labelledby="project-detail-title" aria-describedby="project-detail-stats">
+    <header class="dialog-header">
+      <div>
+        <div class="project-title-row">
+          <h2 id="project-detail-title">项目详情</h2>
+          <button class="btn small project-mode-toggle" id="project-mode-toggle"
+            type="button" aria-pressed="false">人工模式</button>
+        </div>
+        <p class="project-stats" id="project-detail-stats"></p>
+      </div>
+      <button class="btn close-button" type="button" data-close="project-dialog"
+        aria-label="关闭项目详情" autofocus>关闭</button>
+    </header>
+    <div class="dialog-body" id="project-detail-body"></div>
   </dialog>
 
   <dialog class="drawer" id="task-dialog" aria-labelledby="task-drawer-title" aria-describedby="task-drawer-note">
@@ -1256,7 +1373,7 @@
       const gantt = document.querySelector(".gantt-table");
       const filter = $("project-filter");
       const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-      const dialogs = [$("detail-dialog"), $("task-dialog"), $("create-dialog")];
+      const dialogs = [$("detail-dialog"), $("task-dialog"), $("create-dialog"), $("project-dialog")];
       const dialogReturnFocus = new WeakMap();
       const preview = $("session-preview");
       const fineHover = window.matchMedia("(hover: hover) and (pointer: fine)");
@@ -1712,13 +1829,23 @@ function hermesBadge(session) {
         const fragment = document.createDocumentFragment();
         projects.forEach(project => {
           if (filter.value !== "all" && filter.value !== project.id) return;
+          if (!projectModeMatches(project.id)) return;
           const group = visible.filter(s => s.project === project.id);
           const section = el("section", "project-group");
           const title = el("h3", "", project.name);
           title.id = "project-" + project.id;
           section.setAttribute("aria-labelledby", title.id);
           const heading = el("div", "project-heading");
-          heading.append(title, el("span", "project-count", group.length + " 个会话"));
+          const projectOpen = button("", "project-open", project.id, "project-open");
+          projectOpen.setAttribute("aria-haspopup", "dialog");
+          projectOpen.setAttribute("aria-label",
+            project.name + "，" + group.length + " 个会话，查看项目详情");
+          projectOpen.append(
+            document.createTextNode(project.name),
+            el("span", "project-count", group.length + " 个会话")
+          );
+          title.replaceChildren(projectOpen);
+          heading.append(title);
           section.append(heading);
           if (group.length) {
             const list = el("ul", "session-grid");
@@ -1787,10 +1914,16 @@ function hermesBadge(session) {
           const body = el("tbody");
           body.setAttribute("aria-label", project.name);
           const projectRow = el("tr", "gantt-project");
-          const heading = el("th", "", project.name + " · " + group.length + " 个会话");
-          heading.colSpan = 2;
+          const heading = el("th", "gantt-label");
           heading.scope = "rowgroup";
-          projectRow.append(heading);
+          const projectOpen = button(
+            project.name + " · " + group.length + " 个会话",
+            "project-open", project.id, "project-open"
+          );
+          projectOpen.setAttribute("aria-haspopup", "dialog");
+          projectOpen.setAttribute("aria-label", project.name + "，查看项目详情");
+          heading.append(projectOpen);
+          projectRow.append(heading, el("td"));
           body.append(projectRow);
           group.forEach(session => body.append(makeGanttRow(session)));
           gantt.append(body);
@@ -1801,7 +1934,15 @@ function hermesBadge(session) {
 
       function render() {
         hidePreview();
-        const visible = sessions.filter(s => filter.value === "all" || s.project === filter.value);
+        const visible = sessions.filter(s =>
+          (filter.value === "all" || s.project === filter.value) &&
+          projectModeMatches(s.project)
+        );
+        syncProjectModeFilters();
+        if ($("project-dialog").open) {
+          const project = projects.find(p => p.id === $("project-dialog").dataset.project);
+          if (project) renderProjectModal(project);
+        }
         renderWall(visible);
         renderGantt(visible);
         Object.keys(statusLabels).forEach(status => {
@@ -2546,6 +2687,218 @@ function hermesBadge(session) {
           notify("任务 " + taskLabels[task.status] + " · 会话状态独立");
         }
       });
+
+
+      // 项目接管为独立的项目级模拟开关，不改写会话 Hermes 记录。
+      // 两个视图的筛选 pill 共用此 state。
+      const projectViewState = {
+        mode: "all",
+        managed: new Map(projects.map(project => [project.id, true]))
+      };
+
+      const projectActivity = {
+        "roambench": [12, 18, 31, 4],
+        "atlas-api": [7, 24, 38, 6],
+        "fieldnotes": [19, 12, 27, 5],
+        "infra-kit": [4, 22, 16, 8]
+      };
+
+      const projectChanges = {
+        "roambench": [482, 156, 23, "6ea5585", 3, 1],
+        "atlas-api": [327, 91, 17, "8d241bc", 1, 0],
+        "fieldnotes": [614, 208, 29, "a31c902", 2, 1],
+        "infra-kit": [138, 47, 11, "5f02ab7", 0, 0]
+      };
+
+      const projectIssues = {
+        "roambench": {
+          text: "验收连续失败 2 次", status: "exited", session: "rb-ui-tests"
+        },
+        "atlas-api": {
+          text: "心跳失联 5m", status: "detached", session: "atlas-worker"
+        },
+        "fieldnotes": {
+          text: "2 项待审批 · 最久 42m", status: "idle", task: "FN-102"
+        }
+      };
+
+      function projectIsManaged(id) {
+        // 后续新建项目默认接管；筛选与开关读取同一来源。
+        return projectViewState.managed.get(id) !== false;
+      }
+
+      function projectModeMatches(id) {
+        return projectViewState.mode === "all" ||
+          projectIsManaged(id) === (projectViewState.mode === "managed");
+      }
+
+      function syncProjectModeFilters() {
+        document.querySelectorAll('[data-action="project-mode-filter"]').forEach(node => {
+          node.setAttribute("aria-pressed",
+            String(node.dataset.value === projectViewState.mode));
+        });
+      }
+
+      function installProjectModeFilters(panelId) {
+        const controls = el("div", "project-mode-filters");
+        controls.setAttribute("role", "group");
+        controls.setAttribute("aria-label", "按项目接管模式筛选");
+        [
+          ["all", "全部"],
+          ["managed", "接管中"],
+          ["manual", "人工模式"]
+        ].forEach(([value, label]) => {
+          const control = button(
+            label, "project-mode-filter", value, "pill project-mode-pill"
+          );
+          control.setAttribute("aria-pressed",
+            String(projectViewState.mode === value));
+          controls.append(control);
+        });
+        const heading = $(panelId).querySelector(".panel-heading");
+        heading.insertAdjacentElement("afterend", controls);
+      }
+
+      function renderProjectModal(project) {
+        const dialog = $("project-dialog");
+        dialog.dataset.project = project.id;
+        $("project-detail-title").textContent = project.name;
+
+        const managed = projectIsManaged(project.id);
+        const toggle = $("project-mode-toggle");
+        toggle.classList.toggle("is-managed", managed);
+        toggle.textContent = managed ? "接管中" : "人工模式";
+        toggle.setAttribute("aria-pressed", String(managed));
+        toggle.setAttribute("aria-label", project.name + "，" +
+          (managed ? "接管中，切换人工模式" : "人工模式，切换接管"));
+
+        // 累计执行与运行中按完整项目会话现算；待领取按项目任务现算。
+        const group = sessions.filter(session => session.project === project.id);
+        const now = Date.now();
+        const execution = group.reduce((total, session) =>
+          total + durationBreakdown(session, now).execution, 0);
+        const running = group.filter(session => session.status === "active").length;
+        const queued = tasks.filter(task =>
+          task.project === project.id && task.status === "planned").length;
+        $("project-detail-stats").textContent =
+          "累计执行 " + formatDuration(execution) +
+          " · 运行中 " + running + " · 待领取 " + queued;
+
+        const body = $("project-detail-body");
+        body.replaceChildren();
+        const metrics = el("div", "project-metrics");
+        const activity = el("section", "info-card");
+        activity.append(el("h3", "", "活动构成"));
+
+        const counts = projectActivity[project.id] || [0, 0, 0, 0];
+        const labels = ["设计", "测试", "编码", "未分类"];
+        const colors = ["#7170ff", "#d4a72c", "#4ec9b0", "#4d4f55"];
+        const total = counts.reduce((sum, count) => sum + count, 0);
+        const legendText = counts.map((count, index) =>
+          labels[index] + " " + count).join(" · ");
+
+        const bar = el("div", "project-activity-bar");
+        bar.setAttribute("role", "img");
+        bar.setAttribute("aria-label", "活动事件占比：" + legendText + "，非工时");
+        counts.forEach((count, index) => {
+          const segment = el("span", "project-activity-segment");
+          segment.style.width = (total ? count / total * 100 : 0) + "%";
+          segment.style.backgroundColor = colors[index];
+          segment.setAttribute("aria-hidden", "true");
+          bar.append(segment);
+        });
+        activity.append(
+          bar,
+          el("p", "project-mono project-activity-legend", legendText),
+          el("p", "source-note", "事件占比 · 非工时")
+        );
+
+        const changes = el("section", "info-card");
+        const [added, removed, files, base, untracked, binary] =
+          projectChanges[project.id] || [0, 0, 0, "未记录", 0, 0];
+        changes.append(
+          el("h3", "", "代码变更"),
+          el("p", "project-mono",
+            "+" + added + " / −" + removed + " 行 · " +
+            files + " 文件 · 相对 " + base),
+          el("p", "source-note", "未跟踪 " + untracked + " · 二进制 " + binary)
+        );
+        metrics.append(activity, changes);
+        body.append(metrics);
+
+        const issues = el("section", "info-card");
+        issues.append(el("h3", "", "需处理"));
+        const issue = projectIssues[project.id];
+        if (issue) {
+          const list = el("ul", "project-issues");
+          const row = el("li", "project-issue");
+          const action = button(
+            "去处理", "project-handle", project.id, "btn small project-ghost"
+          );
+          action.setAttribute("aria-haspopup", "dialog");
+          action.setAttribute("aria-label", issue.text + "，去处理");
+          row.append(
+            statusDot(issue.status),
+            el("span", "project-issue-text", issue.text),
+            action
+          );
+          list.append(row);
+          issues.append(list);
+        } else {
+          issues.append(el("p", "project-clear", managed
+            ? "无阻断 · 自动接管中"
+            : "无阻断 · 人工模式"));
+        }
+        body.append(issues);
+      }
+
+      function openProjectModal(project) {
+        if (!project || !projects.includes(project)) return;
+        renderProjectModal(project);
+        showDialog($("project-dialog"));
+      }
+
+      $("project-mode-toggle").addEventListener("click", () => {
+        const id = $("project-dialog").dataset.project;
+        const project = projects.find(item => item.id === id);
+        if (!project) return;
+        projectViewState.managed.set(id, !projectIsManaged(id));
+        render();
+        $("filter-announcement").textContent = project.name + " 已切换为" +
+          (projectIsManaged(id) ? "接管中" : "人工模式");
+      });
+
+      document.addEventListener("click", event => {
+        if (!(event.target instanceof Element)) return;
+        const trigger = event.target.closest("[data-action]");
+        if (!trigger) return;
+        const { action, value } = trigger.dataset;
+
+        if (action === "project-open") {
+          openProjectModal(projects.find(project => project.id === value));
+        }
+        if (action === "project-mode-filter") {
+          if (!["all", "managed", "manual"].includes(value)) return;
+          projectViewState.mode = value;
+          render();
+          $("filter-announcement").textContent =
+            trigger.textContent + "，" + $("footer-count").textContent;
+        }
+        if (action === "project-handle") {
+          const issue = projectIssues[value];
+          if (!issue) return;
+          if (issue.session) {
+            const session = sessions.find(item =>
+              item.project === value && item.name === issue.session);
+            if (session) openSession(session.id, value === "atlas-api");
+          } else {
+            openTasks(issue.task || null, value);
+          }
+        }
+      });
+
+      installProjectModeFilters("panel-wall");
+      installProjectModeFilters("panel-gantt");
 
       projectOptions($("task-project"), true, "all");
       syncEntryFields();
