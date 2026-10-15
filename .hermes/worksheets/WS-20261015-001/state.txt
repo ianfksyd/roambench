@@ -1,0 +1,8 @@
+base_sha: 23cf59cff326b6e8d6a1d53efdbd0eb56f2f7e84
+phase: DISPATCHING (C2/C4/C5 并行)
+C0: done (Go 1.22.10, 基线绿)
+C1: done (契约桩提交 23cf59c)
+C2 owned: internal/gitstatus/*, internal/server/project_board*.go
+C4 owned: internal/agentprobe/*, internal/server/agent_probe*.go
+C5 owned: internal/controlplane/claims*.go, internal/server/agent_claims*.go
+front-end 串行队列: C3 -> C7 (project-panel.js)
