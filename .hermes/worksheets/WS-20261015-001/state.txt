@@ -13,3 +13,8 @@ E2E SMOKE (2026-10-15 14:28):
 - /api/agent/v1/task: 410 (废弃生效)
 - /api/agent/v1/claim (无 token): 401; (有效 token, 无 ready 任务): 204
 - 冒烟通过, 临时实例与数据已清理
+
+FINAL (2026-10-15):
+- R1 FAIL (blocker=C7缺失/K4断裂, 2 major) -> FIXER 轮 f2f43d9 -> R2 PASS
+- 全部 9 卡完成, 北极星 E2E 走通 (server 日志链路证据)
+- 已知限制: UI 渲染层建议人工浏览器确认; 3 条 deferred nit (probe锁/nonInteractive死字段/heartbeat测试断言弱)
