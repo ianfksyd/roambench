@@ -787,6 +787,85 @@
     }
     .gantt-project .gantt-label { background: var(--bg); }
     .gantt-project .project-open { min-height: 34px; }
+    /* v3.4：生命周期导航 */
+    .lifecycle-chain {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 0;
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--surface);
+      list-style: none;
+    }
+    .lifecycle-step {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      color: var(--subtle);
+      font: 11px/1.6 var(--mono);
+      white-space: nowrap;
+    }
+    .lifecycle-step.done { color: var(--muted); }
+    .lifecycle-step.done::before { content: "✓"; color: var(--accent); }
+    .lifecycle-step.current {
+      color: var(--text);
+      background: var(--bg);
+      outline: 1px solid var(--accent);
+    }
+    .lifecycle-step.current::before { content: "●"; color: var(--accent); }
+    .lifecycle-arrow { color: var(--subtle); padding: 0 2px; font-size: 10px; }
+    .milestone-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin: 8px 0;
+      font: 11px/1.6 var(--mono);
+    }
+    .milestone {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--muted);
+    }
+    .milestone.done { color: var(--accent); border-color: #37665c; }
+    .milestone.current { color: var(--text); border-color: var(--accent); }
+    .milestone .mark { width: 8px; text-align: center; }
+    .milestone-detail {
+      margin: 6px 0 0;
+      padding: 8px 10px;
+      border-left: 2px solid var(--accent);
+      background: var(--bg);
+      color: var(--muted);
+      font: 11px/1.6 var(--mono);
+    }
+    .next-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 0 0;
+      padding: 9px 12px;
+      border: 1px solid #37665c;
+      border-radius: 5px;
+      background: #23312d;
+      color: var(--text);
+      font: 12px/1.6 var(--mono);
+    }
+    .next-step .actor {
+      padding: 1px 6px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--accent);
+      font: 9px/1.5 var(--mono);
+    }
+    .next-step .actor.human { color: var(--idle); }
     .project-mode-summary {
       padding: 4px 10px;
       border: 1px solid var(--border);
@@ -2729,6 +2808,37 @@ function hermesBadge(session) {
         "infra-kit": [138, 47, 11, "5f02ab7", 0, 0]
       };
 
+      const projectLifecycle = {
+        "roambench": {
+          chain: ["已委派", "侦察中", "规划中", "待确认", "执行中·M2"],
+          current: 4,
+          milestones: [["M1 骨架", "done"], ["M2 看板", "current"], ["M3 接管", "todo"]],
+          acceptance: "M2 验收：状态墙/时间轴渲染 · go test ./... 绿 · 375px 可扫",
+          next: { actor: "Hermes", text: "领取任务 RB-302 · 进入 M2 编码" }
+        },
+        "atlas-api": {
+          chain: ["已委派", "侦察中", "规划中", "待确认", "执行中·M1", "待里程碑验收"],
+          current: 5,
+          milestones: [["M1 认证", "current"], ["M2 限流", "todo"], ["M3 文档", "todo"]],
+          acceptance: "M1 验收：认证契约通过 · 刷新令牌边界检查 · 演示可运行",
+          next: { actor: "human", text: "接受 M1 成果并推进 M2" }
+        },
+        "fieldnotes": {
+          chain: ["已委派", "侦察中", "规划中", "待确认", "执行中·M1"],
+          current: 4,
+          milestones: [["M1 编辑器", "current"], ["M2 同步", "todo"]],
+          acceptance: "M1 验收：编辑器基本操作 · 冲突处理单测",
+          next: { actor: "human", text: "批准 2 项待审批任务（最久 42m）" }
+        },
+        "infra-kit": {
+          chain: ["已委派", "侦察中", "规划中"],
+          current: 2,
+          milestones: [],
+          acceptance: "",
+          next: { actor: "Hermes", text: "侦察仓库结构 · 产出项目 brief" }
+        }
+      };
+
       const projectIssues = {
         "roambench": {
           text: "验收连续失败 2 次", status: "exited", session: "rb-ui-tests"
@@ -2796,6 +2906,41 @@ function hermesBadge(session) {
 
         const body = $("project-detail-body");
         body.replaceChildren();
+
+        // v3.4 生命周期导航：状态链 + 里程碑线 + 下一步
+        const life = projectLifecycle[project.id];
+        if (life) {
+          const chain = el("ol", "lifecycle-chain");
+          chain.setAttribute("aria-label", "项目生命周期");
+          life.chain.forEach((label, index) => {
+            if (index) chain.append(el("span", "lifecycle-arrow", "→"));
+            const step = el("li", "lifecycle-step" +
+              (index < life.current ? " done" : index === life.current ? " current" : ""));
+            step.append(document.createTextNode(label));
+            chain.append(step);
+          });
+          body.append(chain);
+
+          if (life.milestones.length) {
+            const ms = el("section", "info-card");
+            ms.append(el("h3", "", "里程碑"));
+            const line = el("div", "milestone-line");
+            life.milestones.forEach(([label, state]) => {
+              const chip = el("span", "milestone" +
+                (state === "done" ? " done" : state === "current" ? " current" : ""));
+              chip.append(el("span", "mark",
+                state === "done" ? "✓" : state === "current" ? "●" : "○"));
+              chip.append(document.createTextNode(label));
+              line.append(chip);
+            });
+            ms.append(line);
+            if (life.acceptance) {
+              ms.append(el("p", "milestone-detail", life.acceptance));
+            }
+            body.append(ms);
+          }
+        }
+
         const metrics = el("div", "project-metrics");
         const activity = el("section", "info-card");
         activity.append(el("h3", "", "活动构成"));
@@ -2835,6 +2980,15 @@ function hermesBadge(session) {
         );
         metrics.append(activity, changes);
         body.append(metrics);
+
+        if (life && life.next) {
+          const nxt = el("div", "next-step");
+          nxt.setAttribute("role", "status");
+          const actor = el("span", "actor" + (life.next.actor === "human" ? " human" : ""),
+            life.next.actor === "human" ? "你" : "Hermes");
+          nxt.append(actor, document.createTextNode("下一步：" + life.next.text));
+          body.append(nxt);
+        }
 
         const issues = el("section", "info-card");
         issues.append(el("h3", "", "需处理"));
