@@ -22,29 +22,22 @@ func (s *Server) tokenRequired(next func(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-func (s *Server) handleAgentClaim(w http.ResponseWriter, r *http.Request, username string) {
-	s.writeStub(w, "POST /api/agent/v1/claim")
-}
-
-func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request, username string) {
-	s.writeStub(w, "POST /api/agent/v1/heartbeat")
-}
-
-func (s *Server) handleAgentRelease(w http.ResponseWriter, r *http.Request, username string) {
-	s.writeStub(w, "POST /api/agent/v1/release")
-}
+// handleAgentClaim / handleAgentHeartbeat / handleAgentRelease live in
+// agent_claims.go (C5). handleProjectControlAgents is in agent_probe.go (C4).
+// handleProjectControlBoard body is served by serveProjectControlBoard in
+// project_board.go (C2, K2).
 
 func (s *Server) handleProjectControlBoard(w http.ResponseWriter, r *http.Request) {
-	s.writeStub(w, "GET /api/project-control/board")
+	s.serveProjectControlBoard(w, r)
 }
 
-func (s *Server) handleProjectControlAgents(w http.ResponseWriter, r *http.Request) {
-	s.writeStub(w, "GET /api/project-control/agents")
-}
+// handleProjectControlAgents is implemented in agent_probe.go (C4, K3).
+// The 501 stub body was removed here to avoid a duplicate declaration; the
+// route registration in server.go is unchanged.
 
 func (s *Server) writeStub(w http.ResponseWriter, route string) {
 	writeJSON(w, http.StatusNotImplemented, map[string]string{
-		"error":  "not implemented yet (WS-20261015-001 contract stub)",
-		"route":  route,
+		"error": "not implemented yet (WS-20261015-001 contract stub)",
+		"route": route,
 	})
 }

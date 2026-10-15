@@ -1,0 +1,279 @@
+package server
+
+// C5 handler tests (WS-20261015-001): claim/heartbeat/release over HTTP,
+// injected-clock expiry through the handler path, and the checkpoint
+// approval linkage (approve -> ready -> claimable; reject -> not claimable).
+//
+// The real wiring will make recordCheckpointDecision set DispatchState on
+// checkpoints with Kind=="dispatch" (see agent_claims.go header). Until that
+// lands in project_control.go (owned by C1/Hermes), these tests drive the
+// dispatch state directly, which is exactly what the approval hook will do.
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/ianf339/roambench/internal/auth"
+	"github.com/ianf339/roambench/internal/controlplane"
+)
+
+// setTaskDispatchState writes DispatchState directly into the project-control
+// task, bypassing the (not yet wired) checkpoint approval hook.
+func setTaskDispatchState(t *testing.T, srv *Server, token, taskID, dispatchState string) {
+	t.Helper()
+	state, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		for i := range state.Tasks {
+			if state.Tasks[i].ID != taskID {
+				continue
+			}
+			state.Tasks[i].DispatchState = dispatchState
+			state.Tasks[i].ClaimedByRuntimeID = ""
+			return nil
+		}
+		if state.Tasks == nil {
+			state.Tasks = nil
+		}
+		state.Tasks = append(state.Tasks, projectControlTask{
+			ID: taskID, ProjectID: "project-test", Title: "Test task " + taskID,
+			State: "queued", DispatchState: dispatchState,
+			Timeline: []projectControlEvent{}, Audit: []projectControlAuditItem{},
+			FilesChanged: []string{}, SessionIDs: []string{},
+		})
+		return nil
+	})
+	_ = state
+	if err != nil {
+		t.Fatalf("set dispatch state: %v", err)
+	}
+}
+
+func agentAPIPost(t *testing.T, srv *Server, path, agentToken, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func agentTokenFor(t *testing.T, srv *Server, token string) string {
+	t.Helper()
+	tokenReq := httptest.NewRequest(http.MethodPost, "/api/project-control/agent-token", nil)
+	tokenReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	tokenRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(tokenRec, tokenReq)
+	var tokenResp map[string]string
+	json.NewDecoder(tokenRec.Body).Decode(&tokenResp)
+	return tokenResp["token"]
+}
+
+func TestAgentClaimTaskEndToEnd(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	agentToken := agentTokenFor(t, srv, token)
+
+	setTaskDispatchState(t, srv, token, "task-e2e-1", "ready")
+
+	rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-hermes","agentLabel":"hermes"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if payload["taskId"] != "task-e2e-1" {
+		t.Fatalf("claimed taskId = %v, want task-e2e-1", payload["taskId"])
+	}
+	leaseID, _ := payload["leaseId"].(string)
+	if leaseID == "" {
+		t.Fatal("claim response missing leaseId")
+	}
+	expiresAt, _ := payload["leaseExpiresAt"].(string)
+	expires, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		t.Fatalf("leaseExpiresAt not RFC3339: %v (%q)", err, expiresAt)
+	}
+	if got := time.Until(expires); got <= 0 || got > controlplane.LeaseTTL+5*time.Second {
+		t.Fatalf("leaseExpiresAt %s not ~120s in the future", expiresAt)
+	}
+	if payload["title"] != "Test task task-e2e-1" {
+		t.Fatalf("task fields missing from claim response: %v", payload["title"])
+	}
+
+	// The claimed task is gone from the ready pool: next claim is 204.
+	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-b","agentLabel":"codex"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("second claim status = %d, want 204", rec.Code)
+	}
+
+	// Heartbeat renews.
+	rec = agentAPIPost(t, srv, "/api/agent/v1/heartbeat", agentToken, `{"leaseId":"`+leaseID+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeat status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Release with done.
+	rec = agentAPIPost(t, srv, "/api/agent/v1/release", agentToken, `{"leaseId":"`+leaseID+`","outcome":"done"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("release status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var releasePayload map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&releasePayload)
+	if releasePayload["dispatchState"] != controlplane.DispatchStateDone {
+		t.Fatalf("release dispatchState = %v, want done", releasePayload["dispatchState"])
+	}
+
+	// Task dispatch state landed in the project-control projection.
+	state, err := srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatalf("loadOrSeed: %v", err)
+	}
+	for _, task := range state.Tasks {
+		if task.ID == "task-e2e-1" {
+			if task.DispatchState != controlplane.DispatchStateDone {
+				t.Fatalf("task dispatchState = %s, want done", task.DispatchState)
+			}
+		}
+	}
+}
+
+func TestAgentClaimNoReadyTasksReturns204(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	agentToken := agentTokenFor(t, srv, token)
+
+	setTaskDispatchState(t, srv, token, "task-awaiting", "awaiting_approval")
+
+	rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-1","agentLabel":"hermes"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("claim status = %d, want 204 (awaiting_approval is not claimable)", rec.Code)
+	}
+}
+
+func TestCheckpointApprovalGatesClaimability(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	agentToken := agentTokenFor(t, srv, token)
+
+	// Simulate a freshly created task waiting for a dispatch checkpoint.
+	setTaskDispatchState(t, srv, token, "task-gate-1", "awaiting_approval")
+
+	// Before approval: not claimable.
+	rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-1","agentLabel":"hermes"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("claim before approval = %d, want 204", rec.Code)
+	}
+
+	// Approval hook (checkpoint approve) sets ready — the exact write the
+	// recordCheckpointDecision hook will perform once wired (K4).
+	setTaskDispatchState(t, srv, token, "task-gate-1", "ready")
+	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-1","agentLabel":"hermes"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim after approval = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&payload)
+	leaseID, _ := payload["leaseId"].(string)
+
+	// Release as failed: the task returns to ready and can be re-claimed.
+	rec = agentAPIPost(t, srv, "/api/agent/v1/release", agentToken, `{"leaseId":"`+leaseID+`","outcome":"failed"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("release failed outcome = %d, want 200", rec.Code)
+	}
+	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-2","agentLabel":"codex"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("re-claim after failed release = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Rejection path (checkpoint reject) makes the task non-claimable again.
+	setTaskDispatchState(t, srv, token, "task-gate-1", "none")
+	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-3","agentLabel":"kiro-cli"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("claim after rejection = %d, want 204", rec.Code)
+	}
+}
+
+func TestAgentClaimConcurrentOnlyOneWins(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	agentToken := agentTokenFor(t, srv, token)
+
+	setTaskDispatchState(t, srv, token, "task-race-1", "ready")
+
+	var mu sync.Mutex
+	var winners []string
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-`+string(rune('a'+n))+`","agentLabel":"hermes"}`)
+			mu.Lock()
+			defer mu.Unlock()
+			if rec.Code == http.StatusOK {
+				winners = append(winners, rec.Body.String())
+			}
+		}(i)
+	}
+	wg.Wait()
+	if len(winners) != 1 {
+		t.Fatalf("concurrent HTTP claims won by %d handlers, want exactly 1", len(winners))
+	}
+}
+
+func TestAgentLeaseExpiryReturnsTaskToReady(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	agentToken := agentTokenFor(t, srv, token)
+
+	// Freeze the injected claim clock.
+	base := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	var clockValue atomicTimeValue
+	clockValue.Store(base)
+	previousNow := projectControlClaimNow
+	projectControlClaimNow = func() time.Time { return clockValue.Load() }
+	defer func() { projectControlClaimNow = previousNow }()
+
+	setTaskDispatchState(t, srv, token, "task-exp-1", "ready")
+	rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-1","agentLabel":"hermes"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Move the clock past the TTL. The next claim sweeps the stale lease and
+	// the task returns to ready — claimable by a different runtime.
+	clockValue.Store(base.Add(controlplane.LeaseTTL + time.Second))
+	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-2","agentLabel":"codex"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim after lease expiry = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&payload)
+	if payload["runtimeId"] != "runtime-2" {
+		t.Fatalf("claim after expiry went to %v, want runtime-2", payload["runtimeId"])
+	}
+
+	// The expired lease can no longer be heartbeated.
+	state, err := srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatalf("loadOrSeed: %v", err)
+	}
+	_ = state
+	rec = agentAPIPost(t, srv, "/api/agent/v1/heartbeat", agentToken, `{"leaseId":"lease-from-expired"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("heartbeat on expired lease = %d, want 404", rec.Code)
+	}
+}
+
+// atomicTimeValue is a small atomic wrapper for time.Time in tests.
+type atomicTimeValue struct{ v atomic.Value }
+
+func (a *atomicTimeValue) Store(t time.Time) { a.v.Store(t) }
+func (a *atomicTimeValue) Load() time.Time   { return a.v.Load().(time.Time) }

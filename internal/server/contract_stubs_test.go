@@ -11,9 +11,11 @@ import (
 	"github.com/ianf339/roambench/internal/auth"
 )
 
-// C1 contract stub tests (WS-20261015-001).
-
-func TestContractStubRoutesReturn501(t *testing.T) {
+// C2/C4/C5 (WS-20261015-001) implemented all contract routes. No 501 stubs
+// remain; this test now asserts the live semantics of every route added in
+// C1: board -> 200, agents?refresh=1 -> 200, claim (no ready tasks) -> 204,
+// heartbeat/release with unknown lease -> 404.
+func TestContractRoutesLive(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 
@@ -26,28 +28,37 @@ func TestContractStubRoutesReturn501(t *testing.T) {
 	json.NewDecoder(tokenRec.Body).Decode(&tokenResp)
 	agentToken := tokenResp["token"]
 
-	cases := []struct {
-		method, path, auth string
-		body               string
+	// board route is now live (C2, K2): expect 200 with a valid session.
+	boardRoutes := []struct {
+		method, path string
+		want         int
 	}{
-		{http.MethodGet, "/api/project-control/board", "session", ""},
-		{http.MethodGet, "/api/project-control/agents?refresh=1", "session", ""},
-		{http.MethodPost, "/api/agent/v1/claim", "agent", `{"runtimeId":"r1","agentLabel":"hermes"}`},
-		{http.MethodPost, "/api/agent/v1/heartbeat", "agent", `{"leaseId":"l1"}`},
-		{http.MethodPost, "/api/agent/v1/release", "agent", `{"leaseId":"l1","outcome":"done"}`},
+		{http.MethodGet, "/api/project-control/board", http.StatusOK},
 	}
-	for _, tc := range cases {
-		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
-		switch tc.auth {
-		case "session":
-			req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
-		case "agent":
-			req.Header.Set("Authorization", "Bearer "+agentToken)
-		}
+	for _, tc := range boardRoutes {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 		rec := httptest.NewRecorder()
 		srv.mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotImplemented {
-			t.Errorf("%s %s = %d, want 501", tc.method, tc.path, rec.Code)
+		if rec.Code != tc.want {
+			t.Errorf("%s %s = %d, want %d", tc.method, tc.path, rec.Code, tc.want)
+		}
+	}
+	claimCases := []struct {
+		method, path, body string
+		want               int
+	}{
+		{http.MethodPost, "/api/agent/v1/claim", `{"runtimeId":"r1","agentLabel":"hermes"}`, http.StatusNoContent},
+		{http.MethodPost, "/api/agent/v1/heartbeat", `{"leaseId":"l1"}`, http.StatusNotFound},
+		{http.MethodPost, "/api/agent/v1/release", `{"leaseId":"l1","outcome":"done"}`, http.StatusNotFound},
+	}
+	for _, tc := range claimCases {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Authorization", "Bearer "+agentToken)
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s %s = %d, want %d", tc.method, tc.path, rec.Code, tc.want)
 		}
 	}
 }

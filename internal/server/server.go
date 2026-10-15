@@ -131,6 +131,13 @@ func NewServer(
 		}
 	}
 	if s.controlPlaneErr == nil {
+		// Dispatch pipeline (K5, WS-20261015-001): sweep leases left active by
+		// a previous server run; expired tasks return to claimable state.
+		if _, err := s.projectControl.expireStaleClaimsForUser(cfg.Auth.SingleUser); err != nil {
+			log.Printf("dispatch lease sweep deferred: %v", err)
+		}
+	}
+	if s.controlPlaneErr == nil {
 		if err := s.runPendingTaskProjections(context.Background(), cfg.Auth.SingleUser); err != nil {
 			log.Printf("task projection recovery deferred: %v", err)
 		}

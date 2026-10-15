@@ -3149,6 +3149,13 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 					task.RecentSummary = "Task accepted by human operator; execution remains visible for audit."
 					task.NextStep = "Archive or hide accepted work with board filters."
 				}
+				// Dispatch pipeline (K4, WS-20261015-001): approving a dispatch
+				// checkpoint makes the task claimable by agent runtimes.
+				if checkpoint.Kind == "dispatch" {
+					task.DispatchState = "ready"
+					task.RecentSummary = "Dispatch approved by human operator; task is ready to be claimed."
+					task.NextStep = "An agent runtime can now claim this task via /api/agent/v1/claim."
+				}
 			case "reject":
 				if isArchiveOverride {
 					task.ArchiveDecisionID = decision.ID
@@ -3160,6 +3167,13 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 					task.AcceptanceDecisionID = decision.ID
 					task.RecentSummary = "Task rejected during final acceptance and sent back for revision."
 					task.NextStep = "Revise the work, regenerate evidence, and resubmit for acceptance."
+				}
+				// Dispatch pipeline (K4): rejecting a dispatch checkpoint makes
+				// the task unclaimable again.
+				if checkpoint.Kind == "dispatch" {
+					task.DispatchState = "none"
+					task.RecentSummary = "Dispatch rejected by human operator; task cannot be claimed."
+					task.NextStep = "Request a new dispatch checkpoint when the task is ready for agent handoff."
 				}
 			case "reroute":
 				task.State = "blocked"
