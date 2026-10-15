@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>RoamBench · 项目看板 v3</title>
+  <title>RoamBench · 项目看板 v3.1</title>
   <style>
     :root {
       --bg: #1e1e1e;
@@ -32,8 +32,7 @@
       font: 14px/1.5 var(--sans);
       -webkit-font-smoothing: antialiased;
     }
-    button, select, input, textarea { font: inherit; }
-    button, select, input, textarea { color: var(--text); }
+    button, select, input, textarea { font: inherit; color: var(--text); }
     button { cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .45; }
     button:focus-visible, select:focus-visible, input:focus-visible,
@@ -197,44 +196,68 @@
       list-style: none;
     }
     .session-cell {
+      position: relative;
       min-width: 0;
       border: 1px solid var(--border);
       border-radius: 4px;
       background: var(--surface);
-      overflow: hidden;
     }
-    .session-cell:hover { border-color: var(--muted); }
+    .session-cell:hover, .session-cell:focus-within { border-color: var(--muted); }
     .session-open {
       display: block;
       width: 100%;
-      min-height: 86px;
+      min-height: 78px;
       border: 0;
-      padding: 14px 12px 9px;
+      border-radius: 3px;
+      padding: 13px 10px;
       color: var(--text);
       background: transparent;
       text-align: left;
     }
     .session-open:hover { background: var(--hover); }
-    .session-name-row { display: flex; align-items: flex-start; gap: 8px; }
-    .session-name-row .status-dot { margin-top: 5px; }
-    .session-name { min-width: 0; font: 500 12px/1.5 var(--mono); overflow-wrap: anywhere; }
-    .session-meta {
+    .session-name-row {
       display: flex;
-      flex-wrap: wrap;
-      gap: 4px 6px;
-      margin: 8px 0 0 15px;
-      color: var(--muted);
-      font: 11px/1.5 var(--mono);
+      align-items: center;
+      gap: 7px;
+      margin-right: 27px;
+      min-width: 0;
     }
-    .session-meta time { white-space: nowrap; }
-    .cell-footer {
+    .session-name {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: 500 13px/1.5 var(--mono);
+    }
+    .session-meta {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 6px;
-      padding: 0 12px 12px;
+      gap: 4px;
+      min-width: 0;
+      margin-top: 7px;
+      color: var(--muted);
+      font: 10px/1.5 var(--mono);
     }
-    .task-mini { color: var(--subtle); font: 10px/1.5 var(--mono); }
+    .session-state-time {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      white-space: nowrap;
+    }
+    .task-mini {
+      flex: 0 0 auto;
+      padding: 1px 4px;
+      max-width: 48%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--muted);
+      font: 9px/1.5 var(--mono);
+      white-space: nowrap;
+    }
     .hermes-badge, .pill {
       display: inline-flex;
       align-items: center;
@@ -247,6 +270,16 @@
       font: 10px/1.6 var(--mono);
       white-space: nowrap;
     }
+    .hermes-badge {
+      position: absolute;
+      top: 10px;
+      right: 8px;
+      justify-content: center;
+      width: 23px;
+      height: 23px;
+      padding: 0;
+      font-size: 10px;
+    }
     .hermes-badge[data-mode="managed"], .pill.accent {
       color: var(--accent);
       border-color: #37665c;
@@ -255,6 +288,48 @@
     .hermes-badge[data-mode="queued"] { color: var(--idle); border-style: dashed; }
     .hermes-badge[data-mode="unknown"] { border-style: dashed; }
     .hermes-badge:hover { background: var(--hover); }
+
+    .hover-card {
+      position: fixed;
+      z-index: 20;
+      top: 8px;
+      left: 8px;
+      width: 320px;
+      max-width: calc(100vw - 16px);
+      max-height: calc(100dvh - 16px);
+      overflow: hidden;
+      padding: 11px 12px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text);
+      background: var(--surface);
+      box-shadow: 0 8px 28px #0007;
+      pointer-events: none;
+      font-size: 12px;
+    }
+    .hover-head {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+    }
+    .hover-head .status-dot { align-self: center; }
+    .hover-name {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font: 500 12px/1.5 var(--mono);
+    }
+    .hover-age { flex: 0 0 auto; color: var(--muted); font: 10px/1.5 var(--mono); }
+    .hover-task { margin: 6px 0; color: var(--muted); }
+    .hover-evidence {
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: 11px/1.6 var(--mono);
+    }
+    .hover-updated { margin: 6px 0 0; color: var(--subtle); font: 10px/1.5 var(--mono); }
+
     .gantt-scroll {
       max-width: 100%;
       overflow-x: auto;
@@ -429,7 +504,7 @@
     .dialog-footer { border-top: 1px solid var(--border); flex-wrap: wrap; }
     .dialog-body { padding: 22px; }
     .close-button { flex: 0 0 auto; }
-    .detail-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .detail-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .detail-columns { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; }
     .info-card {
       min-width: 0;
@@ -442,14 +517,32 @@
     .info-card h3 { margin-bottom: 8px; }
     .info-card p { margin: 8px 0; }
     .info-card > :last-child { margin-bottom: 0; }
+    .card-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .card-heading h3 { margin-bottom: 0; }
+    .association-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
     .evidence-card { border-top: 2px solid var(--accent); }
     .report-card { border-top: 2px solid var(--idle); }
     .source-note { color: var(--muted); font-size: 11px; }
-    .evidence-list { margin: 12px 0 0; padding: 0; list-style: none; }
-    .evidence-list li + li { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-    .evidence-list strong { display: block; margin: 3px 0; font-size: 12px; font-weight: 500; }
+    .source-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 4px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--muted);
+      font: 9px/1.5 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      white-space: nowrap;
+    }
+    .source-badge[data-source="自述"] { color: var(--idle); }
+    .source-badge[data-source="输出"] { color: var(--accent); }
+    .evidence-list { margin: 10px 0 0; padding: 0; list-style: none; }
+    .evidence-list li + li { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .evidence-heading { display: flex; align-items: center; gap: 7px; }
+    .evidence-heading strong { font-size: 12px; font-weight: 500; }
     .evidence-value {
-      margin: 5px 0;
+      margin: 6px 0;
       padding: 8px;
       border-radius: 3px;
       background: var(--bg);
@@ -493,10 +586,12 @@
     }
     .task-item:hover { background: var(--hover); }
     .task-item[aria-pressed="true"] { border-color: var(--accent); }
-    .task-item strong { display: block; margin: 5px 0; font-weight: 500; }
-    .task-item small { color: var(--muted); }
-    .task-session-list { margin: 10px 0 0; padding-left: 18px; }
-    .task-session-list li { margin: 8px 0; }
+    .task-item strong { display: block; margin: 5px 0 0; font-weight: 500; overflow-wrap: anywhere; }
+    .task-item small { color: var(--muted); overflow-wrap: anywhere; }
+    .task-item-meta { display: flex; justify-content: space-between; align-items: center; gap: 7px; }
+    .task-item-meta .pill { flex: 0 0 auto; }
+    .task-session-list { margin: 10px 0 0; padding: 0; list-style: none; }
+    .task-session-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 8px 0; }
     .steps { display: flex; gap: 8px; margin: 0 0 20px; padding: 0; list-style: none; }
     .steps li { flex: 1; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--muted); font-size: 12px; }
     .steps li[aria-current="step"] { border-color: var(--accent); color: var(--text); }
@@ -570,10 +665,9 @@
       .legend { justify-content: space-between; gap: 8px; font-size: 10px; }
       .legend li { gap: 5px; }
       .session-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .session-open { padding: 13px 10px 8px; }
-      .session-name { font-size: 11px; }
+      .session-open { padding: 13px 10px; }
+      .session-name { font-size: 13px; }
       .session-meta { font-size: 10px; }
-      .cell-footer { padding-right: 10px; padding-left: 10px; flex-wrap: wrap; }
       .level-grid, .form-grid { grid-template-columns: 1fr; }
       .definition-row { grid-template-columns: 80px minmax(0, 1fr); }
       .dialog-footer .actions { width: 100%; justify-content: flex-end; }
@@ -589,7 +683,7 @@
     <div class="header-inner">
       <div class="brand">
         <span class="brand-name">RoamBench</span>
-        <span class="version">v3</span>
+        <span class="version">v3.1</span>
         <span class="brand-location">本地工作区 / 项目看板</span>
       </div>
       <div class="snapshot">
@@ -640,11 +734,11 @@
     <section id="panel-wall" role="tabpanel" aria-labelledby="tab-wall" tabindex="0">
       <div class="panel-heading">
         <h2>会话状态</h2>
-        <p class="panel-note" id="wall-note">28 个会话 · 按项目分组 · 点击查看详情</p>
+        <p class="panel-note" id="wall-note">28 个会话 · 按项目分组 · 悬停快照 / 点击详情</p>
       </div>
       <div id="session-wall"></div>
       <p class="panel-note" style="margin-top:16px">
-        HERMES 徽标独立于会话状态：已接管 / 待派发 / 未接管 / 未知。证据、自述及接管记录均为模拟数据。
+        H = HERMES · 绿：已接管 / 黄虚线：待派发 / 灰实线：未接管 / 灰虚线：未知 · 数据均为模拟
       </p>
     </section>
 
@@ -692,6 +786,9 @@
     <noscript><p class="empty-message">此原型需要 JavaScript 来显示数据和操作交互。</p></noscript>
   </main>
 
+  <div class="hover-card" id="session-preview" role="tooltip" hidden></div>
+  <p id="preview-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+
   <dialog class="detail-dialog" id="detail-dialog" aria-labelledby="detail-title" aria-describedby="detail-subtitle">
     <header class="dialog-header">
       <div>
@@ -702,7 +799,7 @@
     </header>
     <div class="dialog-body" id="detail-body"></div>
     <footer class="dialog-footer">
-      <span class="source-note">Esc 关闭 · 快照与自述分开呈现</span>
+      <span class="source-note">Esc 关闭 · 自述未验证</span>
       <button class="btn" type="button" data-close="detail-dialog">返回看板</button>
     </footer>
   </dialog>
@@ -711,7 +808,7 @@
     <header class="dialog-header">
       <div>
         <h2 id="task-drawer-title">任务抽屉</h2>
-        <p id="task-drawer-note">任务记录、关联会话与验收目标</p>
+        <p id="task-drawer-note">任务 / 会话 / 验收</p>
       </div>
       <button class="btn close-button" type="button" data-close="task-dialog" aria-label="关闭任务抽屉" autofocus>关闭</button>
     </header>
@@ -877,6 +974,7 @@
       const WINDOW_START = 9 * 60;
       const WINDOW_DURATION = 8 * 60;
       const SNAPSHOT_MINUTE = 14 * 60 + 32;
+      const PREVIEW_DELAY = 200;
       const $ = id => document.getElementById(id);
 
       const projects = [
@@ -886,7 +984,7 @@
         { id: "infra-kit", name: "infra-kit" }
       ];
 
-      // 保留 v2 的 28 个会话、状态、活动年龄及时间段。
+      // 保留原有 28 个会话、状态、活动年龄及时间段。
       const sessions = [
         { project: "roambench", name: "rb-board-v2", status: "active", age: 8, start: 9 * 60 + 12 },
         { project: "roambench", name: "rb-tmux-watch", status: "active", age: 16, start: 9 * 60 },
@@ -923,13 +1021,17 @@
 
       const statusLabels = { active: "运行中", idle: "空闲", exited: "已退出", detached: "已分离" };
       const taskLabels = { planned: "待开始", running: "进行中", blocked: "阻塞", done: "已完成" };
-      const hermesLabels = {
-        managed: "HERMES · 已接管",
-        queued: "HERMES · 待派发",
-        unmanaged: "HERMES · 未接管",
-        unknown: "HERMES · 未知"
+      const hermesModes = {
+        managed: "已接管",
+        queued: "待派发",
+        unmanaged: "未接管",
+        unknown: "未知"
       };
+      const hermesLabels = Object.fromEntries(
+        Object.entries(hermesModes).map(([mode, label]) => [mode, "HERMES · " + label])
+      );
       const levelNames = ["L0 · 项目", "L1 · 任务", "L2 · 会话", "L3 · HERMES"];
+
       const tasks = [
         {
           id: "RB-301", project: "roambench", title: "实现看板 v3",
@@ -997,23 +1099,23 @@
       ]);
       const reports = {
         "rb-board-v2": {
-          text: "详情面板已经完成，正在补齐任务抽屉与新建流程；预计还需要一轮交互检查。",
+          text: "已完成：详情面板\n当前：任务抽屉 / 新建流程\n待办：一轮交互检查",
           author: "Codex", time: "2026-10-15T14:30:00+08:00"
         },
         "rb-ui-tests": {
-          text: "当前用例全部通过，准备补充窄屏与键盘操作检查。",
+          text: "用例：自述全部通过\n待办：窄屏 / 键盘检查",
           author: "Shell worker", time: "2026-10-15T14:29:00+08:00"
         },
         "atlas-auth": {
-          text: "认证契约已调整，正在检查刷新令牌的边界条件。",
+          text: "已调整：认证契约\n当前：刷新令牌边界检查",
           author: "Codex", time: "2026-10-15T14:28:00+08:00"
         },
         "fn-sync-engine": {
-          text: "冲突合并逻辑已修改；离线重连场景仍需复核。",
+          text: "已修改：冲突合并逻辑\n待复核：离线重连",
           author: "Codex", time: "2026-10-15T14:27:00+08:00"
         },
         "infra-backup": {
-          text: "备份已完成，可以安排恢复演练。",
+          text: "备份：自述完成\n下一步：恢复演练",
           author: "维护者", time: "2026-10-15T14:01:00+08:00"
         }
       };
@@ -1023,13 +1125,17 @@
         return new Date(date.getTime() + 8 * 3600000)
           .toISOString().slice(0, 19).replace("T", " ") + " UTC+8";
       };
-      const activityDate = session => new Date(SNAPSHOT.getTime() - session.age * 1000);
+      const activityDate = session => new Date(
+        (session.localOnly ? new Date(session.updatedAt).getTime() : SNAPSHOT.getTime()) -
+        session.age * 1000
+      );
 
       sessions.forEach((session, index) => {
         session.id = "session-" + (index + 1);
         session.cwd = "/workspace/" + session.project;
         session.taskId = tasks.find(task => task.members.includes(session.name))?.id || null;
         session.report = reports[session.name] || null;
+        session.updatedAt = SNAPSHOT.toISOString();
         session.hermes = managed[session.name]
           ? {
               mode: "managed", dispatch: managed[session.name][0],
@@ -1039,15 +1145,15 @@
             }
           : {
               mode: unmanaged.has(session.name) ? "unmanaged" : "unknown",
-              source: unmanaged.has(session.name) ? "模拟会话注册表：managed=false" : "未提供注册或接管记录",
+              source: unmanaged.has(session.name) ? "模拟注册表 · managed=false" : "注册 / 接管记录缺失",
               time: unmanaged.has(session.name) ? SNAPSHOT.toISOString() : null
             };
         session.evidence = [
           {
-            title: "会话状态快照",
+            title: "会话快照",
             value: "session=" + session.name + "\nstatus=" + session.status +
-              "\n最近活动=" + stamp(activityDate(session)),
-            source: "模拟 tmux 采集快照", time: SNAPSHOT.toISOString()
+              "\n活动=" + stamp(activityDate(session)),
+            source: "模拟 tmux 快照", time: SNAPSHOT.toISOString()
           },
           {
             title: "工作目录",
@@ -1058,13 +1164,15 @@
       });
 
       sessions.find(s => s.name === "rb-ui-tests").evidence.push({
-        title: "最近一次测试摘要",
+        title: "测试摘要",
         value: "report=ui-smoke-1426\npassed=18  failed=1\nfailed: drawer-keyboard-focus",
-        source: "模拟测试报告摘录", time: "2026-10-15T14:26:00+08:00"
+        verification: true,
+        summary: "ui-smoke-1426 FAIL · 18/19",
+        source: "模拟测试报告", time: "2026-10-15T14:26:00+08:00"
       });
       sessions.find(s => s.name === "infra-backup").evidence.push({
-        title: "进程退出记录",
-        value: "exit_code=0\n归档文件已生成；未提供恢复校验报告。",
+        title: "进程退出",
+        value: "exit_code=0\n归档=已生成\n恢复校验=未提供",
         source: "模拟进程事件", time: "2026-10-15T13:58:00+08:00"
       });
 
@@ -1083,12 +1191,17 @@
       const filter = $("project-filter");
       const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
       const dialogs = [$("detail-dialog"), $("task-dialog"), $("create-dialog")];
+      const preview = $("session-preview");
+      const fineHover = window.matchMedia("(hover: hover) and (pointer: fine)");
+      const coarsePointer = window.matchMedia("(pointer: coarse)");
       let activeTaskId = null;
-      let activeSessionId = null;
       let serial = 0;
       let toastTimer;
       let createStep = 0;
       let createContext = {};
+      let previewTimer;
+      let previewState = null;
+      let keyboardModality = true;
 
       function el(tag, className, text) {
         const node = document.createElement(tag);
@@ -1116,11 +1229,19 @@
         return el("span", "pill" + (accent ? " accent" : ""), text);
       }
 
+      function sourceBadge(label) {
+        const badge = el("span", "source-badge", label);
+        badge.dataset.source = label;
+        badge.setAttribute("aria-label",
+          label === "输出" ? "终端输出" : label === "自述" ? "agent 自述" : "本页登记");
+        return badge;
+      }
+
       function relativeTime(seconds) {
         if (seconds < 30) return "刚刚";
-        if (seconds < 60) return seconds + " 秒前";
-        if (seconds < 3600) return Math.floor(seconds / 60) + " 分钟前";
-        return Math.floor(seconds / 3600) + " 小时前";
+        if (seconds < 60) return seconds + "s前";
+        if (seconds < 3600) return Math.floor(seconds / 60) + "m前";
+        return Math.floor(seconds / 3600) + "h前";
       }
 
       function clockTime(minutes) {
@@ -1128,8 +1249,8 @@
           String(minutes % 60).padStart(2, "0");
       }
 
-      function timeNode(iso) {
-        const node = el("time", "", stamp(iso));
+      function timeNode(iso, compact = false) {
+        const node = el("time", "", compact ? stamp(iso).slice(5) : stamp(iso));
         node.dateTime = new Date(iso).toISOString();
         return node;
       }
@@ -1143,8 +1264,8 @@
       }
 
       function sourceLine(source, time) {
-        const line = el("p", "source-note", "来源：" + source);
-        if (time) line.append(document.createTextNode(" · "), timeNode(time));
+        const line = el("p", "source-note", "来源 " + source);
+        if (time) line.append(document.createTextNode(" · "), timeNode(time, true));
         return line;
       }
 
@@ -1155,7 +1276,187 @@
         toastTimer = setTimeout(() => { $("toast").hidden = true; }, 5500);
       }
 
+      function canPointerPreview() {
+        return fineHover.matches && !coarsePointer.matches && !(navigator.maxTouchPoints > 0);
+      }
+
+      function hidePreview() {
+        clearTimeout(previewTimer);
+        if (previewState?.anchor) {
+          const anchor = previewState.anchor;
+          const ids = (anchor.getAttribute("aria-describedby") || "")
+            .split(/\s+/).filter(id => id && id !== preview.id);
+          if (ids.length) anchor.setAttribute("aria-describedby", ids.join(" "));
+          else anchor.removeAttribute("aria-describedby");
+        }
+        previewState = null;
+        preview.hidden = true;
+        $("preview-announcement").textContent = "";
+      }
+
+      function latestVerification(session) {
+        return session.evidence
+          .filter(item => item.verification && item.summary)
+          .reduce((latest, item) =>
+            !latest || new Date(item.time).getTime() > new Date(latest.time).getTime()
+              ? item : latest, null);
+      }
+
+      function previewText(session) {
+        const task = tasks.find(t => t.id === session.taskId);
+        // 阶段必须来自显式字段，不从会话状态或 agent 自述推断。
+        const phase = session.phase || task?.phase;
+        return {
+          task: (task ? task.title : "未关联任务") + " · " +
+            (phase ? "阶段 " + phase : "阶段未记录"),
+          evidence: latestVerification(session)?.summary || "暂无验证证据"
+        };
+      }
+
+      function fillPreview(session) {
+        const text = previewText(session);
+        const head = el("div", "hover-head");
+        const age = el("time", "hover-age", relativeTime(session.age));
+        age.dateTime = activityDate(session).toISOString();
+        head.append(
+          statusDot(session.status),
+          el("span", "sr-only", statusLabels[session.status] + "，"),
+          el("span", "hover-name", session.name),
+          age
+        );
+        const updated = el("p", "hover-updated", "更新 ");
+        updated.append(timeNode(session.updatedAt, true));
+        preview.replaceChildren(
+          head,
+          el("p", "hover-task", text.task),
+          el("p", "hover-evidence", text.evidence),
+          updated
+        );
+        return statusLabels[session.status] + "，" + session.name + "，" +
+          relativeTime(session.age) + "；" + text.task + "；" + text.evidence +
+          "；更新 " + stamp(session.updatedAt);
+      }
+
+      function positionPreview() {
+        if (!previewState || preview.hidden) return;
+        const gap = 14;
+        const margin = 8;
+        const viewportWidth = document.documentElement.clientWidth;
+        const viewportHeight = window.innerHeight;
+        const box = preview.getBoundingClientRect();
+        let x, y;
+
+        if (previewState.mode === "pointer") {
+          const point = previewState.point;
+          x = point.x + gap;
+          y = point.y + gap;
+          if (x + box.width > viewportWidth - margin) x = point.x - box.width - gap;
+          if (y + box.height > viewportHeight - margin) y = point.y - box.height - gap;
+        } else {
+          const anchor = previewState.anchor.getBoundingClientRect();
+          x = anchor.left;
+          y = anchor.bottom + gap;
+          if (y + box.height > viewportHeight - margin) y = anchor.top - box.height - gap;
+        }
+
+        const maxX = Math.max(margin, viewportWidth - box.width - margin);
+        const maxY = Math.max(margin, viewportHeight - box.height - margin);
+        preview.style.left = Math.max(margin, Math.min(x, maxX)) + "px";
+        preview.style.top = Math.max(margin, Math.min(y, maxY)) + "px";
+      }
+
+      function schedulePreview(owner, anchor, session, mode, point = null) {
+        hidePreview();
+        if (dialogs.some(dialog => dialog.open)) return;
+        const state = { owner, anchor, session, mode, point };
+        previewState = state;
+
+        previewTimer = setTimeout(() => {
+          if (previewState !== state || !owner.isConnected ||
+              dialogs.some(dialog => dialog.open)) {
+            hidePreview();
+            return;
+          }
+          if (mode === "pointer" && !canPointerPreview()) {
+            hidePreview();
+            return;
+          }
+          if (mode === "keyboard" &&
+              (document.activeElement !== anchor || !anchor.matches(":focus-visible"))) {
+            hidePreview();
+            return;
+          }
+
+          const announcement = fillPreview(session);
+          preview.hidden = false;
+          positionPreview();
+
+          const ids = new Set((anchor.getAttribute("aria-describedby") || "")
+            .split(/\s+/).filter(Boolean));
+          ids.add(preview.id);
+          anchor.setAttribute("aria-describedby", Array.from(ids).join(" "));
+          if (mode === "keyboard") $("preview-announcement").textContent = announcement;
+        }, PREVIEW_DELAY);
+      }
+
+      function bindPreview(owner, session, defaultAnchor = owner) {
+        owner.addEventListener("pointerenter", event => {
+          if (event.pointerType !== "mouse" || !canPointerPreview()) return;
+          if (previewState?.mode === "keyboard" && previewState.owner === owner) return;
+          schedulePreview(owner, defaultAnchor, session, "pointer", {
+            x: event.clientX, y: event.clientY
+          });
+        });
+
+        owner.addEventListener("pointermove", event => {
+          if (event.pointerType !== "mouse" || previewState?.owner !== owner ||
+              previewState.mode !== "pointer") return;
+          previewState.point = { x: event.clientX, y: event.clientY };
+          positionPreview();
+        });
+
+        owner.addEventListener("pointerleave", () => {
+          if (previewState?.owner === owner && previewState.mode === "pointer") hidePreview();
+        });
+
+        owner.addEventListener("pointercancel", () => {
+          if (previewState?.owner === owner) hidePreview();
+        });
+
+        owner.addEventListener("focusin", event => {
+          const anchor = event.target;
+          if (!keyboardModality || !anchor.matches(":focus-visible")) return;
+          schedulePreview(owner, anchor, session, "keyboard");
+        });
+
+        owner.addEventListener("focusout", event => {
+          if (previewState?.mode === "keyboard" && previewState.anchor === event.target) {
+            hidePreview();
+          }
+        });
+      }
+
+      document.addEventListener("pointerdown", () => {
+        keyboardModality = false;
+        hidePreview();
+      }, true);
+
+      document.addEventListener("keydown", event => {
+        if (!event.altKey && !event.ctrlKey && !event.metaKey) keyboardModality = true;
+        if (event.key === "Escape") hidePreview();
+      }, true);
+
+      window.addEventListener("resize", hidePreview);
+      window.addEventListener("blur", hidePreview);
+      document.addEventListener("scroll", hidePreview, true);
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) hidePreview();
+      });
+      fineHover.addEventListener("change", hidePreview);
+      coarsePointer.addEventListener("change", hidePreview);
+
       function showDialog(dialog) {
+        hidePreview();
         dialogs.forEach(other => {
           if (other !== dialog && other.open) other.close();
         });
@@ -1174,10 +1475,11 @@
       });
 
       function hermesBadge(session) {
-        const badge = button(hermesLabels[session.hermes.mode], "hermes", session.id, "hermes-badge");
+        const badge = button("H", "hermes", session.id, "hermes-badge");
         badge.dataset.mode = session.hermes.mode;
-        badge.title = session.hermes.source + "；点击查看来源和接管详情";
-        badge.setAttribute("aria-label", session.name + "，" + badge.textContent + "，查看接管详情");
+        badge.title = hermesLabels[session.hermes.mode] + " · " + session.hermes.source;
+        badge.setAttribute("aria-label",
+          session.name + "，" + hermesLabels[session.hermes.mode] + "，查看接管详情");
         badge.setAttribute("aria-haspopup", "dialog");
         return badge;
       }
@@ -1186,23 +1488,29 @@
         const cell = el("li", "session-cell");
         cell.dataset.status = session.status;
         const open = button("", "session", session.id, "session-open");
-        open.setAttribute("aria-label", session.name + "，" + statusLabels[session.status] + "，查看详情");
+        open.setAttribute("aria-label",
+          session.name + "，" + statusLabels[session.status] + "，" +
+          relativeTime(session.age) +
+          (session.taskId ? "，任务 " + session.taskId : "") + "，查看详情");
         open.setAttribute("aria-haspopup", "dialog");
+
         const row = el("span", "session-name-row");
         row.append(statusDot(session.status), el("span", "session-name", session.name));
+
         const meta = el("span", "session-meta");
+        const stateTime = el("span", "session-state-time");
         const state = el("span", "", session.status);
-        state.title = statusLabels[session.status];
         const separator = el("span", "", "·");
         separator.setAttribute("aria-hidden", "true");
         const time = el("time", "", relativeTime(session.age));
         time.dateTime = activityDate(session).toISOString();
-        time.title = "最近活动：" + stamp(activityDate(session));
-        meta.append(state, separator, el("span", "sr-only", "最近活动："), time);
+        stateTime.append(state, separator, time);
+        meta.append(stateTime);
+        if (session.taskId) meta.append(el("span", "task-mini", session.taskId));
+
         open.append(row, meta);
-        const footer = el("div", "cell-footer");
-        footer.append(hermesBadge(session), el("span", "task-mini", session.taskId || "无任务"));
-        cell.append(open, footer);
+        cell.append(open, hermesBadge(session));
+        bindPreview(cell, session, open);
         return cell;
       }
 
@@ -1238,8 +1546,10 @@
         nameCell.scope = "row";
         const name = button("", "session", session.id, "gantt-name");
         name.append(statusDot(session.status), document.createTextNode(session.name));
-        name.setAttribute("aria-label", session.name + "，查看会话详情");
+        name.setAttribute("aria-label",
+          session.name + "，" + statusLabels[session.status] + "，查看会话详情");
         name.setAttribute("aria-haspopup", "dialog");
+        bindPreview(name, session);
         nameCell.append(name);
 
         const timeCell = el("td");
@@ -1282,19 +1592,22 @@
       }
 
       function render() {
+        hidePreview();
         const visible = sessions.filter(s => filter.value === "all" || s.project === filter.value);
         renderWall(visible);
         renderGantt(visible);
         Object.keys(statusLabels).forEach(status => {
           $("count-" + status).textContent = visible.filter(s => s.status === status).length;
         });
-        $("wall-note").textContent = visible.length + " 个会话 · 按项目分组 · 点击查看详情";
+        $("wall-note").textContent = visible.length + " 个会话 · 按项目分组 · " +
+          (canPointerPreview() ? "悬停快照 / 点击详情" : "点击详情");
         $("footer-count").textContent = "显示 " + visible.length + " / " + sessions.length + " 个会话";
         $("page-meta").textContent = projects.length + " 个项目 · " + sessions.length + " 个模拟 tmux 会话";
         $("task-count").textContent = tasks.filter(t => filter.value === "all" || t.project === filter.value).length;
       }
 
       function selectTab(selected, moveFocus) {
+        hidePreview();
         tabs.forEach(tab => {
           const active = tab === selected;
           tab.setAttribute("aria-selected", String(active));
@@ -1327,95 +1640,105 @@
       function openSession(id, focusHermes = false) {
         const session = sessions.find(s => s.id === id);
         if (!session) return;
-        activeSessionId = id;
         $("detail-title").textContent = session.name;
         $("detail-subtitle").textContent =
           (projects.find(p => p.id === session.project)?.name || session.project) +
-          " · 固定快照 2026-10-15 14:32 UTC+8";
+          " · 更新 " + stamp(session.updatedAt).slice(5);
         const body = $("detail-body");
         body.replaceChildren();
 
         const summary = el("div", "detail-summary");
+        const status = pill(session.status, session.status === "active");
+        status.setAttribute("aria-label", statusLabels[session.status]);
         summary.append(
-          pill(statusLabels[session.status] + " · " + session.status, session.status === "active"),
+          status,
+          pill("活动 " + relativeTime(session.age)),
           pill(hermesLabels[session.hermes.mode], session.hermes.mode === "managed"),
-          pill(session.localOnly ? "本页新建 · 未启动" : "模拟采集数据")
+          pill(session.localOnly ? "本页登记 · 未启动" : "模拟快照")
         );
         body.append(summary);
 
         const association = el("section", "info-card");
-        association.append(el("h3", "", "关联任务"));
+        const associationRow = el("div", "association-row");
         const task = tasks.find(t => t.id === session.taskId);
+        associationRow.append(el("span", "source-note", "任务"));
         if (task) {
-          association.append(
+          associationRow.append(
             button(task.id + " · " + task.title, "task", task.id, "link-button"),
-            el("p", "source-note", "任务状态：" + taskLabels[task.status] + " · 会话活动不自动改变任务状态。")
+            pill(taskLabels[task.status], task.status === "running")
+          );
+          association.append(
+            associationRow,
+            el("p", "source-note", "阶段 " + (session.phase || task.phase || "未记录") +
+              " · 状态来源 人工 · 活动不联动")
           );
         } else {
-          association.append(
-            el("p", "muted", "此会话尚未关联任务。"),
-            button("新建并关联任务", "session-task", session.id)
+          associationRow.append(
+            el("span", "muted", "未关联"),
+            button("新建并关联", "session-task", session.id)
           );
+          association.append(associationRow);
         }
         body.append(association);
 
         const columns = el("div", "detail-columns");
         const evidence = el("section", "info-card evidence-card");
-        evidence.append(
-          el("h3", "", "可观测证据"),
-          el("p", "source-note", "按来源和采集时间展示原始记录。本页记录均为模拟，不构成真实运行验收。")
-        );
+        evidence.append(el("h3", "", "证据"));
         const evidenceList = el("ul", "evidence-list");
         session.evidence.forEach(item => {
           const li = el("li");
+          const heading = el("div", "evidence-heading");
+          heading.append(
+            sourceBadge(session.localOnly ? "登记" : "输出"),
+            el("strong", "", item.title)
+          );
           li.append(
-            el("strong", "", item.title),
+            heading,
             el("pre", "evidence-value", item.value),
             sourceLine(item.source, item.time)
           );
           evidenceList.append(li);
         });
-        evidence.append(evidenceList);
+        if (!session.evidence.length) evidence.append(el("p", "muted", "暂无证据"));
+        else evidence.append(evidenceList);
 
         const report = el("section", "info-card report-card");
-        report.append(el("h3", "", "执行者自述"), pill("未验证 · 不计入证据"));
+        const reportHeading = el("div", "card-heading");
+        reportHeading.append(el("h3", "", "执行者"), sourceBadge("自述"), pill("未验证"));
+        report.append(reportHeading);
         if (session.report) {
           report.append(
             el("blockquote", "", session.report.text),
-            sourceLine("模拟消息 · " + session.report.author, session.report.time),
-            el("p", "source-note", "自述中的“完成”“通过”不覆盖测试报告，也不自动完成任务。")
+            sourceLine("模拟消息 · " + session.report.author, session.report.time)
           );
         } else {
-          report.append(
-            el("p", "muted", "暂无自述"),
-            el("p", "source-note", "没有消息时保留缺失状态，不从会话状态生成进度。")
-          );
+          report.append(el("p", "muted", "暂无自述"));
         }
         if (session.name === "rb-ui-tests") {
-          report.append(el("p", "", "差异提示：自述称全部通过；最近测试证据仍记录 1 项失败，需复核时间与报告。"));
+          report.append(el("p", "source-note", "差异 自述全通过 / 测试失败 1 · 待复核"));
         }
         columns.append(evidence, report);
         body.append(columns);
 
         const hermes = el("section", "info-card");
         hermes.id = "hermes-detail";
-        const hermesTitle = el("h3", "", "HERMES 接管信息");
+        const hermesTitle = el("h3", "", "HERMES");
         hermesTitle.tabIndex = -1;
-        hermes.append(hermesTitle, pill(hermesLabels[session.hermes.mode], session.hermes.mode === "managed"));
+        hermes.append(hermesTitle);
         const info = el("dl");
-        definition(info, "判定来源", session.hermes.source);
-        if (session.hermes.time) definition(info, "记录时间", timeNode(session.hermes.time));
-        if (session.hermes.dispatch) definition(info, "派发编号", session.hermes.dispatch);
+        definition(info, "来源", session.hermes.source);
+        if (session.hermes.time) definition(info, "时间", timeNode(session.hermes.time, true));
+        if (session.hermes.dispatch) definition(info, "派发", session.hermes.dispatch);
         if (session.hermes.agent) definition(info, "执行器", session.hermes.agent);
-        if (session.hermes.boundary) definition(info, "执行边界", session.hermes.boundary);
-        hermes.append(info);
-        const explanations = {
-          managed: "模拟接管回执已存在；接管只说明归属，不代表任务完成或验收通过。",
-          queued: "仅登记待派发请求，尚无接管回执；本原型不发送真实请求。",
-          unmanaged: "注册记录明确标记未接管；会话仍可能独立运行。",
-          unknown: "缺少接管元数据，无法判断归属；不能据此认定未接管。"
+        if (session.hermes.boundary) definition(info, "边界", session.hermes.boundary);
+        const records = {
+          managed: "回执 已收到 · 任务验收 独立",
+          queued: "回执 未收到 · 请求 仅本页登记",
+          unmanaged: "注册 managed=false · 会话 独立运行",
+          unknown: "元数据 缺失 · 归属 未知"
         };
-        hermes.append(el("p", "source-note", explanations[session.hermes.mode]));
+        definition(info, "记录", records[session.hermes.mode]);
+        hermes.append(info);
         body.append(hermes);
         showDialog($("detail-dialog"));
         if (focusHermes) hermesTitle.focus();
@@ -1445,25 +1768,23 @@
           (state === "all" || task.status === state)
         );
         if (!visible.some(task => task.id === activeTaskId)) activeTaskId = visible[0]?.id || null;
-        $("task-result-count").textContent = visible.length + " 个任务 · 状态来源为人工任务记录";
+        $("task-result-count").textContent = visible.length + " 个任务 · 来源 人工记录";
         const list = $("task-list");
         list.replaceChildren();
         visible.forEach(task => {
           const li = el("li");
           const item = button("", "select-task", task.id, "task-item");
           item.setAttribute("aria-pressed", String(task.id === activeTaskId));
-          item.append(
+          const meta = el("span", "task-item-meta");
+          meta.append(
             el("small", "", task.id + " · " + task.project),
-            el("strong", "", task.title),
             pill(taskLabels[task.status], task.status === "running")
           );
+          item.append(meta, el("strong", "", task.title));
           li.append(item);
           list.append(li);
         });
-        if (!visible.length) {
-          const empty = el("li", "empty-message", "当前筛选下没有任务。");
-          list.append(empty);
-        }
+        if (!visible.length) list.append(el("li", "empty-message", "暂无任务"));
         renderTaskInspector();
       }
 
@@ -1472,26 +1793,26 @@
         inspector.replaceChildren();
         const task = tasks.find(t => t.id === activeTaskId);
         if (!task) {
-          inspector.append(el("p", "empty-message", "调整筛选，或新建一个任务。"));
+          inspector.append(el("p", "empty-message", "调整筛选 / 新建任务"));
           return;
         }
         const card = el("div", "info-card");
         card.append(el("h3", "", task.title));
         const details = el("dl");
-        definition(details, "任务编号", task.id);
-        definition(details, "所属项目", projects.find(p => p.id === task.project)?.name || task.project);
+        definition(details, "编号 / 项目", task.id + " · " +
+          (projects.find(p => p.id === task.project)?.name || task.project));
         definition(details, "负责人", task.owner);
-        definition(details, "任务状态", taskLabels[task.status]);
-        definition(details, "状态来源", task.source);
+        definition(details, "来源", task.source);
+        definition(details, "阶段", task.phase || "未记录");
         definition(details, "目标 / 验收", task.goal);
-        if (task.blocker) definition(details, "阻塞原因", task.blocker);
+        if (task.blocker) definition(details, "阻塞", task.blocker.replace(/。$/, ""));
         card.append(details);
         if (task.updatedAt) card.append(sourceLine("本页人工更新", task.updatedAt));
-        card.append(el("p", "source-note", "任务状态由人工维护。标记完成只记录声明，不生成测试或验收证据。"));
+        card.append(el("p", "source-note", "完成标记 人工声明 · 验收证据 独立"));
 
         const actions = el("div", "actions");
-        if (task.status !== "running") actions.append(button("记录为进行中", "task-running", task.id));
-        actions.append(button(task.status === "done" ? "重新打开" : "记录为已完成", "task-toggle", task.id));
+        if (task.status !== "running") actions.append(button("设为进行中", "task-running", task.id));
+        actions.append(button(task.status === "done" ? "重开" : "标记完成", "task-toggle", task.id));
         actions.append(button("新建关联会话", "task-session", task.id));
         card.append(actions);
         inspector.append(card);
@@ -1499,21 +1820,25 @@
         const linked = el("section", "info-card");
         const related = sessions.filter(session => session.taskId === task.id);
         linked.append(el("h3", "", "关联会话 · " + related.length));
-        if (!related.length) linked.append(el("p", "muted", "暂无关联会话，可使用 L2 或 L3 新建。"));
+        if (!related.length) linked.append(el("p", "muted", "暂无 · 可用 L2 / L3 新建"));
         else {
           const list = el("ul", "task-session-list");
           related.forEach(session => {
             const li = el("li");
-            li.append(
-              button(session.name, "session", session.id, "link-button"),
-              el("span", "source-note", " · " + session.status + " · " + hermesLabels[session.hermes.mode])
-            );
+            const status = statusDot(session.status);
+            const name = button(session.name, "session", session.id, "link-button");
+            name.setAttribute("aria-label",
+              session.name + "，" + statusLabels[session.status] + "，查看详情");
+            name.setAttribute("aria-haspopup", "dialog");
+            const mode = el("span", "source-note", hermesModes[session.hermes.mode]);
+            mode.setAttribute("aria-label", hermesLabels[session.hermes.mode]);
+            li.append(status, name, mode);
             list.append(li);
           });
           linked.append(list);
         }
         const evidenceCount = related.reduce((count, session) => count + session.evidence.length, 0);
-        linked.append(el("p", "source-note", "关联 " + evidenceCount + " 条模拟证据记录；点击会话查看证据与自述。"));
+        linked.append(el("p", "source-note", "模拟记录 " + evidenceCount + " 条 · 会话内查看证据 / 自述"));
         inspector.append(linked);
       }
 
@@ -1748,7 +2073,10 @@
             }
             if (selected === 1 && createContext.attachSession) {
               const session = sessions.find(s => s.id === createContext.attachSession);
-              if (session && session.project === project) session.taskId = taskId;
+              if (session && session.project === project) {
+                session.taskId = taskId;
+                session.updatedAt = now;
+              }
             }
             if (selected >= 2) {
               createdSession = {
@@ -1760,6 +2088,7 @@
                 start: SNAPSHOT_MINUTE,
                 cwd: $("new-session-cwd").value.trim(),
                 taskId,
+                updatedAt: now,
                 localOnly: true,
                 report: null,
                 hermes: selected === 3 ? {
@@ -1767,23 +2096,23 @@
                   dispatch: "LOCAL-H-" + (++serial),
                   agent: $("new-agent").value,
                   boundary: $("new-boundary").value.trim(),
-                  source: "本页表单登记；无接管回执",
+                  source: "本页表单登记 · 无接管回执",
                   time: now
                 } : {
                   mode: "unmanaged",
-                  source: "本页 L2 登记：managed=false",
+                  source: "本页 L2 登记 · managed=false",
                   time: now
                 },
                 evidence: [
                   {
-                    title: "本页登记事件",
+                    title: "登记事件",
                     value: "session=" + $("new-session-name").value.trim() +
-                      "\n状态=模拟 idle\n进程未启动；未采集 tmux 运行证据。",
+                      "\n状态=模拟 idle\n进程=未启动\ntmux 运行证据=未采集",
                     source: "本页表单事件", time: now
                   },
                   {
-                    title: "请求的工作目录",
-                    value: $("new-session-cwd").value.trim() + "\n仅为输入参数，未经文件系统检查。",
+                    title: "请求目录",
+                    value: $("new-session-cwd").value.trim() + "\n校验=未检查文件系统",
                     source: "本页表单参数", time: now
                   }
                 ]
@@ -1847,20 +2176,18 @@
           if (!task) return;
           task.status = action === "task-running" ? "running" :
             task.status === "done" ? "planned" : "done";
-          task.source = "本页人工状态记录（未验收）";
+          task.source = "本页人工记录（未验收）";
           task.updatedAt = new Date().toISOString();
           renderTasks();
           render();
-          if (!$("task-inspector").querySelector("button")?.isConnected) {
-            $("task-status").focus();
-          } else {
-            $("task-inspector").querySelector("button").focus();
-          }
-          notify("任务已记录为“" + taskLabels[task.status] + "”；会话状态保持独立。");
+          const nextAction = $("task-inspector").querySelector("button");
+          if (nextAction?.isConnected) nextAction.focus();
+          else $("task-status").focus();
+          notify("任务 " + taskLabels[task.status] + " · 会话状态独立");
         }
       });
 
-      // 原生 dialog 提供模态焦点限制、Esc 取消和键盘返回。
+      // 原生 dialog 保留模态焦点限制、Esc 取消和键盘返回。
       projectOptions($("task-project"), true, "all");
       syncCreateFields();
       render();
