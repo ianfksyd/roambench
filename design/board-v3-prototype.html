@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>RoamBench · 项目看板 v3.1</title>
+  <title>RoamBench · 项目看板 v3.2</title>
   <style>
     :root {
       --bg: #1e1e1e;
@@ -95,7 +95,7 @@
       gap: 10px;
     }
     .project-filter { color: var(--muted); font-size: 12px; }
-    select, input:not([type="radio"]), textarea {
+    select, input:not([type="radio"]):not([type="checkbox"]), textarea {
       max-width: 100%;
       min-height: 36px;
       padding: 7px 10px;
@@ -105,6 +105,7 @@
     }
     select { cursor: pointer; }
     textarea { width: 100%; min-height: 90px; resize: vertical; }
+    input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
     .btn {
       min-height: 36px;
       padding: 7px 13px;
@@ -185,7 +186,7 @@
     .panel-note { margin: 0; font-size: 12px; }
     .project-group + .project-group { margin-top: 25px; }
     .project-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px; }
-    .project-heading h3 { font: 500 12px/1.5 var(--mono); }
+    .project-heading h3 { font: 500 12px/1.5 var(--mono); overflow-wrap: anywhere; }
     .project-count { color: var(--subtle); font: 11px/1.5 var(--mono); }
     .session-grid {
       display: grid;
@@ -288,6 +289,7 @@
     .hermes-badge[data-mode="queued"] { color: var(--idle); border-style: dashed; }
     .hermes-badge[data-mode="unknown"] { border-style: dashed; }
     .hermes-badge:hover { background: var(--hover); }
+    .pill.wrap { white-space: normal; overflow-wrap: anywhere; }
 
     .hover-card {
       position: fixed;
@@ -307,11 +309,7 @@
       pointer-events: none;
       font-size: 12px;
     }
-    .hover-head {
-      display: flex;
-      align-items: baseline;
-      gap: 7px;
-    }
+    .hover-head { display: flex; align-items: baseline; gap: 7px; }
     .hover-head .status-dot { align-self: center; }
     .hover-name {
       flex: 1;
@@ -465,6 +463,7 @@
       border-radius: 4px;
       color: var(--muted);
     }
+
     dialog {
       color: var(--text);
       background: var(--bg);
@@ -475,6 +474,7 @@
       border-radius: 8px;
       box-shadow: 0 20px 70px #0008;
       overflow: auto;
+      overscroll-behavior: contain;
     }
     dialog::backdrop { background: #0009; }
     .detail-dialog { width: 840px; }
@@ -498,7 +498,13 @@
       padding: 18px 22px;
       background: var(--surface);
     }
-    .dialog-header { position: sticky; top: 0; z-index: 4; border-bottom: 1px solid var(--border); }
+    .dialog-header {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      border-bottom: 1px solid var(--border);
+    }
+    .dialog-header > div { min-width: 0; }
     .dialog-header h2 { overflow-wrap: anywhere; }
     .dialog-header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
     .dialog-footer { border-top: 1px solid var(--border); flex-wrap: wrap; }
@@ -506,6 +512,7 @@
     .close-button { flex: 0 0 auto; }
     .detail-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .detail-columns { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; }
+    .detail-columns.single { grid-template-columns: 1fr; }
     .info-card {
       min-width: 0;
       margin-bottom: 16px;
@@ -531,8 +538,6 @@
       border-radius: 3px;
       color: var(--muted);
       font: 9px/1.5 var(--mono);
-      text-transform: uppercase;
-      letter-spacing: .04em;
       white-space: nowrap;
     }
     .source-badge[data-source="自述"] { color: var(--idle); }
@@ -559,9 +564,15 @@
       overflow-wrap: anywhere;
     }
     dl { margin: 12px 0 0; }
-    .definition-row { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; padding: 7px 0; }
+    .definition-row {
+      display: grid;
+      grid-template-columns: 100px minmax(0, 1fr);
+      gap: 12px;
+      padding: 7px 0;
+    }
     dt { color: var(--muted); }
-    dd { margin: 0; overflow-wrap: anywhere; }
+    dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+    .pre-line { white-space: pre-wrap; font: 12px/1.6 var(--mono); }
     .notice {
       margin: 0 0 16px;
       padding: 10px 12px;
@@ -592,33 +603,52 @@
     .task-item-meta .pill { flex: 0 0 auto; }
     .task-session-list { margin: 10px 0 0; padding: 0; list-style: none; }
     .task-session-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 8px 0; }
+
     .steps { display: flex; gap: 8px; margin: 0 0 20px; padding: 0; list-style: none; }
-    .steps li { flex: 1; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--muted); font-size: 12px; }
+    .steps li {
+      flex: 1;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+    }
     .steps li[aria-current="step"] { border-color: var(--accent); color: var(--text); }
     fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
     legend { margin-bottom: 12px; font-size: 15px; font-weight: 600; }
-    .level-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .level-option {
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      padding: 14px;
-      border: 1px solid var(--border);
-      border-radius: 5px;
-      background: var(--surface);
-      cursor: pointer;
-    }
-    .level-option:has(input:checked) { border-color: var(--accent); background: #23312d; }
-    .level-option input { margin-top: 4px; accent-color: var(--accent); }
-    .level-option strong { display: block; font-size: 13px; }
-    .level-option small { display: block; margin-top: 5px; color: var(--muted); }
+    .entry-options { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 16px; }
+    .entry-option { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+    .entry-option input { margin: 0; }
     .field { display: grid; gap: 6px; margin-bottom: 16px; }
     .field > span { font-size: 12px; }
     .field small { color: var(--muted); font-size: 11px; }
-    .field input, .field select { width: 100%; }
-    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .field input, .field select { width: 100%; min-width: 0; }
+    .field textarea.mono { font-family: var(--mono); font-size: 12px; }
     .form-error { margin: 12px 0 0; color: var(--exited); }
-    .review-list .definition-row { border-bottom: 1px solid var(--border); }
+    .draft-card {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-top: 2px solid var(--accent);
+      border-radius: 5px;
+      background: var(--surface);
+    }
+    .draft-card h3 { margin-bottom: 6px; }
+    .draft-card dl { margin: 0 0 18px; }
+    .auto-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      cursor: pointer;
+    }
+    .auto-option:has(input:checked) { border-color: #37665c; }
+    .auto-option input { flex: 0 0 auto; width: 16px; height: 16px; margin: 3px 0 0; }
+    .auto-option span { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+    .auto-help { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+    .risk-note { margin: 14px 0 0; color: var(--subtle); font-size: 11px; line-height: 1.6; }
+    .draft-progress { margin: 16px 0 0; color: var(--accent); font-size: 13px; }
     .toast {
       position: fixed;
       bottom: 24px;
@@ -659,7 +689,7 @@
       main { padding: 22px 16px 20px; }
       h1 { font-size: 21px; }
       .project-filter { width: 100%; justify-content: space-between; }
-      .project-filter select { min-width: 156px; }
+      .project-filter select { min-width: 156px; max-width: 70%; }
       .view-tabs { width: 100%; }
       .view-tab { flex: 1; padding-right: 16px; padding-left: 16px; }
       .legend { justify-content: space-between; gap: 8px; font-size: 10px; }
@@ -668,10 +698,13 @@
       .session-open { padding: 13px 10px; }
       .session-name { font-size: 13px; }
       .session-meta { font-size: 10px; }
-      .level-grid, .form-grid { grid-template-columns: 1fr; }
-      .definition-row { grid-template-columns: 80px minmax(0, 1fr); }
-      .dialog-footer .actions { width: 100%; justify-content: flex-end; }
+      .definition-row { grid-template-columns: 72px minmax(0, 1fr); gap: 10px; }
+      .dialog-footer .actions { width: 100%; justify-content: flex-end; gap: 8px; }
+      .dialog-footer .btn { padding-right: 10px; padding-left: 10px; }
       .project-group + .project-group { margin-top: 22px; }
+      .draft-card { padding: 12px; }
+      .entry-options { gap: 12px 16px; font-size: 13px; }
+      .task-toolbar select { max-width: 210px; }
     }
     @media (prefers-reduced-motion: reduce) {
       * { scroll-behavior: auto !important; }
@@ -683,7 +716,7 @@
     <div class="header-inner">
       <div class="brand">
         <span class="brand-name">RoamBench</span>
-        <span class="version">v3.1</span>
+        <span class="version">v3.2</span>
         <span class="brand-location">本地工作区 / 项目看板</span>
       </div>
       <div class="snapshot">
@@ -795,13 +828,10 @@
         <h2 id="detail-title">会话详情</h2>
         <p id="detail-subtitle"></p>
       </div>
-      <button class="btn close-button" type="button" data-close="detail-dialog" aria-label="关闭会话详情" autofocus>关闭</button>
+      <button class="btn close-button" type="button" data-close="detail-dialog"
+        aria-label="关闭会话详情" autofocus>关闭</button>
     </header>
     <div class="dialog-body" id="detail-body"></div>
-    <footer class="dialog-footer">
-      <span class="source-note">Esc 关闭 · 自述未验证</span>
-      <button class="btn" type="button" data-close="detail-dialog">返回看板</button>
-    </footer>
   </dialog>
 
   <dialog class="drawer" id="task-dialog" aria-labelledby="task-drawer-title" aria-describedby="task-drawer-note">
@@ -810,7 +840,8 @@
         <h2 id="task-drawer-title">任务抽屉</h2>
         <p id="task-drawer-note">任务 / 会话 / 验收</p>
       </div>
-      <button class="btn close-button" type="button" data-close="task-dialog" aria-label="关闭任务抽屉" autofocus>关闭</button>
+      <button class="btn close-button" type="button" data-close="task-dialog"
+        aria-label="关闭任务抽屉" autofocus>关闭</button>
     </header>
     <div class="dialog-body">
       <div class="task-toolbar">
@@ -818,7 +849,7 @@
         <label>状态
           <select id="task-status" aria-label="任务状态">
             <option value="all">全部状态</option>
-            <option value="planned">待开始</option>
+            <option value="planned">待领取</option>
             <option value="running">进行中</option>
             <option value="blocked">阻塞</option>
             <option value="done">已完成</option>
@@ -838,127 +869,93 @@
     <header class="dialog-header">
       <div>
         <h2 id="create-title">新建</h2>
-        <p id="create-note">选择 L0–L3，配置后确认创建模拟记录</p>
+        <p id="create-note">填写项目入口与目标，Hermes 起草后批准创建</p>
       </div>
-      <button class="btn close-button" type="button" data-close="create-dialog" aria-label="关闭新建流程">关闭</button>
+      <button class="btn close-button" type="button" data-close="create-dialog"
+        aria-label="关闭新建流程">关闭</button>
     </header>
     <form id="create-form" novalidate>
       <div class="dialog-body">
         <ol class="steps" aria-label="新建步骤">
-          <li aria-current="step">1 · 选择层级</li>
-          <li>2 · 配置</li>
-          <li>3 · 确认</li>
+          <li aria-current="step">1 · 项目与目标</li>
+          <li>2 · 草案与批准</li>
         </ol>
-        <p class="notice">所有创建只修改当前页面内存；刷新即清除。L2 不启动 tmux，L3 不实际派发 HERMES。</p>
+        <p class="notice">本流程为页面模拟；起草、领取与执行状态仅保留至刷新。</p>
         <p class="notice" id="attach-notice" hidden></p>
 
-        <section id="create-step-0" aria-labelledby="level-legend">
-          <fieldset>
-            <legend id="level-legend" tabindex="-1">选择新建层级</legend>
-            <div class="level-grid">
-              <label class="level-option">
-                <input type="radio" name="level" value="0">
-                <span><strong>L0 · 项目</strong><small>建立项目容器，随后可添加任务与会话。</small></span>
+        <section id="create-entry" aria-labelledby="entry-legend">
+          <fieldset id="create-inputs">
+            <legend id="entry-legend" tabindex="-1">项目入口</legend>
+            <div class="entry-options">
+              <label class="entry-option">
+                <input type="radio" name="entry-type" value="folder" checked>
+                <span>项目文件夹</span>
               </label>
-              <label class="level-option">
-                <input type="radio" name="level" value="1" checked>
-                <span><strong>L1 · 任务</strong><small>记录目标与验收标准，暂不创建会话。</small></span>
-              </label>
-              <label class="level-option">
-                <input type="radio" name="level" value="2">
-                <span><strong>L2 · 会话</strong><small>关联现有或新建任务，登记普通会话。</small></span>
-              </label>
-              <label class="level-option">
-                <input type="radio" name="level" value="3">
-                <span><strong>L3 · HERMES</strong><small>登记任务、会话与 HERMES 待派发请求。</small></span>
+              <label class="entry-option">
+                <input type="radio" name="entry-type" value="git">
+                <span>Git 仓库</span>
               </label>
             </div>
+
+            <label class="field" id="folder-field">
+              <span>项目文件夹路径 *</span>
+              <input id="project-path" required maxlength="500" autocomplete="off"
+                placeholder="/home/ian/项目/xxx" spellcheck="false">
+            </label>
+
+            <label class="field" id="git-field" hidden>
+              <span>Git 仓库 URL *</span>
+              <input id="project-repo" required maxlength="1000" autocomplete="off"
+                placeholder="https://…/xxx.git" spellcheck="false" disabled>
+              <small>支持 GitHub / Gitea，接受 HTTPS、SSH 或 git@host:path 地址。</small>
+            </label>
+
+            <label class="field">
+              <span>目标一句话 *</span>
+              <input id="project-goal" required maxlength="300" autocomplete="off"
+                placeholder="例如：完成看板 v3.2，简化详情和新建流程。">
+            </label>
           </fieldset>
+          <p class="draft-progress" id="draft-progress" role="status" aria-live="polite" hidden>
+            Hermes 正在起草验收命令与 out-of-scope，约 2 秒…
+          </p>
         </section>
 
-        <section id="create-step-1" aria-labelledby="config-title" hidden>
-          <h3 id="config-title" tabindex="-1" style="margin-bottom:16px">配置</h3>
-          <div id="project-new-fields" hidden>
+        <section id="create-draft" aria-labelledby="draft-title" hidden>
+          <div class="draft-card">
+            <h3 id="draft-title" tabindex="-1">Hermes 草案</h3>
+            <p class="source-note">核对草案后批准；验收命令与 out-of-scope 均可编辑。</p>
+            <dl id="draft-summary"></dl>
+
             <label class="field">
-              <span>项目名称 *</span>
-              <input id="new-project-name" required maxlength="60" autocomplete="off">
+              <span>验收命令 *</span>
+              <textarea class="mono" id="draft-acceptance" required maxlength="3000"
+                spellcheck="false" aria-describedby="acceptance-help"></textarea>
+              <small id="acceptance-help">模拟建议，请按项目实际情况调整；每行一条命令。</small>
             </label>
+
             <label class="field">
-              <span>项目标识 *</span>
-              <input id="new-project-id" required pattern="[a-z0-9][a-z0-9-]{1,39}" maxlength="40"
-                placeholder="my-project" autocomplete="off">
-              <small>2–40 位小写字母、数字或连字符；首位为字母或数字，且不可重复。</small>
+              <span>out-of-scope *</span>
+              <textarea id="draft-out-of-scope" required maxlength="2000"></textarea>
             </label>
-          </div>
-          <div id="project-existing-fields">
-            <label class="field">
-              <span>所属项目 *</span>
-              <select id="create-project" required></select>
+
+            <label class="auto-option">
+              <input id="draft-auto-takeover" type="checkbox" checked aria-describedby="auto-help">
+              <span>批准后 Hermes 自动领取执行，异常时暂停并通知</span>
             </label>
-          </div>
-          <div id="task-binding-fields" hidden>
-            <label class="field">
-              <span>关联任务 *</span>
-              <select id="create-task" required></select>
-              <small>L2 / L3 必须关联任务，可同时新建。</small>
-            </label>
-          </div>
-          <div id="task-new-fields">
-            <label class="field">
-              <span>任务标题 *</span>
-              <input id="new-task-title" required maxlength="100" autocomplete="off" placeholder="例如：实现看板 v3">
-            </label>
-            <label class="field">
-              <span>目标与验收标准 *</span>
-              <textarea id="new-task-goal" required maxlength="1200" placeholder="说明预期结果，以及如何确认完成。"></textarea>
-            </label>
-          </div>
-          <div id="session-new-fields" hidden>
-            <div class="form-grid">
-              <label class="field">
-                <span>会话名称 *</span>
-                <input id="new-session-name" required pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,49}" maxlength="50"
-                  autocomplete="off" placeholder="rb-board-v3">
-                <small>1–50 位字母、数字、下划线或连字符；首位为字母或数字，全局唯一。</small>
-              </label>
-              <label class="field">
-                <span>工作目录 *</span>
-                <input id="new-session-cwd" required maxlength="240" autocomplete="off" placeholder="/workspace/roambench">
-                <small>填写绝对路径；本原型不检查目录是否存在。</small>
-              </label>
-            </div>
-          </div>
-          <div id="hermes-new-fields" hidden>
-            <label class="field">
-              <span>执行器 *</span>
-              <select id="new-agent" required>
-                <option value="codex">Codex</option>
-                <option value="claude">Claude Code</option>
-                <option value="shell">Shell worker</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>执行边界 *</span>
-              <textarea id="new-boundary" required maxlength="600"
-                placeholder="例如：仅处理当前项目；提交前运行验收；不执行部署。"></textarea>
-              <small>登记后状态为“待派发”，收到接管回执后才可显示“已接管”。</small>
-            </label>
+            <p class="auto-help" id="auto-help">取消勾选后，批准的任务留在「待领取」队列。</p>
+            <p class="risk-note">高危操作（删除/凭据/越界）始终暂停等待人工</p>
           </div>
         </section>
 
-        <section id="create-step-2" aria-labelledby="review-title" hidden>
-          <h3 id="review-title" tabindex="-1">确认创建内容</h3>
-          <dl class="review-list" id="create-review"></dl>
-        </section>
         <p class="form-error" id="create-error" role="alert" hidden></p>
       </div>
       <footer class="dialog-footer">
-        <span class="source-note" id="create-step-note">步骤 1 / 3</span>
+        <span class="source-note" id="create-step-note">步骤 1 / 2</span>
         <div class="actions">
           <button class="btn" type="button" data-close="create-dialog">取消</button>
-          <button class="btn" id="create-back" type="button" hidden>上一步</button>
-          <button class="btn primary" id="create-next" type="button">下一步</button>
-          <button class="btn primary" id="create-submit" type="submit" hidden>创建模拟记录</button>
+          <button class="btn" id="create-back" type="button" hidden>修改输入</button>
+          <button class="btn primary" id="create-submit" type="submit">提交并起草</button>
         </div>
       </footer>
     </form>
@@ -975,6 +972,7 @@
       const WINDOW_DURATION = 8 * 60;
       const SNAPSHOT_MINUTE = 14 * 60 + 32;
       const PREVIEW_DELAY = 200;
+      const DRAFT_DELAY = 2000;
       const $ = id => document.getElementById(id);
 
       const projects = [
@@ -982,9 +980,12 @@
         { id: "atlas-api", name: "atlas-api" },
         { id: "fieldnotes", name: "fieldnotes" },
         { id: "infra-kit", name: "infra-kit" }
-      ];
+      ].map(project => ({
+        ...project,
+        entryType: "folder",
+        entryValue: "/home/ian/项目/" + project.id
+      }));
 
-      // 保留原有 28 个会话、状态、活动年龄及时间段。
       const sessions = [
         { project: "roambench", name: "rb-board-v2", status: "active", age: 8, start: 9 * 60 + 12 },
         { project: "roambench", name: "rb-tmux-watch", status: "active", age: 16, start: 9 * 60 },
@@ -1019,23 +1020,23 @@
         { project: "infra-kit", name: "infra-cache-warm", status: "detached", age: 2 * 60 * 60, start: 10 * 60 + 20, end: 12 * 60 + 32 }
       ];
 
-      const statusLabels = { active: "运行中", idle: "空闲", exited: "已退出", detached: "已分离" };
-      const taskLabels = { planned: "待开始", running: "进行中", blocked: "阻塞", done: "已完成" };
+      const statusLabels = {
+        active: "运行中", idle: "空闲", exited: "已退出", detached: "已分离"
+      };
+      const taskLabels = {
+        planned: "待领取", running: "进行中", blocked: "阻塞", done: "已完成"
+      };
       const hermesModes = {
-        managed: "已接管",
-        queued: "待派发",
-        unmanaged: "未接管",
-        unknown: "未知"
+        managed: "已接管", queued: "待派发", unmanaged: "未接管", unknown: "未知"
       };
       const hermesLabels = Object.fromEntries(
         Object.entries(hermesModes).map(([mode, label]) => [mode, "HERMES · " + label])
       );
-      const levelNames = ["L0 · 项目", "L1 · 任务", "L2 · 会话", "L3 · HERMES"];
 
       const tasks = [
         {
           id: "RB-301", project: "roambench", title: "实现看板 v3",
-          goal: "详情分离证据与自述；任务可追踪；L0–L3 新建流程可操作。",
+          goal: "详情分离证据与自述；任务可追踪；新建流程可操作。",
           status: "running", owner: "产品 / UI", source: "模拟任务登记",
           members: ["rb-board-v2", "rb-web-vite", "rb-ui-tests"]
         },
@@ -1120,6 +1121,20 @@
         }
       };
 
+      const defaultBoundary = "不部署或推送；不修改项目外文件；不处理凭据；不执行删除操作。";
+      const initialAcceptance = {
+        "roambench": "git diff --check\nnpm test",
+        "atlas-api": "git diff --check\npytest",
+        "fieldnotes": "git diff --check\nnpm test",
+        "infra-kit": "git diff --check\ndocker compose config --quiet"
+      };
+
+      tasks.forEach(task => {
+        task.autoTakeover = task.members.some(name => Boolean(managed[name]));
+        task.acceptance = initialAcceptance[task.project];
+        task.outOfScope = defaultBoundary;
+      });
+
       const stamp = iso => {
         const date = new Date(iso);
         return new Date(date.getTime() + 8 * 3600000)
@@ -1129,38 +1144,31 @@
         (session.localOnly ? new Date(session.updatedAt).getTime() : SNAPSHOT.getTime()) -
         session.age * 1000
       );
+      const referenceDate = session => session.localOnly ? new Date() : SNAPSHOT;
 
       sessions.forEach((session, index) => {
         session.id = "session-" + (index + 1);
-        session.cwd = "/workspace/" + session.project;
         session.taskId = tasks.find(task => task.members.includes(session.name))?.id || null;
         session.report = reports[session.name] || null;
         session.updatedAt = SNAPSHOT.toISOString();
         session.hermes = managed[session.name]
           ? {
-              mode: "managed", dispatch: managed[session.name][0],
+              mode: "managed",
+              dispatch: managed[session.name][0],
               agent: managed[session.name][1],
-              source: "模拟 HERMES 接管回执",
-              time: "2026-10-15T14:20:00+08:00"
+              heartbeat: "2026-10-15T14:31:55+08:00",
+              paused: false
             }
           : {
               mode: unmanaged.has(session.name) ? "unmanaged" : "unknown",
-              source: unmanaged.has(session.name) ? "模拟注册表 · managed=false" : "注册 / 接管记录缺失",
-              time: unmanaged.has(session.name) ? SNAPSHOT.toISOString() : null
+              heartbeat: null,
+              paused: false
             };
-        session.evidence = [
-          {
-            title: "会话快照",
-            value: "session=" + session.name + "\nstatus=" + session.status +
-              "\n活动=" + stamp(activityDate(session)),
-            source: "模拟 tmux 快照", time: SNAPSHOT.toISOString()
-          },
-          {
-            title: "工作目录",
-            value: session.cwd,
-            source: "模拟 pane_current_path", time: SNAPSHOT.toISOString()
-          }
-        ];
+        session.evidence = [{
+          title: "会话快照",
+          value: "session=" + session.name + "\nstatus=" + session.status,
+          time: SNAPSHOT.toISOString()
+        }];
       });
 
       sessions.find(s => s.name === "rb-ui-tests").evidence.push({
@@ -1168,12 +1176,12 @@
         value: "report=ui-smoke-1426\npassed=18  failed=1\nfailed: drawer-keyboard-focus",
         verification: true,
         summary: "ui-smoke-1426 FAIL · 18/19",
-        source: "模拟测试报告", time: "2026-10-15T14:26:00+08:00"
+        time: "2026-10-15T14:26:00+08:00"
       });
       sessions.find(s => s.name === "infra-backup").evidence.push({
         title: "进程退出",
         value: "exit_code=0\n归档=已生成\n恢复校验=未提供",
-        source: "模拟进程事件", time: "2026-10-15T13:58:00+08:00"
+        time: "2026-10-15T13:58:00+08:00"
       });
 
       const expectedCounts = { active: 20, idle: 3, exited: 1, detached: 4 };
@@ -1191,14 +1199,20 @@
       const filter = $("project-filter");
       const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
       const dialogs = [$("detail-dialog"), $("task-dialog"), $("create-dialog")];
+      const dialogReturnFocus = new WeakMap();
       const preview = $("session-preview");
       const fineHover = window.matchMedia("(hover: hover) and (pointer: fine)");
       const coarsePointer = window.matchMedia("(pointer: coarse)");
+      const claimTimers = new Map();
+
       let activeTaskId = null;
       let serial = 0;
       let toastTimer;
-      let createStep = 0;
+      let createPhase = "entry";
       let createContext = {};
+      let draftInput = null;
+      let draftTimer;
+      let draftVersion = 0;
       let previewTimer;
       let previewState = null;
       let keyboardModality = true;
@@ -1238,10 +1252,12 @@
       }
 
       function relativeTime(seconds) {
+        seconds = Math.max(0, Math.floor(seconds));
         if (seconds < 30) return "刚刚";
         if (seconds < 60) return seconds + "s前";
         if (seconds < 3600) return Math.floor(seconds / 60) + "m前";
-        return Math.floor(seconds / 3600) + "h前";
+        if (seconds < 86400) return Math.floor(seconds / 3600) + "h前";
+        return Math.floor(seconds / 86400) + "天前";
       }
 
       function clockTime(minutes) {
@@ -1252,6 +1268,15 @@
       function timeNode(iso, compact = false) {
         const node = el("time", "", compact ? stamp(iso).slice(5) : stamp(iso));
         node.dateTime = new Date(iso).toISOString();
+        node.title = stamp(iso);
+        return node;
+      }
+
+      function relativeNode(iso, reference = new Date()) {
+        const date = new Date(iso);
+        const node = el("time", "", relativeTime((reference.getTime() - date.getTime()) / 1000));
+        node.dateTime = date.toISOString();
+        node.title = stamp(iso);
         return node;
       }
 
@@ -1261,12 +1286,6 @@
         dd.append(typeof value === "string" ? document.createTextNode(value) : value);
         row.append(el("dt", "", title), dd);
         list.append(row);
-      }
-
-      function sourceLine(source, time) {
-        const line = el("p", "source-note", "来源 " + source);
-        if (time) line.append(document.createTextNode(" · "), timeNode(time, true));
-        return line;
       }
 
       function notify(message) {
@@ -1304,7 +1323,6 @@
 
       function previewText(session) {
         const task = tasks.find(t => t.id === session.taskId);
-        // 阶段必须来自显式字段，不从会话状态或 agent 自述推断。
         const phase = session.phase || task?.phase;
         return {
           task: (task ? task.title : "未关联任务") + " · " +
@@ -1316,8 +1334,8 @@
       function fillPreview(session) {
         const text = previewText(session);
         const head = el("div", "hover-head");
-        const age = el("time", "hover-age", relativeTime(session.age));
-        age.dateTime = activityDate(session).toISOString();
+        const age = relativeNode(activityDate(session), referenceDate(session));
+        age.className = "hover-age";
         head.append(
           statusDot(session.status),
           el("span", "sr-only", statusLabels[session.status] + "，"),
@@ -1333,7 +1351,7 @@
           updated
         );
         return statusLabels[session.status] + "，" + session.name + "，" +
-          relativeTime(session.age) + "；" + text.task + "；" + text.evidence +
+          age.textContent + "；" + text.task + "；" + text.evidence +
           "；更新 " + stamp(session.updatedAt);
       }
 
@@ -1345,7 +1363,6 @@
         const viewportHeight = window.innerHeight;
         const box = preview.getBoundingClientRect();
         let x, y;
-
         if (previewState.mode === "pointer") {
           const point = previewState.point;
           x = point.x + gap;
@@ -1358,7 +1375,6 @@
           y = anchor.bottom + gap;
           if (y + box.height > viewportHeight - margin) y = anchor.top - box.height - gap;
         }
-
         const maxX = Math.max(margin, viewportWidth - box.width - margin);
         const maxY = Math.max(margin, viewportHeight - box.height - margin);
         preview.style.left = Math.max(margin, Math.min(x, maxX)) + "px";
@@ -1370,7 +1386,6 @@
         if (dialogs.some(dialog => dialog.open)) return;
         const state = { owner, anchor, session, mode, point };
         previewState = state;
-
         previewTimer = setTimeout(() => {
           if (previewState !== state || !owner.isConnected ||
               dialogs.some(dialog => dialog.open)) {
@@ -1386,11 +1401,9 @@
             hidePreview();
             return;
           }
-
           const announcement = fillPreview(session);
           preview.hidden = false;
           positionPreview();
-
           const ids = new Set((anchor.getAttribute("aria-describedby") || "")
             .split(/\s+/).filter(Boolean));
           ids.add(preview.id);
@@ -1407,28 +1420,23 @@
             x: event.clientX, y: event.clientY
           });
         });
-
         owner.addEventListener("pointermove", event => {
           if (event.pointerType !== "mouse" || previewState?.owner !== owner ||
               previewState.mode !== "pointer") return;
           previewState.point = { x: event.clientX, y: event.clientY };
           positionPreview();
         });
-
         owner.addEventListener("pointerleave", () => {
           if (previewState?.owner === owner && previewState.mode === "pointer") hidePreview();
         });
-
         owner.addEventListener("pointercancel", () => {
           if (previewState?.owner === owner) hidePreview();
         });
-
         owner.addEventListener("focusin", event => {
           const anchor = event.target;
           if (!keyboardModality || !anchor.matches(":focus-visible")) return;
           schedulePreview(owner, anchor, session, "keyboard");
         });
-
         owner.addEventListener("focusout", event => {
           if (previewState?.mode === "keyboard" && previewState.anchor === event.target) {
             hidePreview();
@@ -1440,12 +1448,10 @@
         keyboardModality = false;
         hidePreview();
       }, true);
-
       document.addEventListener("keydown", event => {
         if (!event.altKey && !event.ctrlKey && !event.metaKey) keyboardModality = true;
         if (event.key === "Escape") hidePreview();
       }, true);
-
       window.addEventListener("resize", hidePreview);
       window.addEventListener("blur", hidePreview);
       document.addEventListener("scroll", hidePreview, true);
@@ -1455,31 +1461,86 @@
       fineHover.addEventListener("change", hidePreview);
       coarsePointer.addEventListener("change", hidePreview);
 
+      function cancelDraft() {
+        clearTimeout(draftTimer);
+        draftTimer = null;
+        draftVersion++;
+      }
+
+      function closeDialog(dialog) {
+        if (dialog === $("create-dialog")) cancelDraft();
+        if (dialog.open) dialog.close();
+      }
+
       function showDialog(dialog) {
         hidePreview();
-        dialogs.forEach(other => {
-          if (other !== dialog && other.open) other.close();
-        });
-        if (!dialog.open) dialog.showModal();
+        const current = dialogs.find(other => other.open);
+        const active = document.activeElement;
+        const returnTo = current
+          ? dialogReturnFocus.get(current)
+          : active;
+        if (current && current !== dialog) closeDialog(current);
+        if (!dialog.open) {
+          dialogReturnFocus.set(dialog, returnTo);
+          dialog.showModal();
+        }
         dialog.scrollTop = 0;
       }
 
+      function outsideDialog(dialog, event) {
+        const rect = dialog.getBoundingClientRect();
+        return event.clientX < rect.left || event.clientX >= rect.right ||
+          event.clientY < rect.top || event.clientY >= rect.bottom;
+      }
+
+      // 所有 dialog 共用：遮罩点击、Esc、关闭按钮和焦点返回。
       dialogs.forEach(dialog => {
+        let outsidePointer = null;
+
+        dialog.addEventListener("pointerdown", event => {
+          outsidePointer = event.isPrimary && event.button === 0 &&
+            event.target === dialog && outsideDialog(dialog, event)
+              ? event.pointerId : null;
+        });
+        dialog.addEventListener("pointerup", event => {
+          const shouldClose = outsidePointer === event.pointerId &&
+            event.target === dialog && outsideDialog(dialog, event);
+          outsidePointer = null;
+          if (shouldClose) closeDialog(dialog);
+        });
+        dialog.addEventListener("pointercancel", () => { outsidePointer = null; });
+
+        dialog.addEventListener("cancel", event => {
+          event.preventDefault();
+          closeDialog(dialog);
+        });
         dialog.addEventListener("close", () => {
-          const target = document.activeElement;
-          if (!target || target === document.body ||
-              (!target.closest("dialog[open]") && target.closest("dialog"))) {
-            $("open-create").focus();
-          }
+          outsidePointer = null;
+          if (dialog === $("create-dialog")) cancelDraft();
+          requestAnimationFrame(() => {
+            if (dialogs.some(other => other.open)) return;
+            const target = dialogReturnFocus.get(dialog);
+            if (target?.isConnected && !target.closest("dialog") && !target.disabled) {
+              target.focus();
+            } else {
+              $("open-create").focus();
+            }
+          });
         });
       });
+
+      function hermesState(session) {
+        return session.hermes.paused
+          ? hermesModes[session.hermes.mode] + " · 已暂停"
+          : hermesModes[session.hermes.mode];
+      }
 
       function hermesBadge(session) {
         const badge = button("H", "hermes", session.id, "hermes-badge");
         badge.dataset.mode = session.hermes.mode;
-        badge.title = hermesLabels[session.hermes.mode] + " · " + session.hermes.source;
+        badge.title = "HERMES · " + hermesState(session);
         badge.setAttribute("aria-label",
-          session.name + "，" + hermesLabels[session.hermes.mode] + "，查看接管详情");
+          session.name + "，HERMES " + hermesState(session) + "，查看接管详情");
         badge.setAttribute("aria-haspopup", "dialog");
         return badge;
       }
@@ -1488,26 +1549,21 @@
         const cell = el("li", "session-cell");
         cell.dataset.status = session.status;
         const open = button("", "session", session.id, "session-open");
+        const age = relativeNode(activityDate(session), referenceDate(session));
         open.setAttribute("aria-label",
           session.name + "，" + statusLabels[session.status] + "，" +
-          relativeTime(session.age) +
-          (session.taskId ? "，任务 " + session.taskId : "") + "，查看详情");
+          age.textContent + (session.taskId ? "，任务 " + session.taskId : "") + "，查看详情");
         open.setAttribute("aria-haspopup", "dialog");
 
         const row = el("span", "session-name-row");
         row.append(statusDot(session.status), el("span", "session-name", session.name));
-
         const meta = el("span", "session-meta");
         const stateTime = el("span", "session-state-time");
-        const state = el("span", "", session.status);
         const separator = el("span", "", "·");
         separator.setAttribute("aria-hidden", "true");
-        const time = el("time", "", relativeTime(session.age));
-        time.dateTime = activityDate(session).toISOString();
-        stateTime.append(state, separator, time);
+        stateTime.append(el("span", "", session.status), separator, age);
         meta.append(stateTime);
         if (session.taskId) meta.append(el("span", "task-mini", session.taskId));
-
         open.append(row, meta);
         cell.append(open, hermesBadge(session));
         bindPreview(cell, session, open);
@@ -1531,7 +1587,10 @@
             group.forEach(session => list.append(makeSessionCell(session)));
             section.append(list);
           } else {
-            const empty = el("div", "empty-message", "项目已建立，尚无会话。");
+            const pending = tasks.filter(task =>
+              task.project === project.id && task.status === "planned").length;
+            const empty = el("div", "empty-message",
+              pending ? pending + " 个任务待领取，尚无会话。" : "项目已建立，尚无会话。");
             empty.append(document.createTextNode(" "), button("新建任务", "project-task", project.id));
             section.append(empty);
           }
@@ -1557,11 +1616,13 @@
         const bar = el("span", "timeline-bar");
         const end = session.end ?? SNAPSHOT_MINUTE;
         bar.dataset.status = session.status;
-        bar.style.setProperty("--start", ((session.start - WINDOW_START) / WINDOW_DURATION * 100) + "%");
-        bar.style.setProperty("--duration", ((end - session.start) / WINDOW_DURATION * 100) + "%");
+        bar.style.setProperty("--start",
+          ((session.start - WINDOW_START) / WINDOW_DURATION * 100) + "%");
+        bar.style.setProperty("--duration",
+          ((end - session.start) / WINDOW_DURATION * 100) + "%");
         const detail = session.name + "，" + statusLabels[session.status] +
           "，时间段 " + clockTime(session.start) + "–" + clockTime(end) +
-          (session.localOnly ? "，仅为本地模拟登记" :
+          (session.localOnly ? "，本页模拟领取，未启动外部进程" :
             session.status === "active" ? "，截至快照仍在运行" : "");
         bar.title = detail;
         bar.setAttribute("aria-hidden", "true");
@@ -1603,7 +1664,8 @@
           (canPointerPreview() ? "悬停快照 / 点击详情" : "点击详情");
         $("footer-count").textContent = "显示 " + visible.length + " / " + sessions.length + " 个会话";
         $("page-meta").textContent = projects.length + " 个项目 · " + sessions.length + " 个模拟 tmux 会话";
-        $("task-count").textContent = tasks.filter(t => filter.value === "all" || t.project === filter.value).length;
+        $("task-count").textContent = tasks.filter(t =>
+          filter.value === "all" || t.project === filter.value).length;
       }
 
       function selectTab(selected, moveFocus) {
@@ -1637,109 +1699,114 @@
           filter.options[filter.selectedIndex].textContent + "，" + $("footer-count").textContent;
       });
 
+      function taskAssociation(session) {
+        const row = el("div", "association-row");
+        const task = tasks.find(t => t.id === session.taskId);
+        if (task) {
+          row.append(
+            button(task.id + " · " + task.title, "task", task.id, "link-button"),
+            pill(taskLabels[task.status], task.status === "running"),
+            el("span", "source-note", "阶段 " + (session.phase || task.phase || "未记录"))
+          );
+        } else {
+          row.append(
+            el("span", "muted", "未关联"),
+            button("新建并关联", "session-task", session.id)
+          );
+        }
+        return row;
+      }
+
       function openSession(id, focusHermes = false) {
         const session = sessions.find(s => s.id === id);
         if (!session) return;
+        $("detail-dialog").dataset.session = id;
         $("detail-title").textContent = session.name;
-        $("detail-subtitle").textContent =
-          (projects.find(p => p.id === session.project)?.name || session.project) +
-          " · 更新 " + stamp(session.updatedAt).slice(5);
+
+        // 详情只显示这一行相对时间；其余绝对时间均放在 title。
+        const subtitle = $("detail-subtitle");
+        subtitle.replaceChildren(
+          document.createTextNode(
+            (projects.find(p => p.id === session.project)?.name || session.project) + " · 活动 "
+          ),
+          relativeNode(activityDate(session), referenceDate(session))
+        );
+        subtitle.title = "活动 " + stamp(activityDate(session)) +
+          "；快照更新 " + stamp(session.updatedAt);
+
         const body = $("detail-body");
         body.replaceChildren();
 
         const summary = el("div", "detail-summary");
-        const status = pill(session.status, session.status === "active");
-        status.setAttribute("aria-label", statusLabels[session.status]);
-        summary.append(
-          status,
-          pill("活动 " + relativeTime(session.age)),
-          pill(hermesLabels[session.hermes.mode], session.hermes.mode === "managed"),
-          pill(session.localOnly ? "本页登记 · 未启动" : "模拟快照")
-        );
+        const state = pill(session.status, session.status === "active");
+        state.setAttribute("aria-label", statusLabels[session.status]);
+        const snapshot = pill(session.localOnly ? "本页模拟" : "模拟快照");
+        snapshot.title = "更新 " + stamp(session.updatedAt);
+        summary.append(state, snapshot);
         body.append(summary);
 
-        const association = el("section", "info-card");
-        const associationRow = el("div", "association-row");
-        const task = tasks.find(t => t.id === session.taskId);
-        associationRow.append(el("span", "source-note", "任务"));
-        if (task) {
-          associationRow.append(
-            button(task.id + " · " + task.title, "task", task.id, "link-button"),
-            pill(taskLabels[task.status], task.status === "running")
-          );
-          association.append(
-            associationRow,
-            el("p", "source-note", "阶段 " + (session.phase || task.phase || "未记录") +
-              " · 状态来源 人工 · 活动不联动")
-          );
-        } else {
-          associationRow.append(
-            el("span", "muted", "未关联"),
-            button("新建并关联", "session-task", session.id)
-          );
-          association.append(associationRow);
-        }
-        body.append(association);
+        const hermes = el("section", "info-card");
+        hermes.id = "hermes-detail";
+        const hermesHeading = el("div", "card-heading");
+        const hermesTitle = el("h3", "", "HERMES");
+        hermesTitle.tabIndex = -1;
+        const identity = pill(session.hermes.dispatch
+          ? session.hermes.dispatch + " · " + session.hermes.agent
+          : "身份未登记",
+          session.hermes.mode === "managed");
+        identity.classList.add("wrap");
+        hermesHeading.append(hermesTitle, identity);
+        hermes.append(hermesHeading);
 
-        const columns = el("div", "detail-columns");
+        const info = el("dl");
+        definition(info, "接管状态",
+          pill(hermesState(session), session.hermes.mode === "managed" && !session.hermes.paused));
+        const heartbeat = el("span", "",
+          session.hermes.heartbeat ? "正常" :
+            session.hermes.mode === "queued" ? "等待首次心跳" :
+            session.hermes.mode === "unmanaged" ? "未接管" : "未记录");
+        if (session.hermes.heartbeat) {
+          heartbeat.title = "最近心跳 " + stamp(session.hermes.heartbeat);
+          heartbeat.setAttribute("aria-label", "心跳正常");
+        }
+        definition(info, "心跳", heartbeat);
+        definition(info, "关联任务", taskAssociation(session));
+        hermes.append(info);
+        body.append(hermes);
+
+        const columns = el("div", "detail-columns" + (session.report ? "" : " single"));
         const evidence = el("section", "info-card evidence-card");
         evidence.append(el("h3", "", "证据"));
         const evidenceList = el("ul", "evidence-list");
         session.evidence.forEach(item => {
           const li = el("li");
           const heading = el("div", "evidence-heading");
+          if (item.time) heading.title = stamp(item.time);
           heading.append(
             sourceBadge(session.localOnly ? "登记" : "输出"),
             el("strong", "", item.title)
           );
-          li.append(
-            heading,
-            el("pre", "evidence-value", item.value),
-            sourceLine(item.source, item.time)
-          );
+          li.append(heading, el("pre", "evidence-value", item.value));
           evidenceList.append(li);
         });
         if (!session.evidence.length) evidence.append(el("p", "muted", "暂无证据"));
         else evidence.append(evidenceList);
+        columns.append(evidence);
 
-        const report = el("section", "info-card report-card");
-        const reportHeading = el("div", "card-heading");
-        reportHeading.append(el("h3", "", "执行者"), sourceBadge("自述"), pill("未验证"));
-        report.append(reportHeading);
+        // 没有自述时不创建执行者卡，也不创建未验证徽标。
         if (session.report) {
-          report.append(
-            el("blockquote", "", session.report.text),
-            sourceLine("模拟消息 · " + session.report.author, session.report.time)
-          );
-        } else {
-          report.append(el("p", "muted", "暂无自述"));
+          const report = el("section", "info-card report-card");
+          const reportHeading = el("div", "card-heading");
+          reportHeading.append(el("h3", "", "执行者"), sourceBadge("自述"), pill("未验证"));
+          const quote = el("blockquote", "", session.report.text);
+          quote.title = stamp(session.report.time);
+          report.append(reportHeading, quote, el("p", "source-note", session.report.author));
+          if (session.name === "rb-ui-tests") {
+            report.append(el("p", "source-note", "差异 自述全通过 / 测试失败 1 · 待复核"));
+          }
+          columns.append(report);
         }
-        if (session.name === "rb-ui-tests") {
-          report.append(el("p", "source-note", "差异 自述全通过 / 测试失败 1 · 待复核"));
-        }
-        columns.append(evidence, report);
         body.append(columns);
-
-        const hermes = el("section", "info-card");
-        hermes.id = "hermes-detail";
-        const hermesTitle = el("h3", "", "HERMES");
-        hermesTitle.tabIndex = -1;
-        hermes.append(hermesTitle);
-        const info = el("dl");
-        definition(info, "来源", session.hermes.source);
-        if (session.hermes.time) definition(info, "时间", timeNode(session.hermes.time, true));
-        if (session.hermes.dispatch) definition(info, "派发", session.hermes.dispatch);
-        if (session.hermes.agent) definition(info, "执行器", session.hermes.agent);
-        if (session.hermes.boundary) definition(info, "边界", session.hermes.boundary);
-        const records = {
-          managed: "回执 已收到 · 任务验收 独立",
-          queued: "回执 未收到 · 请求 仅本页登记",
-          unmanaged: "注册 managed=false · 会话 独立运行",
-          unknown: "元数据 缺失 · 归属 未知"
-        };
-        definition(info, "记录", records[session.hermes.mode]);
-        hermes.append(info);
-        body.append(hermes);
         showDialog($("detail-dialog"));
         if (focusHermes) hermesTitle.focus();
       }
@@ -1796,6 +1863,7 @@
           inspector.append(el("p", "empty-message", "调整筛选 / 新建任务"));
           return;
         }
+        const related = sessions.filter(session => session.taskId === task.id);
         const card = el("div", "info-card");
         card.append(el("h3", "", task.title));
         const details = el("dl");
@@ -1804,35 +1872,50 @@
         definition(details, "负责人", task.owner);
         definition(details, "来源", task.source);
         definition(details, "阶段", task.phase || "未记录");
-        definition(details, "目标 / 验收", task.goal);
+        definition(details, "目标", task.goal);
+        definition(details, "验收命令", el("span", "pre-line", task.acceptance));
+        definition(details, "out-of-scope", task.outOfScope);
+        definition(details, "自动接管", task.autoTakeover ? "是" : "否");
         if (task.blocker) definition(details, "阻塞", task.blocker.replace(/。$/, ""));
         card.append(details);
-        if (task.updatedAt) card.append(sourceLine("本页人工更新", task.updatedAt));
+        if (task.updatedAt) {
+          const updated = el("p", "source-note", "更新 ");
+          updated.append(relativeNode(task.updatedAt));
+          card.append(updated);
+        }
         card.append(el("p", "source-note", "完成标记 人工声明 · 验收证据 独立"));
+        if (task.status === "planned") {
+          card.append(el("p", "source-note",
+            claimTimers.has(task.id) ? "Hermes 正在自动领取（模拟）…" :
+              task.autoTakeover ? "等待 Hermes 领取" : "任务留在「待领取」队列"));
+        }
 
         const actions = el("div", "actions");
         if (task.status !== "running") actions.append(button("设为进行中", "task-running", task.id));
         actions.append(button(task.status === "done" ? "重开" : "标记完成", "task-toggle", task.id));
         actions.append(button("新建关联会话", "task-session", task.id));
+        if (related.some(session => session.hermes.mode === "managed" && !session.hermes.paused)) {
+          const pause = button("模拟异常", "task-pause", task.id);
+          pause.title = "演示异常时暂停并通知";
+          actions.append(pause);
+        }
         card.append(actions);
         inspector.append(card);
 
         const linked = el("section", "info-card");
-        const related = sessions.filter(session => session.taskId === task.id);
         linked.append(el("h3", "", "关联会话 · " + related.length));
-        if (!related.length) linked.append(el("p", "muted", "暂无 · 可用 L2 / L3 新建"));
+        if (!related.length) linked.append(el("p", "muted", "暂无 · Hermes 领取后关联会话"));
         else {
           const list = el("ul", "task-session-list");
           related.forEach(session => {
             const li = el("li");
-            const status = statusDot(session.status);
             const name = button(session.name, "session", session.id, "link-button");
             name.setAttribute("aria-label",
               session.name + "，" + statusLabels[session.status] + "，查看详情");
             name.setAttribute("aria-haspopup", "dialog");
-            const mode = el("span", "source-note", hermesModes[session.hermes.mode]);
-            mode.setAttribute("aria-label", hermesLabels[session.hermes.mode]);
-            li.append(status, name, mode);
+            const mode = el("span", "source-note", hermesState(session));
+            mode.setAttribute("aria-label", "HERMES · " + hermesState(session));
+            li.append(statusDot(session.status), name, mode);
             list.append(li);
           });
           linked.append(list);
@@ -1846,309 +1929,424 @@
       $("task-project").addEventListener("change", renderTasks);
       $("task-status").addEventListener("change", renderTasks);
       $("drawer-create").addEventListener("click", () => openCreate({
-        level: 1, project: $("task-project").value
+        project: $("task-project").value
       }));
 
-      function level() {
-        return Number(document.querySelector('input[name="level"]:checked').value);
+      function entryType() {
+        return document.querySelector('input[name="entry-type"]:checked').value;
       }
 
-      function toggleFields(id, visible) {
-        const group = $(id);
-        group.hidden = !visible;
-        group.querySelectorAll("input, select, textarea").forEach(control => {
-          control.disabled = !visible;
+      function syncEntryFields() {
+        const folder = entryType() === "folder";
+        const locked = Boolean(createContext.attachSession || createContext.taskId);
+        $("folder-field").hidden = !folder;
+        $("git-field").hidden = folder;
+        $("project-path").disabled = !folder;
+        $("project-repo").disabled = folder;
+        $("project-path").readOnly = locked;
+        $("project-repo").readOnly = locked;
+        document.querySelectorAll('input[name="entry-type"]').forEach(radio => {
+          radio.disabled = locked;
         });
       }
 
-      function populateTaskChoices(preferred) {
-        const select = $("create-task");
-        const previous = preferred ?? select.value;
-        select.replaceChildren(new Option("＋ 同时新建任务", "__new"));
-        tasks.filter(task => task.project === $("create-project").value).forEach(task => {
-          select.append(new Option(task.id + " · " + task.title, task.id));
+      function setCreatePhase(phase, moveFocus = true) {
+        createPhase = phase;
+        const drafting = phase === "drafting";
+        const draft = phase === "draft";
+        $("create-entry").hidden = draft;
+        $("create-draft").hidden = !draft;
+        $("draft-progress").hidden = !drafting;
+        $("create-inputs").disabled = drafting || draft;
+        $("create-form").setAttribute("aria-busy", String(drafting));
+        $("create-back").hidden = !draft;
+        $("create-submit").disabled = drafting;
+        $("create-submit").textContent = drafting ? "正在起草…" :
+          draft ? "批准并创建" : "提交并起草";
+        $("create-step-note").textContent = drafting
+          ? "步骤 1 / 2 · Hermes 起草中"
+          : draft ? "步骤 2 / 2" : "步骤 1 / 2";
+        document.querySelectorAll(".steps li").forEach((item, index) => {
+          if (index === (draft ? 1 : 0)) item.setAttribute("aria-current", "step");
+          else item.removeAttribute("aria-current");
         });
-        select.value = previous;
-        if (select.selectedIndex < 0) select.value = "__new";
-      }
-
-      function syncCreateFields() {
-        const selected = level();
-        toggleFields("project-new-fields", selected === 0);
-        toggleFields("project-existing-fields", selected > 0);
-        toggleFields("task-binding-fields", selected >= 2);
-        toggleFields("task-new-fields", selected === 1 || (selected >= 2 && $("create-task").value === "__new"));
-        toggleFields("session-new-fields", selected >= 2);
-        toggleFields("hermes-new-fields", selected === 3);
-        const attached = createContext.attachSession && selected === 1;
-        $("attach-notice").hidden = !attached;
-        if (attached) {
-          const session = sessions.find(s => s.id === createContext.attachSession);
-          $("attach-notice").textContent = "创建任务后关联当前会话：" + (session?.name || "");
-          $("create-project").disabled = true;
-        } else {
-          $("create-project").disabled = selected === 0;
+        $("create-error").hidden = true;
+        if (moveFocus && !drafting) {
+          (draft ? $("draft-title") : $("entry-legend")).focus();
         }
       }
 
       function openCreate(context = {}) {
-        createContext = context;
+        cancelDraft();
+        createContext = { ...context };
+        draftInput = null;
         $("create-form").reset();
-        $("create-form").querySelectorAll("input, textarea, select").forEach(control => {
+        $("create-form").querySelectorAll("input, textarea").forEach(control => {
           control.setCustomValidity("");
         });
-        projectOptions(
-          $("create-project"), false,
-          context.project && context.project !== "all" ? context.project :
-            filter.value !== "all" ? filter.value : projects[0].id
-        );
-        document.querySelector('input[name="level"][value="' + (context.level ?? 1) + '"]').checked = true;
-        populateTaskChoices(context.taskId || "__new");
-        $("new-session-cwd").value = "/workspace/" + $("create-project").value;
-        syncCreateFields();
-        setCreateStep(0, false);
+
+        const projectId = context.project && context.project !== "all"
+          ? context.project : filter.value !== "all" ? filter.value : null;
+        const project = projects.find(p => p.id === projectId);
+        const task = tasks.find(t => t.id === context.taskId);
+        if (project) {
+          document.querySelector(
+            'input[name="entry-type"][value="' + project.entryType + '"]'
+          ).checked = true;
+          $(project.entryType === "folder" ? "project-path" : "project-repo").value =
+            project.entryValue;
+        }
+        if (task) $("project-goal").value = task.goal;
+
+        $("attach-notice").hidden = !context.attachSession && !context.taskId;
+        if (context.attachSession) {
+          const session = sessions.find(s => s.id === context.attachSession);
+          $("attach-notice").textContent = "批准后关联当前会话：" + (session?.name || "");
+        } else if (context.taskId) {
+          $("attach-notice").textContent =
+            "为任务 " + context.taskId + " 起草关联执行方案；勾选自动领取后创建模拟会话。";
+        }
+        syncEntryFields();
+        setCreatePhase("entry", false);
         showDialog($("create-dialog"));
-        document.querySelector('input[name="level"]:checked').focus();
+        (project?.entryType === "git" ? $("project-repo") : $("project-path")).focus();
       }
 
-      function setCreateStep(step, moveFocus = true) {
-        createStep = step;
-        for (let index = 0; index < 3; index++) {
-          $("create-step-" + index).hidden = index !== step;
-          const item = document.querySelectorAll(".steps li")[index];
-          if (index === step) item.setAttribute("aria-current", "step");
-          else item.removeAttribute("aria-current");
-        }
-        $("create-back").hidden = step === 0;
-        $("create-next").hidden = step === 2;
-        $("create-submit").hidden = step !== 2;
-        $("create-step-note").textContent = "步骤 " + (step + 1) + " / 3 · " + levelNames[level()];
-        $("create-error").hidden = true;
-        if (moveFocus) {
-          const target = step === 0 ? $("level-legend") : step === 1 ? $("config-title") : $("review-title");
-          target.focus();
-        }
-      }
-
-      function validateConfig() {
-        syncCreateFields();
-        const selected = level();
-        const controls = Array.from($("create-step-1").querySelectorAll("input, textarea, select"))
-          .filter(control => !control.disabled);
-        controls.forEach(control => {
-          control.setCustomValidity("");
-          if (control.required && !control.value.trim()) control.setCustomValidity("请填写此项，内容不能只有空格。");
-        });
-
-        if (selected === 0 && projects.some(project => project.id === $("new-project-id").value.trim())) {
-          $("new-project-id").setCustomValidity("项目标识已存在，请使用其他标识。");
-        }
-        if (selected >= 2) {
-          if (sessions.some(session => session.name === $("new-session-name").value.trim())) {
-            $("new-session-name").setCustomValidity("会话名称已存在，请使用其他名称。");
-          }
-          const cwd = $("new-session-cwd").value.trim();
-          if (!cwd.startsWith("/") || /[\r\n\0]/.test(cwd)) {
-            $("new-session-cwd").setCustomValidity("请输入不含换行符的绝对路径。");
-          }
-          const taskId = $("create-task").value;
-          if (taskId !== "__new" && !tasks.some(task =>
-            task.id === taskId && task.project === $("create-project").value)) {
-            $("create-task").setCustomValidity("请选择当前项目下的有效任务。");
-          }
-        }
-        const invalid = controls.find(control => !control.checkValidity());
-        if (invalid) {
-          setCreateStep(1, false);
-          $("create-error").textContent = "请修正配置中标出的字段。";
-          $("create-error").hidden = false;
-          invalid.reportValidity();
+      function validRepo(value) {
+        if (/[\s\0]/.test(value)) return false;
+        if (/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s/:][^\s]*$/.test(value)) return true;
+        try {
+          const url = new URL(value);
+          return ["https:", "http:", "ssh:", "git:"].includes(url.protocol) &&
+            Boolean(url.hostname) && url.pathname.replace(/\/+$/, "").length > 1;
+        } catch {
           return false;
+        }
+      }
+
+      function failControl(control, message) {
+        control.setCustomValidity(message);
+        $("create-error").textContent = message;
+        $("create-error").hidden = false;
+        control.reportValidity();
+        control.focus();
+        return false;
+      }
+
+      function validateEntry() {
+        syncEntryFields();
+        const type = entryType();
+        const input = type === "folder" ? $("project-path") : $("project-repo");
+        const value = input.value.trim();
+        const goal = $("project-goal").value.trim();
+        [input, $("project-goal")].forEach(control => control.setCustomValidity(""));
+
+        if (!value) return failControl(input, "请填写项目文件夹路径或 Git 仓库 URL。");
+        if (!input.checkValidity()) {
+          input.reportValidity();
+          return false;
+        }
+        if (type === "folder" && (!value.startsWith("/") || /[\r\n\0]/.test(value))) {
+          return failControl(input, "请输入不含换行符的项目绝对路径。");
+        }
+        if (type === "git" && !validRepo(value)) {
+          return failControl(input, "请输入有效的 Git 仓库地址，支持 GitHub / Gitea。");
+        }
+        if (!goal) return failControl($("project-goal"), "请用一句话填写目标。");
+        if (/[\r\n]/.test(goal)) return failControl($("project-goal"), "请将目标填写为一行。");
+        if (!$("project-goal").checkValidity()) {
+          $("project-goal").reportValidity();
+          return false;
+        }
+        return { type, value, goal };
+      }
+
+      function canonicalEntry(type, value) {
+        return type + ":" + value.replace(/\/+$/, "");
+      }
+
+      function inputProject(input) {
+        const lockedId = createContext.attachSession || createContext.taskId
+          ? createContext.project : null;
+        return projects.find(project => project.id === lockedId) ||
+          projects.find(project =>
+            canonicalEntry(project.entryType, project.entryValue) ===
+            canonicalEntry(input.type, input.value)
+          );
+      }
+
+      function suggestedAcceptance(input) {
+        const task = tasks.find(t => t.id === createContext.taskId);
+        if (task) return task.acceptance;
+        const project = inputProject(input);
+        return initialAcceptance[project?.id] || "git diff --check\n# 在此补充项目测试命令";
+      }
+
+      function beginDraft() {
+        if (createPhase !== "entry") return;
+        const input = validateEntry();
+        if (!input) return;
+
+        cancelDraft();
+        const version = draftVersion;
+        draftInput = { ...input };
+        setCreatePhase("drafting", false);
+        draftTimer = setTimeout(() => {
+          if (version !== draftVersion || !$("create-dialog").open ||
+              createPhase !== "drafting") return;
+          draftTimer = null;
+          const summary = $("draft-summary");
+          summary.replaceChildren();
+          definition(summary, input.type === "folder" ? "项目文件夹" : "Git 仓库", input.value);
+          definition(summary, "目标", input.goal);
+          $("draft-acceptance").value = suggestedAcceptance(input);
+          $("draft-out-of-scope").value =
+            tasks.find(t => t.id === createContext.taskId)?.outOfScope || defaultBoundary;
+          $("draft-auto-takeover").checked = true;
+          setCreatePhase("draft");
+        }, DRAFT_DELAY);
+      }
+
+      function validateDraft() {
+        for (const [id, message] of [
+          ["draft-acceptance", "请填写验收命令。"],
+          ["draft-out-of-scope", "请填写 out-of-scope。"]
+        ]) {
+          const control = $(id);
+          control.setCustomValidity("");
+          if (!control.value.trim()) return failControl(control, message);
+          if (!control.checkValidity()) {
+            control.reportValidity();
+            control.focus();
+            return false;
+          }
+        }
+        const commands = $("draft-acceptance").value.split(/\r?\n/)
+          .map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+        if (!commands.length) {
+          return failControl($("draft-acceptance"), "请至少填写一条验收命令。");
         }
         return true;
       }
 
-      function buildReview() {
-        const selected = level();
-        const list = $("create-review");
-        list.replaceChildren();
-        definition(list, "新建层级", levelNames[selected]);
-        if (selected === 0) {
-          definition(list, "项目名称", $("new-project-name").value.trim());
-          definition(list, "项目标识", $("new-project-id").value.trim());
-          definition(list, "创建结果", "1 个空项目");
-        } else {
-          definition(list, "所属项目", $("create-project").selectedOptions[0].textContent);
-          const newTask = selected === 1 || $("create-task").value === "__new";
-          if (newTask) {
-            definition(list, "新建任务", $("new-task-title").value.trim());
-            definition(list, "目标 / 验收", $("new-task-goal").value.trim());
-            definition(list, "初始任务状态", "待开始");
-          } else {
-            definition(list, "关联任务", $("create-task").selectedOptions[0].textContent);
-          }
-          if (selected === 1 && createContext.attachSession) {
-            definition(list, "关联会话", sessions.find(s => s.id === createContext.attachSession)?.name || "");
-          }
-          if (selected >= 2) {
-            definition(list, "会话名称", $("new-session-name").value.trim());
-            definition(list, "工作目录", $("new-session-cwd").value.trim());
-            definition(list, "会话初始状态", "idle · 仅为模拟登记，未启动进程");
-            definition(list, "HERMES", selected === 3 ? "待派发 · 尚未接管" : "未接管");
-          }
-          if (selected === 3) {
-            definition(list, "执行器", $("new-agent").selectedOptions[0].textContent);
-            definition(list, "执行边界", $("new-boundary").value.trim());
+      function projectName(input) {
+        let path = input.value;
+        if (input.type === "git") {
+          try {
+            path = new URL(input.value).pathname;
+          } catch {
+            path = input.value.slice(input.value.indexOf(":") + 1);
           }
         }
-        definition(list, "数据保存", "仅当前页面内存；刷新清除，不调用外部服务");
+        let name = path.replace(/\/+$/, "").split("/").pop() || "project";
+        try { name = decodeURIComponent(name); } catch {}
+        return name.replace(/\.git$/i, "").slice(0, 60) || "project";
       }
 
-      $("open-create").addEventListener("click", () => openCreate());
-      document.querySelectorAll('input[name="level"]').forEach(radio => {
-        radio.addEventListener("change", syncCreateFields);
-      });
-      $("create-project").addEventListener("change", () => {
-        populateTaskChoices("__new");
-        $("new-session-cwd").value = "/workspace/" + $("create-project").value;
-        syncCreateFields();
-      });
-      $("create-task").addEventListener("change", syncCreateFields);
-      $("create-form").addEventListener("input", event => {
-        if (typeof event.target.setCustomValidity === "function") event.target.setCustomValidity("");
-        $("create-error").hidden = true;
-      });
-      $("create-back").addEventListener("click", () => setCreateStep(createStep - 1));
-      $("create-next").addEventListener("click", () => {
-        if (createStep === 0) {
-          syncCreateFields();
-          setCreateStep(1);
-        } else if (validateConfig()) {
-          buildReview();
-          setCreateStep(2);
+      function ensureProject(input) {
+        const existing = inputProject(input);
+        if (existing) return existing;
+        const name = projectName(input);
+        const base = name.toLowerCase().replace(/[^a-z0-9-]+/g, "-")
+          .replace(/^-+|-+$/g, "").slice(0, 36) || "project";
+        let id = base;
+        let suffix = 2;
+        while (projects.some(project => project.id === id)) id = base + "-" + suffix++;
+        const project = {
+          id, name, entryType: input.type, entryValue: input.value
+        };
+        projects.push(project);
+        filter.append(new Option(project.name, project.id));
+        return project;
+      }
+
+      function attachSessionToTask(session, task) {
+        if (session.taskId && session.taskId !== task.id) {
+          const previous = tasks.find(item => item.id === session.taskId);
+          if (previous) previous.members = previous.members.filter(name => name !== session.name);
         }
-      });
+        session.taskId = task.id;
+        if (!task.members.includes(session.name)) task.members.push(session.name);
+      }
 
-      $("create-form").addEventListener("submit", event => {
-        event.preventDefault();
-        if (createStep !== 2) {
-          $("create-next").click();
-          return;
-        }
-        if (!validateConfig()) return;
-        $("create-submit").disabled = true;
+      function cancelClaim(taskId) {
+        if (!claimTimers.has(taskId)) return;
+        clearTimeout(claimTimers.get(taskId));
+        claimTimers.delete(taskId);
+      }
 
-        let createdProject = null;
-        let createdTask = null;
-        let createdSession = null;
-        const selected = level();
-        const now = new Date().toISOString();
+      function scheduleClaim(task, attachSessionId = null) {
+        cancelClaim(task.id);
+        const timer = setTimeout(() => {
+          claimTimers.delete(task.id);
+          if (!task.autoTakeover || task.status !== "planned") return;
 
-        try {
-          if (selected === 0) {
-            createdProject = {
-              id: $("new-project-id").value.trim(),
-              name: $("new-project-name").value.trim()
+          const now = new Date().toISOString();
+          let session = attachSessionId
+            ? sessions.find(item => item.id === attachSessionId && item.project === task.project)
+            : null;
+          if (!session) {
+            const sessionSerial = ++serial;
+            session = {
+              id: "local-session-" + sessionSerial,
+              project: task.project,
+              name: "hermes-" + task.project.slice(0, 28) + "-" + sessionSerial,
+              status: "active",
+              age: 0,
+              start: SNAPSHOT_MINUTE,
+              taskId: task.id,
+              updatedAt: now,
+              localOnly: true,
+              report: null,
+              evidence: []
             };
-            projects.push(createdProject);
-            filter.append(new Option(createdProject.name, createdProject.id));
-            filter.value = createdProject.id;
-          } else {
-            const project = $("create-project").value;
-            let taskId = selected >= 2 ? $("create-task").value : "__new";
-            if (taskId === "__new") {
-              createdTask = {
-                id: "LOCAL-" + (++serial),
-                project,
-                title: $("new-task-title").value.trim(),
-                goal: $("new-task-goal").value.trim(),
-                status: "planned",
-                owner: "未分配",
-                source: "本页表单登记（模拟）",
-                updatedAt: now,
-                members: []
-              };
-              tasks.push(createdTask);
-              taskId = createdTask.id;
-            }
-            if (selected === 1 && createContext.attachSession) {
-              const session = sessions.find(s => s.id === createContext.attachSession);
-              if (session && session.project === project) {
-                session.taskId = taskId;
-                session.updatedAt = now;
-              }
-            }
-            if (selected >= 2) {
-              createdSession = {
-                id: "local-session-" + (++serial),
-                project,
-                name: $("new-session-name").value.trim(),
-                status: "idle",
-                age: 0,
-                start: SNAPSHOT_MINUTE,
-                cwd: $("new-session-cwd").value.trim(),
-                taskId,
-                updatedAt: now,
-                localOnly: true,
-                report: null,
-                hermes: selected === 3 ? {
-                  mode: "queued",
-                  dispatch: "LOCAL-H-" + (++serial),
-                  agent: $("new-agent").value,
-                  boundary: $("new-boundary").value.trim(),
-                  source: "本页表单登记 · 无接管回执",
-                  time: now
-                } : {
-                  mode: "unmanaged",
-                  source: "本页 L2 登记 · managed=false",
-                  time: now
-                },
-                evidence: [
-                  {
-                    title: "登记事件",
-                    value: "session=" + $("new-session-name").value.trim() +
-                      "\n状态=模拟 idle\n进程=未启动\ntmux 运行证据=未采集",
-                    source: "本页表单事件", time: now
-                  },
-                  {
-                    title: "请求目录",
-                    value: $("new-session-cwd").value.trim() + "\n校验=未检查文件系统",
-                    source: "本页表单参数", time: now
-                  }
-                ]
-              };
-              sessions.push(createdSession);
-            }
-            filter.value = project;
+            sessions.push(session);
           }
+          attachSessionToTask(session, task);
+          session.status = "active";
+          session.age = 0;
+          session.localOnly = true;
+          session.updatedAt = now;
+          delete session.end;
+          session.hermes = {
+            mode: "managed",
+            dispatch: "LOCAL-H-" + (++serial),
+            agent: "codex",
+            heartbeat: now,
+            paused: false
+          };
+          session.evidence.push({
+            title: "模拟领取",
+            value: "task=" + task.id +
+              "\n领取=Hermes\n运行方式=本页模拟\n外部进程=未启动",
+            time: now
+          });
+          task.status = "running";
+          task.owner = "Hermes";
+          task.phase = "模拟执行";
+          task.updatedAt = now;
+          delete task.blocker;
 
           render();
-          $("create-dialog").close();
-          if (createdSession) {
-            openSession(createdSession.id);
-            notify(selected === 3 ? "已登记模拟任务与会话，HERMES 待派发。" : "已创建模拟会话并关联任务。");
-          } else if (createdTask) {
-            openTasks(createdTask.id, createdTask.project);
-            notify(createContext.attachSession ? "已创建任务并关联当前会话。" : "已创建任务。");
-          } else {
-            selectTab($("tab-wall"), false);
-            filter.focus();
-            notify("已创建空项目，可继续新建任务。");
+          if ($("task-dialog").open) renderTasks();
+          if ($("detail-dialog").open &&
+              $("detail-dialog").dataset.session === session.id) {
+            openSession(session.id);
           }
+          notify("Hermes 已自动领取 " + task.id + "，进入模拟执行。");
+        }, 1000);
+        claimTimers.set(task.id, timer);
+      }
+
+      function approveDraft() {
+        if (createPhase !== "draft" || !draftInput || !validateDraft()) return;
+        $("create-submit").disabled = true;
+        try {
+          const project = ensureProject(draftInput);
+          const now = new Date().toISOString();
+          let task = tasks.find(item => item.id === createContext.taskId);
+          const isNewTask = !task;
+          if (!task) {
+            task = {
+              id: "LOCAL-" + (++serial),
+              project: project.id,
+              members: []
+            };
+            tasks.push(task);
+          }
+          cancelClaim(task.id);
+          Object.assign(task, {
+            title: draftInput.goal,
+            goal: draftInput.goal,
+            acceptance: $("draft-acceptance").value.trim(),
+            outOfScope: $("draft-out-of-scope").value.trim(),
+            autoTakeover: $("draft-auto-takeover").checked,
+            status: "planned",
+            owner: "未分配",
+            phase: "待领取",
+            source: "Hermes 模拟草案 · 人工批准",
+            updatedAt: now
+          });
+          delete task.blocker;
+
+          if (createContext.attachSession) {
+            const session = sessions.find(item => item.id === createContext.attachSession);
+            if (session && session.project === task.project) {
+              attachSessionToTask(session, task);
+              session.updatedAt = now;
+            }
+          }
+
+          filter.value = project.id;
+          if (task.autoTakeover) scheduleClaim(task, createContext.attachSession || null);
+          render();
+          closeDialog($("create-dialog"));
+          openTasks(task.id, project.id);
+          notify(task.autoTakeover
+            ? (isNewTask ? "已批准并创建任务；" : "执行草案已批准；") + "Hermes 即将自动领取（模拟）。"
+            : (isNewTask ? "已批准并创建任务，" : "执行草案已批准，") + "任务留在「待领取」队列。");
         } finally {
           $("create-submit").disabled = false;
         }
+      }
+
+      $("open-create").addEventListener("click", () => openCreate());
+      document.querySelectorAll('input[name="entry-type"]').forEach(radio => {
+        radio.addEventListener("change", syncEntryFields);
+      });
+      $("create-form").addEventListener("input", event => {
+        if (typeof event.target.setCustomValidity === "function") {
+          event.target.setCustomValidity("");
+        }
+        $("create-error").hidden = true;
+      });
+      $("create-back").addEventListener("click", () => {
+        cancelDraft();
+        draftInput = null;
+        setCreatePhase("entry");
+      });
+      $("create-form").addEventListener("submit", event => {
+        event.preventDefault();
+        if (createPhase === "entry") beginDraft();
+        else if (createPhase === "draft") approveDraft();
       });
 
+      function pauseTask(task) {
+        cancelClaim(task.id);
+        const now = new Date().toISOString();
+        task.status = "blocked";
+        task.phase = "暂停等待人工";
+        task.blocker = "模拟执行异常，已暂停等待人工。";
+        task.updatedAt = now;
+        sessions.filter(session => session.taskId === task.id &&
+          session.hermes.mode === "managed").forEach(session => {
+          session.hermes.paused = true;
+          session.status = "idle";
+          session.age = 0;
+          session.updatedAt = now;
+          session.localOnly = true;
+          session.evidence.push({
+            title: "异常暂停",
+            value: "task=" + task.id + "\n执行=暂停\n后续=等待人工处理",
+            time: now
+          });
+        });
+        renderTasks();
+        render();
+        notify("任务 " + task.id + " 执行异常，Hermes 已暂停并通知，等待人工处理。");
+      }
+
       document.addEventListener("click", event => {
+        if (!(event.target instanceof Element)) return;
         const closer = event.target.closest("[data-close]");
         if (closer) {
-          $(closer.dataset.close).close();
+          closeDialog($(closer.dataset.close));
           return;
         }
         const trigger = event.target.closest("[data-action]");
         if (!trigger) return;
         const { action, value } = trigger.dataset;
+
         if (action === "session") openSession(value);
         if (action === "hermes") openSession(value, true);
         if (action === "task") {
@@ -2162,22 +2360,35 @@
             .find(node => node.dataset.value === value);
           selectedButton?.focus();
         }
-        if (action === "project-task") openCreate({ level: 1, project: value });
+        if (action === "project-task") openCreate({ project: value });
         if (action === "session-task") {
           const session = sessions.find(s => s.id === value);
-          if (session) openCreate({ level: 1, project: session.project, attachSession: value });
+          if (session) openCreate({ project: session.project, attachSession: value });
         }
         if (action === "task-session") {
           const task = tasks.find(t => t.id === value);
-          if (task) openCreate({ level: 2, project: task.project, taskId: task.id });
+          if (task) openCreate({ project: task.project, taskId: task.id });
+        }
+        if (action === "task-pause") {
+          const task = tasks.find(t => t.id === value);
+          if (task) {
+            pauseTask(task);
+            $("task-inspector").querySelector("button")?.focus();
+          }
         }
         if (action === "task-running" || action === "task-toggle") {
           const task = tasks.find(t => t.id === value);
           if (!task) return;
+          cancelClaim(task.id);
           task.status = action === "task-running" ? "running" :
             task.status === "done" ? "planned" : "done";
           task.source = "本页人工记录（未验收）";
           task.updatedAt = new Date().toISOString();
+          if (task.status !== "blocked") delete task.blocker;
+          if (task.status === "planned") {
+            task.phase = "待领取";
+            if (task.autoTakeover) scheduleClaim(task);
+          }
           renderTasks();
           render();
           const nextAction = $("task-inspector").querySelector("button");
@@ -2187,9 +2398,8 @@
         }
       });
 
-      // 原生 dialog 保留模态焦点限制、Esc 取消和键盘返回。
       projectOptions($("task-project"), true, "all");
-      syncCreateFields();
+      syncEntryFields();
       render();
     })();
   </script>
