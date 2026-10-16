@@ -45,6 +45,10 @@
         boardGeneratedAt: '',
         boardProjects: [],
         boardExpanded: {},
+        boardTerminals: [], boardLoaded: false, boardEpoch: 0,
+        boardDetails: {}, boardDetailId: '', boardView: 'wall',
+        boardRangePreset: 'today', boardRangeFrom: '', boardRangeTo: '',
+        boardCalendarOpen: false, boardCalendarMonth: '', boardDraftFrom: '', boardDraftTo: '',
         boardTimer: null
     };
 
@@ -4159,8 +4163,8 @@
             + '</section>';
     }
 
-    function renderSessionDetail() {
-        var session = getSelectedSession();
+    function renderSessionDetail(sessionOverride) {
+        var session = sessionOverride || getSelectedSession();
         if (!session) {
             return renderTaskDetail();
         }
@@ -4422,57 +4426,347 @@
             + '</article>';
     }
 
+    // I3 extends the existing board entry, polling, snapshot and Git inspector.
+    function boardAPI() { return window.RoamBenchBoardStatus; }
+    function bt(key, vars) { return tr('project.boardV3.' + key, key, vars); }
+    function boardUnknown(value) { return value == null || value === '' ? bt('unknown') : String(value); }
+    function boardSessions() { return boardAPI().sessionModels(state.boardTerminals, state.snapshot); }
+    function boardRelative(value) {
+        var stamp = Date.parse(value);
+        if (!Number.isFinite(stamp) || stamp <= 0) return bt('unknown');
+        var duration = boardAPI().formatDuration(Math.max(0, Date.now() - stamp));
+        return bt('ago', { duration: duration });
+    }
+    function boardDot(status) { return '<span class="status-dot" data-status="' + escapeHTML(status) + '" aria-hidden="true"></span>'; }
+    function boardGroups(items) {
+        var groups = boardModels().map(function(p) { return { id: p.projectId, name: p.name, items: [] }; });
+        items.forEach(function(s) {
+            var group = groups.find(function(g) { return g.id === s.projectId; });
+            if (!group) {
+                var project = findById(projects(), s.projectId);
+                group = { id: s.projectId, name: project ? project.name : s.projectId || bt('unassigned'), items: [] };
+                groups.push(group);
+            }
+            group.items.push(s);
+        });
+        return groups;
+    }
+    function boardGroupTitle(group) {
+        return (group.id ? '<button type="button" class="project-open" data-board-detail="' + escapeHTML(group.id) + '" aria-haspopup="dialog">' : '<span>')
+            + escapeHTML(group.name) + ' <span class="project-count">' + escapeHTML(sessionCountText(group.items.length)) + '</span>'
+            + (group.id ? '</button>' : '</span>');
+    }
+    function boardSessionButton(s, className, content) {
+        return '<button type="button" class="' + className + '" data-board-session="' + escapeHTML(s.id) + '" aria-haspopup="dialog" aria-label="'
+            + escapeHTML(s.name + ' · ' + bt(s.status) + ' · ' + bt('details')) + '">' + content + '</button>';
+    }
+    function renderBoardWall(groups) {
+        return groups.map(function(group) {
+            return '<section class="project-group"><div class="project-heading"><h3>' + boardGroupTitle(group) + '</h3></div>'
+                + (group.items.length ? '<ul class="session-grid">' + group.items.map(function(s) {
+                    return '<li class="session-cell">' + boardSessionButton(s, 'session-open',
+                        '<span class="session-name-row">' + boardDot(s.status) + '<span class="session-name">' + escapeHTML(s.name) + '</span></span>'
+                        + '<span class="session-meta"><span class="session-state-time">' + escapeHTML(bt(s.status)) + ' · ' + escapeHTML(boardRelative(s.lastActivity)) + '</span>'
+                        + (s.taskId ? '<span class="task-mini">' + escapeHTML(s.taskId) + '</span>' : '') + '</span>')
+                        + '<span class="hermes-badge" data-mode="' + s.hermesMode + '" title="' + escapeHTML(bt('hermes_' + s.hermesMode)) + '" aria-label="' + escapeHTML(bt('hermes_' + s.hermesMode)) + '">H</span></li>';
+                }).join('') + '</ul>' : '<p class="panel-note">' + escapeHTML(bt('noSessions')) + '</p>') + '</section>';
+        }).join('');
+    }
+    function boardRange() {
+        return boardAPI().calendarRange(state.boardRangePreset, Date.now(), state.boardRangeFrom, state.boardRangeTo);
+    }
+    function renderBoardCalendar(range) {
+        var month = state.boardCalendarMonth || boardAPI().dateKey(Date.now()).slice(0, 7);
+        var from = state.boardDraftFrom || range.from, to = state.boardDraftTo || from;
+        var low = from < to ? from : to, high = from < to ? to : from;
+        return '<div class="range-wrap"><button type="button" class="range-btn" data-board-calendar-toggle aria-expanded="' + state.boardCalendarOpen + '" aria-controls="board-range-pop">'
+            + escapeHTML(range.from + ' – ' + range.to) + ' <span class="caret">▾</span></button>'
+            + '<div class="range-pop" id="board-range-pop"' + (state.boardCalendarOpen ? '' : ' hidden') + '><div class="range-presets">'
+            + ['today', '3days', '7days', 'month'].map(function(key) { return '<button type="button" class="pill" data-board-range="' + key + '" aria-pressed="' + (state.boardRangePreset === key) + '">' + escapeHTML(bt(key)) + '</button>'; }).join('')
+            + '</div><div class="cal-head"><span class="cal-title">' + escapeHTML(month) + '</span><div class="cal-nav">'
+            + '<button type="button" data-board-month="-1" aria-label="' + escapeHTML(bt('previousMonth')) + '">‹</button><button type="button" data-board-month="1" aria-label="' + escapeHTML(bt('nextMonth')) + '">›</button></div></div>'
+            + '<div class="cal-grid">' + bt('weekdays').split('|').map(function(day) { return '<span class="dow">' + escapeHTML(day) + '</span>'; }).join('')
+            + boardAPI().calendarDays(month).map(function(day) {
+                return '<button type="button" class="cal-day' + (day.other ? ' other' : '') + (day.key === boardAPI().dateKey(Date.now()) ? ' today' : '')
+                    + (day.key >= low && day.key <= high ? ' in-range' : '') + (day.key === from || day.key === to ? ' edge' : '')
+                    + '" data-board-day="' + day.key + '" aria-label="' + day.key + '" aria-pressed="' + (day.key >= low && day.key <= high) + '">' + day.day + '</button>';
+            }).join('') + '</div><div class="range-foot"><span class="range-hint" aria-live="polite">'
+            + escapeHTML(state.boardDraftFrom ? from + (state.boardDraftTo ? ' – ' + to : ' · ' + bt('selectEnd')) : bt('selectRange'))
+            + '</span><button type="button" class="btn small" data-board-range-apply' + (!state.boardDraftFrom || !state.boardDraftTo ? ' disabled' : '') + '>' + escapeHTML(bt('apply')) + '</button></div></div></div>';
+    }
+    function renderBoardTimeline(groups) {
+        var api = boardAPI(), range = boardRange(), now = Date.now();
+        var todayPosition = (now - range.start) / (range.end - range.start) * 100;
+        var ticks = api.rangeTicks(range);
+        // Each task occupies one row; linked sessions open the existing session inspector.
+        // Unassociated sessions remain visible with an explicit unknown duration.
+        var rows = groups.map(function(g) {
+            var seenTasks = new Set();
+            var entries = g.items.filter(function(s) {
+                if (!s.taskId) return true;
+                if (seenTasks.has(s.taskId)) return false;
+                seenTasks.add(s.taskId); return true;
+            });
+            return '<tbody><tr class="gantt-project"><th class="gantt-label" scope="rowgroup">' + boardGroupTitle(g) + '</th><th></th></tr>'
+                + entries.map(function(s) {
+                    var segments = s.taskId ? api.taskSegments(s.taskId, state.snapshot, state.snapshot.generatedAt) : [];
+                    var visible = api.clipSegments(segments, range);
+                    var laneEnds = [];
+                    var bars = visible.map(function(segment) {
+                        var lane = laneEnds.findIndex(function(end) { return end <= segment.start; });
+                        if (lane < 0) lane = laneEnds.length;
+                        laneEnds[lane] = segment.end;
+                        var target = g.items.find(function(item) { return item.session && (item.session.phaseAttemptId === segment.id || item.session.id === segment.sessionId); }) || s;
+                        var label = bt(segment.kind) + ' · ' + api.formatDuration(segment.duration);
+                        return '<button type="button" class="timeline-bar" data-status="' + s.status + '" data-kind="' + segment.kind + '" data-board-session="' + escapeHTML(target.id)
+                            + '" aria-haspopup="dialog" aria-label="' + escapeHTML((s.task ? s.task.title : s.name) + ' · ' + label) + '" title="' + escapeHTML(label)
+                            + '" style="--start:' + segment.left + '%;--duration:' + segment.width + '%;top:' + (11 + lane * 20) + 'px"><span class="timeline-duration">' + escapeHTML(api.formatDuration(segment.duration)) + '</span></button>';
+                    }).join('');
+                    return '<tr class="gantt-session-row"><th scope="row" class="gantt-label">' + boardSessionButton(s, 'gantt-name', boardDot(s.status) + escapeHTML(s.task ? s.task.title : s.name))
+                        + '</th><td><div class="timeline-track" style="height:' + Math.max(36, laneEnds.length * 20 + 16) + 'px">'
+                        + (segments.length ? bars : '<span class="timeline-unknown">' + escapeHTML(bt('unknownDuration')) + '</span>') + '</div></td></tr>';
+                }).join('') + '</tbody>';
+        }).join('');
+        return '<div class="panel-heading"><h2>' + escapeHTML(bt('timeline')) + '</h2>' + renderBoardCalendar(range) + '</div>'
+            + '<div class="gantt-scroll' + (todayPosition < 0 || todayPosition >= 100 ? ' outside-today' : '') + '" role="region" aria-label="' + escapeHTML(bt('timeline'))
+            + '" tabindex="0" style="--today:' + todayPosition + '%;--grid-step:' + (range.days === 1 ? 12.5 : 100 / range.days) + '%">'
+            + '<table class="gantt-table" style="min-width:' + Math.max(990, 220 + ticks.length * 56) + 'px"><caption class="sr-only">' + escapeHTML(bt('timelineNote'))
+            + '</caption><colgroup><col class="gantt-name-column"><col></colgroup><thead><tr><th class="gantt-label" scope="col">' + escapeHTML(bt('taskSession'))
+            + '</th><th scope="col"><div class="time-axis">' + ticks.map(function(t) { return '<span style="--tick:' + t.position + '%">' + escapeHTML(t.label) + '</span>'; }).join('')
+            + '</div></th></tr></thead>' + rows + '</table></div><div class="gantt-footnote"><p>' + escapeHTML(bt('timelineNote')) + '</p><p>' + escapeHTML(bt(range.days === 1 ? 'hourScale' : 'dayScale')) + '</p></div>';
+    }
     function renderBoard() {
-        var models = boardModels();
-        var cards = models.map(renderBoardCard).join('');
-        var empty = models.length
-            ? ''
-            : '<div class="project-empty-state">' + escapeHTML(tr('project.boardEmpty', 'No projects on the board yet.')) + '</div>';
-        var errorHTML = state.boardError
-            ? '<div class="board-inline-error" role="alert">'
-                + escapeHTML(tr('project.boardRefreshFailed', 'Board refresh failed')) + ': ' + escapeHTML(state.boardError)
-                + '</div>'
-            : '';
-        var loadingMark = state.boardLoading ? ' <span class="board-refreshing">' + escapeHTML(tr('project.boardRefreshing', 'Refreshing…')) + '</span>' : '';
-        return '<section class="project-main-section project-board-view">'
-            + '<div class="project-section-header">'
-            + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.boardKicker', 'Status Board')) + '</div>'
-            + '<h2>' + escapeHTML(tr('project.boardTitle', 'Project Board')) + '</h2>'
-            + '<p>' + escapeHTML(tr('project.boardUpdated', 'Updated {time}', { time: formatTime(state.boardGeneratedAt) })) + loadingMark + '</p></div>'
-            + '<div class="project-header-actions">'
-            + '<button type="button" class="project-inline-btn primary" data-board-refresh="1">' + escapeHTML(tr('project.boardRefresh', 'Refresh')) + '</button>'
-            + '</div>'
-            + '</div>'
-            + errorHTML
-            + '<div class="board-grid">' + cards + '</div>'
-            + empty
-            + '</section>';
+        var items = boardSessions(), groups = boardGroups(items), counts = boardAPI().statusCounts(items);
+        return '<section class="project-main-section project-board-view board-v3"><div class="page-heading"><div><h1>' + escapeHTML(tr('project.boardTitle', 'Project Board'))
+            + '</h1><p class="page-meta">' + escapeHTML(tr('project.boardUpdated', 'Updated {time}', { time: formatTime(state.boardGeneratedAt) }))
+            + (state.boardLoading ? ' · ' + escapeHTML(tr('project.boardRefreshing', 'Refreshing…')) : '') + '</p></div><button type="button" class="btn" data-board-refresh="1">' + escapeHTML(tr('project.boardRefresh', 'Refresh')) + '</button></div>'
+            + (state.boardError ? '<p role="alert" class="board-inline-error">' + escapeHTML(tr('project.boardRefreshFailed', 'Board refresh failed') + ': ' + state.boardError) + '</p>' : '')
+            + '<div class="view-toolbar"><div class="view-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.boardTitle', 'Project Board')) + '">'
+            + ['wall', 'timeline'].map(function(view) { return '<button type="button" class="view-tab" role="tab" id="board-tab-' + view + '" aria-controls="board-panel-' + view + '" aria-selected="' + (state.boardView === view) + '" tabindex="' + (state.boardView === view ? 0 : -1) + '" data-board-view="' + view + '">' + escapeHTML(bt(view)) + '</button>'; }).join('')
+            + '</div><ul class="legend" aria-label="' + escapeHTML(bt('summary')) + '">' + ['active', 'idle', 'exited', 'detached'].concat(counts.unknown ? ['unknown'] : []).map(function(key) {
+                return '<li>' + boardDot(key) + escapeHTML(bt(key)) + ' <span class="legend-count">' + (state.boardLoaded ? counts[key] : escapeHTML(bt('unknown'))) + '</span></li>';
+            }).join('') + '</ul></div>'
+            + '<section role="tabpanel" id="board-panel-wall" aria-labelledby="board-tab-wall"' + (state.boardView === 'wall' ? '' : ' hidden') + '><div class="panel-heading"><h2>' + escapeHTML(bt('wall'))
+            + '</h2><p class="panel-note">' + escapeHTML(sessionCountText(items.length) + ' · ' + bt('wallNote')) + '</p></div>' + renderBoardWall(groups) + '</section>'
+            + '<section role="tabpanel" id="board-panel-timeline" aria-labelledby="board-tab-timeline"' + (state.boardView === 'timeline' ? '' : ' hidden') + '>' + renderBoardTimeline(groups) + '</section>'
+            + (!groups.length ? '<p class="panel-note">' + escapeHTML(tr('project.boardEmpty', 'No projects on the board yet.')) + '</p>' : '') + '</section>';
+    }
+    function renderBoardProjectDetail(id) {
+        var cached = state.boardDetails[id], detail = cached && cached.data || {}, api = boardAPI();
+        var milestones = Array.isArray(detail.milestones) ? detail.milestones : [];
+        var next = detail.nextAction || {}, stats = detail.stats || {}, changes = stats.codeChanges || {};
+        var counts = stats.checkpointsByKind || {}, kinds = ['design', 'test', 'coding', 'unclassified'];
+        var validCounts = kinds.every(function(k) { return Number.isInteger(counts[k]) && counts[k] >= 0; });
+        var total = validCounts ? kinds.reduce(function(n, k) { return n + counts[k]; }, 0) : 0;
+        var colors = ['#7170ff', '#d4a72c', '#4ec9b0', '#4d4f55'];
+        var legend = kinds.map(function(k) { return bt(k) + ' ' + boardUnknown(Number.isInteger(counts[k]) && counts[k] >= 0 ? counts[k] : null); }).join(' · ');
+        var number = function(value) { return boardUnknown(Number.isInteger(value) && value >= 0 && !changes.error ? value : null); };
+        var model = boardModels().find(function(p) { return p.projectId === id; });
+        return (cached && cached.error ? '<p role="alert">' + escapeHTML(cached.error) + '</p>' : '')
+            + (!cached || cached.loading ? '<p role="status">' + escapeHTML(tr('project.boardRefreshing', 'Refreshing…')) + '</p>' : '')
+            + '<ol class="lifecycle-chain" aria-label="' + escapeHTML(bt('lifecycle')) + '">' + api.lifecycleChain(detail.lifecycle).map(function(step, index) {
+                return '<li class="lifecycle-step' + (step.current ? ' current' : step.done ? ' done' : '') + '"' + (step.current ? ' aria-current="step"' : '') + '>'
+                    + (index ? '<span class="lifecycle-arrow" aria-hidden="true">→</span>' : '') + escapeHTML(bt(step.key) + (step.key === 'executing' ? ' · ' + boardUnknown(step.milestoneId) : '')) + '</li>';
+            }).join('') + '</ol>'
+            + '<section class="info-card"><h3>' + escapeHTML(bt('milestones')) + '</h3><div class="milestone-line">'
+            + (milestones.length ? milestones.map(function(m) {
+                var status = ['done', 'current', 'todo'].includes(m.status) ? m.status : 'unknown';
+                return '<span class="milestone ' + status + '"><span class="mark" aria-label="' + escapeHTML(bt('milestone_' + status)) + '">' + ({ done: '✓', current: '●', todo: '○', unknown: '?' })[status] + '</span>' + escapeHTML(boardUnknown(m.name)) + '</span>';
+            }).join('') : escapeHTML(bt(Array.isArray(detail.milestones) ? 'noMilestones' : 'unknown'))) + '</div>'
+            + milestones.filter(function(m) { return m.status === 'current'; }).map(function(m) { return '<p class="milestone-detail">' + escapeHTML(boardUnknown(m.acceptanceEvidence)) + '</p>'; }).join('') + '</section>'
+            + '<div class="project-metrics"><section class="info-card"><h3>' + escapeHTML(bt('activity')) + '</h3><div class="project-activity-bar" role="img" aria-label="' + escapeHTML(legend + ' · ' + bt('eventShare')) + '">'
+            + (validCounts ? kinds.map(function(k, i) { return '<span class="project-activity-segment" aria-hidden="true" style="width:' + (total ? counts[k] / total * 100 : 0) + '%;background:' + colors[i] + '"></span>'; }).join('') : '')
+            + '</div><p class="project-mono project-activity-legend">' + escapeHTML(legend) + '</p><p class="source-note">' + escapeHTML(bt('eventShare')) + '</p></section>'
+            + '<section class="info-card"><h3>' + escapeHTML(bt('codeChanges')) + '</h3><p class="project-mono">' + escapeHTML(bt('changeSummary', { added: number(changes.added), removed: number(changes.removed), files: number(changes.files), base: boardUnknown(changes.error ? null : api.shortSha(changes.base)) }))
+            + '</p><p class="source-note">' + escapeHTML(bt('changeExtra', { untracked: number(changes.untracked), binary: number(changes.binary) })) + '</p>'
+            + (changes.error ? '<p class="source-note">' + escapeHTML(changes.error) + '</p>' : '') + '</section></div>'
+            + '<div class="next-step" role="status"><span class="actor' + (next.actor === 'human' ? ' human' : '') + '">' + escapeHTML(next.actor === 'human' ? bt('you') : next.actor === 'Hermes' ? 'Hermes' : bt('unknown'))
+            + '</span>' + escapeHTML(bt('next') + boardUnknown(next.text)) + '</div>'
+            + '<section class="info-card"><h3>' + escapeHTML(bt('issues')) + '</h3>' + (Array.isArray(detail.issues) ? detail.issues.length ? '<ul class="project-issues">' + detail.issues.map(function(issue) {
+                return '<li class="project-issue">' + boardDot(issue.severity === 'error' ? 'exited' : issue.severity === 'warning' ? 'idle' : 'unknown') + '<span class="project-issue-text">' + escapeHTML(boardUnknown(issue.text)) + '</span>'
+                    + (issue.session || issue.task ? '<button type="button" class="btn small project-ghost" data-board-issue-session="' + escapeHTML(issue.session || '') + '" data-board-issue-task="' + escapeHTML(issue.task || '') + '">' + escapeHTML(bt('handle')) + '</button>' : '') + '</li>';
+            }).join('') + '</ul>' : '<p class="project-clear">' + escapeHTML(bt('noIssues')) + '</p>' : '<p>' + escapeHTML(bt('unknown')) + '</p>') + '</section>'
+            + (model ? renderBoardGitSection(model) : '');
+    }
+    var boardDialog = null, boardPreviewTimer = null, boardPreviewAnchor = null;
+    function closeBoardDialog() {
+        if (boardDialog) { boardDialog.close(); boardDialog.remove(); boardDialog = null; }
+        state.boardDetailId = '';
+    }
+    function showBoardDialog(title, content) {
+        closeBoardDialog(); hideBoardPreview();
+        var dialog = document.createElement('dialog');
+        dialog.className = 'board-v3 project-dialog';
+        dialog.setAttribute('aria-labelledby', 'board-dialog-title');
+        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-dialog-title">' + escapeHTML(title) + '</h2><button type="button" class="btn small" data-board-dialog-close>' + escapeHTML(bt('close')) + '</button></header><div class="dialog-body">' + content + '</div>';
+        document.body.appendChild(dialog); boardDialog = dialog;
+        dialog.querySelector('[data-board-dialog-close]').addEventListener('click', closeBoardDialog);
+        dialog.addEventListener('cancel', function(event) { event.preventDefault(); closeBoardDialog(); });
+        dialog.addEventListener('click', function(event) { if (event.target === dialog) { var box = dialog.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) closeBoardDialog(); } });
+        dialog.showModal();
+        return dialog;
+    }
+    function bindBoardDetail(dialog) {
+        dialog.querySelectorAll('[data-board-worktrees]').forEach(function(node) { node.addEventListener('click', function() {
+            state.boardExpanded[state.boardDetailId] = !state.boardExpanded[state.boardDetailId]; updateBoardDetail();
+        }); });
+        dialog.querySelectorAll('[data-board-issue-session]').forEach(function(node) { node.addEventListener('click', function() {
+            var sessionId = node.dataset.boardIssueSession, taskId = node.dataset.boardIssueTask;
+            var s = boardSessions().find(function(item) { return item.id === sessionId || (item.session && item.session.id === sessionId); });
+            if (s) { openBoardSession(s.id); return; }
+            var recorded = findById(sessions(), sessionId);
+            if (recorded) { showBoardSessionDetail(recorded); return; }
+            if (findById(tasks(), taskId)) { closeBoardDialog(); openTask(taskId); }
+            else node.textContent = bt('unknown');
+        }); });
+    }
+    function updateBoardDetail() {
+        if (!boardDialog || !state.boardDetailId) return;
+        boardDialog.querySelector('.dialog-body').innerHTML = renderBoardProjectDetail(state.boardDetailId);
+        bindBoardDetail(boardDialog);
+    }
+    function loadBoardDetail(id, force) {
+        var cache = state.boardDetails[id], epoch = state.boardEpoch;
+        if (cache && (cache.loading || (!force && Date.now() - cache.fetchedAt < BOARD_REFRESH_INTERVAL_MS))) return;
+        state.boardDetails[id] = Object.assign({}, cache, { loading: true, error: '' });
+        updateBoardDetail();
+        fetchJSON('/api/project-control/projects/' + encodeURIComponent(id) + '/detail').then(function(data) {
+            if (epoch !== state.boardEpoch || !state.authenticated) return;
+            state.boardDetails[id] = { data: data, fetchedAt: Date.now(), loading: false, error: '' };
+            if (state.boardDetailId === id) updateBoardDetail();
+        }).catch(function(error) {
+            if (epoch !== state.boardEpoch || !state.authenticated) return;
+            state.boardDetails[id] = Object.assign({}, cache, { loading: false, error: error.message });
+            if (state.boardDetailId === id) updateBoardDetail();
+        });
+    }
+    function openBoardDetail(id) {
+        var p = boardModels().find(function(item) { return item.projectId === id; }) || findById(projects(), id);
+        var dialog = showBoardDialog(p ? p.name : id, renderBoardProjectDetail(id));
+        state.boardDetailId = id;
+        bindBoardDetail(dialog); loadBoardDetail(id);
+    }
+    function showBoardSessionDetail(session) {
+        var dialog = showBoardDialog(session.name, renderSessionDetail(session));
+        dialog.querySelectorAll('[data-attach-terminal]').forEach(function(node) { node.addEventListener('click', closeBoardDialog); });
+        // Reuse the existing attach-terminal interaction and session detail markup.
+        bindInteractions(dialog);
+    }
+    function openBoardSession(id) {
+        var s = boardSessions().find(function(item) { return item.id === id; });
+        if (!s) return;
+        var unknown = bt('unknown');
+        var session = s.session || { id: s.id, name: s.name, runtimeId: unknown, executionRole: unknown, systemRole: unknown,
+            startedAt: s.createdAt, summary: bt('unlinkedSession'), claims: [], artifacts: [] };
+        showBoardSessionDetail(Object.assign({}, session, { name: s.name, terminalId: s.id, supportsAttach: s.status !== 'exited' }));
+    }
+    function hideBoardPreview() {
+        window.clearTimeout(boardPreviewTimer); boardPreviewTimer = null;
+        if (boardPreviewAnchor) boardPreviewAnchor.removeAttribute('aria-describedby');
+        boardPreviewAnchor = null;
+        var preview = document.getElementById('board-session-preview');
+        if (preview) preview.remove();
+    }
+    function queueBoardPreview(node) {
+        hideBoardPreview();
+        boardPreviewTimer = window.setTimeout(function() {
+            if (!node.isConnected) return;
+            var s = boardSessions().find(function(item) { return item.id === node.dataset.boardSession; });
+            if (!s) return;
+            var evidence = boardAPI().latestVerification(s.taskId, state.snapshot);
+            var preview = document.createElement('div');
+            preview.id = 'board-session-preview'; preview.className = 'board-v3 hover-card'; preview.setAttribute('role', 'tooltip');
+            preview.innerHTML = '<div class="hover-head">' + boardDot(s.status) + '<span class="hover-name">' + escapeHTML(s.name) + '</span><span class="hover-age">' + escapeHTML(boardRelative(s.lastActivity))
+                + '</span></div><p class="hover-task">' + escapeHTML((s.task ? s.task.title : bt('unlinkedTask')) + ' · ' + bt('phase') + ' ' + (s.task && s.task.currentPhase ? boardPhaseLabel(s.task.currentPhase) : bt('unknown')))
+                + '</p><p class="hover-evidence">' + escapeHTML(evidence ? bt('verification') + ': ' + evidence.value : bt('noEvidence')) + '</p><p class="hover-updated">' + escapeHTML(bt('dataTime') + ' ' + formatTime(state.snapshot.generatedAt)) + '</p>';
+            document.body.appendChild(preview);
+            boardPreviewAnchor = node; node.setAttribute('aria-describedby', preview.id);
+            var anchor = node.getBoundingClientRect(), box = preview.getBoundingClientRect();
+            preview.style.left = Math.max(8, Math.min(anchor.left, window.innerWidth - box.width - 8)) + 'px';
+            preview.style.top = Math.max(8, anchor.bottom + box.height + 14 < window.innerHeight ? anchor.bottom + 14 : anchor.top - box.height - 14) + 'px';
+        }, 200);
+    }
+    function boardRenderFocus(selector) {
+        render();
+        var node = getPanel().querySelector(selector);
+        if (node) node.focus({ preventScroll: true });
+    }
+    function bindBoardInteractions(panel) {
+        panel.querySelectorAll('[data-board-detail]').forEach(function(node) { node.addEventListener('click', function() { openBoardDetail(node.dataset.boardDetail); }); });
+        panel.querySelectorAll('[data-board-session]').forEach(function(node) {
+            node.addEventListener('click', function() { openBoardSession(node.dataset.boardSession); });
+            node.addEventListener('pointerenter', function(event) { if (event.pointerType !== 'touch' && window.matchMedia('(hover: hover) and (pointer: fine)').matches) queueBoardPreview(node); });
+            node.addEventListener('pointerleave', hideBoardPreview);
+            node.addEventListener('focus', function() { if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) queueBoardPreview(node); });
+            node.addEventListener('blur', hideBoardPreview);
+        });
+        panel.querySelectorAll('[data-board-view]').forEach(function(node) {
+            function select(view) { state.boardView = view; state.boardCalendarOpen = false; boardRenderFocus('[data-board-view="' + view + '"]'); }
+            node.addEventListener('click', function() { select(node.dataset.boardView); });
+            node.addEventListener('keydown', function(event) { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); select(event.key === 'Home' ? 'wall' : event.key === 'End' ? 'timeline' : state.boardView === 'wall' ? 'timeline' : 'wall'); } });
+        });
+        panel.querySelectorAll('[data-board-calendar-toggle]').forEach(function(node) { node.addEventListener('click', function() {
+            state.boardCalendarOpen = !state.boardCalendarOpen;
+            if (state.boardCalendarOpen) { state.boardDraftFrom = ''; state.boardDraftTo = ''; state.boardCalendarMonth = boardRange().from.slice(0, 7); }
+            boardRenderFocus(state.boardCalendarOpen ? '[data-board-range]' : '[data-board-calendar-toggle]');
+        }); });
+        panel.querySelectorAll('[data-board-range]').forEach(function(node) { node.addEventListener('click', function() { state.boardRangePreset = node.dataset.boardRange; state.boardCalendarOpen = false; boardRenderFocus('[data-board-calendar-toggle]'); }); });
+        panel.querySelectorAll('[data-board-month]').forEach(function(node) { node.addEventListener('click', function() {
+            var parts = state.boardCalendarMonth.split('-');
+            state.boardCalendarMonth = boardAPI().dateKey(new Date(+parts[0], +parts[1] - 1 + +node.dataset.boardMonth, 1)).slice(0, 7);
+            boardRenderFocus('[data-board-month="' + node.dataset.boardMonth + '"]');
+        }); });
+        panel.querySelectorAll('[data-board-day]').forEach(function(node) { node.addEventListener('click', function() {
+            if (!state.boardDraftFrom || state.boardDraftTo) { state.boardDraftFrom = node.dataset.boardDay; state.boardDraftTo = ''; }
+            else state.boardDraftTo = node.dataset.boardDay;
+            boardRenderFocus('[data-board-day="' + node.dataset.boardDay + '"]');
+        }); });
+        panel.querySelectorAll('[data-board-range-apply]').forEach(function(node) { node.addEventListener('click', function() {
+            var range = boardAPI().calendarRange('custom', Date.now(), state.boardDraftFrom, state.boardDraftTo);
+            if (!range) return;
+            state.boardRangePreset = 'custom'; state.boardRangeFrom = range.from; state.boardRangeTo = range.to; state.boardCalendarOpen = false;
+            boardRenderFocus('[data-board-calendar-toggle]');
+        }); });
     }
 
     function loadBoard(options) {
-        if (!state.authenticated) {
-            return Promise.resolve(null);
-        }
+        if (!state.authenticated || state.boardLoading) return Promise.resolve(null);
         options = options || {};
+        var epoch = state.boardEpoch;
         state.boardLoading = true;
-        if (!options.silent) {
-            state.boardError = '';
-        }
-        render();
-        return fetchJSON('/api/project-control/board').then(function(data) {
-            state.boardLoading = false;
-            state.boardError = '';
-            state.boardGeneratedAt = data && data.generatedAt ? data.generatedAt : '';
-            state.boardProjects = data && Array.isArray(data.projects) ? data.projects : [];
-            render();
+        if (!options.silent) { state.boardError = ''; render(); }
+        return Promise.all([
+            fetchJSON('/api/project-control/board'),
+            fetchJSON('/api/terminals'),
+            fetchJSON('/api/project-control')
+        ]).then(function(results) {
+            if (!state.authenticated || epoch !== state.boardEpoch) return null;
+            var data = results[0];
+            if (!data || !Array.isArray(data.projects) || !Array.isArray(results[1]) || !results[2]) throw new Error(bt('unknown'));
+            state.boardLoading = false; state.boardLoaded = true; state.boardError = '';
+            state.boardGeneratedAt = data.generatedAt || '';
+            state.boardProjects = data.projects; state.boardTerminals = results[1]; state.snapshot = results[2];
+            // The open calendar keeps its in-progress selection. Restore board
+            // keyboard focus after replacing the polling snapshot's markup.
+            var focused = document.activeElement, focusSelector = '';
+            if (focused && focused.closest('.project-board-view')) {
+                ['data-board-session', 'data-board-detail', 'data-board-view', 'data-board-refresh', 'data-board-calendar-toggle'].some(function(attr) {
+                    if (!focused.hasAttribute(attr)) return false;
+                    focusSelector = '[' + attr + '="' + CSS.escape(focused.getAttribute(attr)) + '"]';
+                    return true;
+                });
+            }
+            if (!(options.silent && state.boardCalendarOpen)) {
+                if (focusSelector) boardRenderFocus(focusSelector); else render();
+            }
+            if (state.boardDetailId) loadBoardDetail(state.boardDetailId, true);
             scheduleBoardRefresh();
             return data;
         }).catch(function(err) {
-            // Inline-only failure: the board keeps showing the previous data
-            // and surfaces the problem inside the view, never as a global error.
+            if (!state.authenticated || epoch !== state.boardEpoch) return null;
             state.boardLoading = false;
-            state.boardError = (err && err.message) || tr('project.boardRefreshFailed', 'Board refresh failed');
-            render();
+            state.boardError = err.message || tr('project.boardRefreshFailed', 'Board refresh failed');
+            if (!state.boardCalendarOpen) render();
             scheduleBoardRefresh();
             return null;
         });
@@ -4785,6 +5079,7 @@
     }
 
     function bindInteractions(panel) {
+        bindBoardInteractions(panel);
         panel.querySelectorAll('[data-project-id]').forEach(function(node) {
             node.addEventListener('click', function() {
                 openDashboard(node.getAttribute('data-project-id'));
@@ -5071,6 +5366,8 @@
     }
 
     function render() {
+        hideBoardPreview();
+        if (state.currentView !== 'board') closeBoardDialog();
         var panel = getPanel();
         if (!panel) {
             return;
@@ -5106,6 +5403,9 @@
             state.error = '';
             state.currentView = 'dashboard';
             state.boardProjects = [];
+            state.boardEpoch++; state.boardLoading = false;
+            state.boardTerminals = []; state.boardLoaded = false; state.boardDetails = {};
+            state.boardCalendarOpen = false;
             state.boardError = '';
             state.boardGeneratedAt = '';
             state.boardExpanded = {};
@@ -5123,12 +5423,29 @@
 
     function handleModeChange(event) {
         var mode = event && event.detail ? event.detail.mode : '';
+        if (mode !== 'project') { closeBoardDialog(); hideBoardPreview(); }
         if (mode === 'project' && state.authenticated) {
             loadSnapshot();
         }
     }
 
     function init() {
+        window.addEventListener('scroll', hideBoardPreview, true);
+        window.addEventListener('resize', hideBoardPreview);
+        document.addEventListener('keydown', function(event) {
+            if (event.key !== 'Escape') return;
+            hideBoardPreview();
+            if (state.boardCalendarOpen) { state.boardCalendarOpen = false; boardRenderFocus('[data-board-calendar-toggle]'); }
+        });
+        document.addEventListener('pointerdown', function(event) {
+            if (state.boardCalendarOpen && !event.target.closest('.range-wrap')) {
+                state.boardCalendarOpen = false;
+                var pop = document.getElementById('board-range-pop');
+                if (pop) pop.hidden = true;
+                var toggle = getPanel().querySelector('[data-board-calendar-toggle]');
+                if (toggle) toggle.setAttribute('aria-expanded', 'false');
+            }
+        });
         var badge = getBadge();
         loadFilterPreferences();
         if (badge) {
