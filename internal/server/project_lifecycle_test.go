@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -332,6 +334,30 @@ func TestI2NextAction(t *testing.T) {
 
 func TestI2ContractLifecycleAndDetailHTTP(t *testing.T) {
 	srv, cookie, _ := setupTakeover(t)
+	home := srv.projectControl.runtimeRootDir
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = home
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init")
+	if err := os.WriteFile(filepath.Join(home, "tracked.txt"), []byte("old\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "tracked.txt")
+	git("-c", "user.name=fixture", "-c", "user.email=fixture@local", "commit", "-m", "base")
+	base := git("rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(home, "tracked.txt"), []byte("new\nextra\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "untracked.txt"), []byte("new file\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	rec := i2Human(t, srv, cookie, "POST", "/api/project-control/projects", `{"name":"Lifecycle","brief":{"understanding":"goal","deliverables":"ship","outOfScope":"no cloud","assumptions":"local"},"milestones":[{"id":"M1","name":"Deliver","acceptanceEvidence":"test log","status":"current"}]}`)
 	if rec.Code != 201 {
 		t.Fatal(rec.Body.String())
@@ -354,6 +380,10 @@ func TestI2ContractLifecycleAndDetailHTTP(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatal(rec.Body.String())
 	}
+	mutateI2(t, srv, func(state *projectControlState) {
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{ID: "detail-decision", ProjectID: p.ID, Action: "checkpoint_resolved", SourceID: "detail-checkpoint", Kind: "design", Actor: "human"})
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{ID: "detail-artifact", ProjectID: p.ID, Action: "artifact_recorded", SourceID: "detail-patch", Kind: "coding", Actor: "agent"})
+	})
 	rec = i2Human(t, srv, cookie, "GET", "/api/project-control/projects/"+p.ID+"/detail", "")
 	if rec.Code != 200 {
 		t.Fatal(rec.Body.String())
@@ -362,8 +392,15 @@ func TestI2ContractLifecycleAndDetailHTTP(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
 		t.Fatal(err)
 	}
-	if d.Brief.Understanding != "goal" || d.Lifecycle.State != "completed" || d.Milestones[0].Status != "done" || d.Issues == nil || len(d.Stats.CheckpointsByKind) != 4 {
+	if d.Brief.Understanding != "goal" || d.Lifecycle.State != "completed" || d.Milestones[0].Status != "done" || d.Issues == nil || !reflect.DeepEqual(d.Stats.CheckpointsByKind, map[string]int{"design": 1, "test": 0, "coding": 0, "unclassified": 0}) {
 		t.Fatalf("bad detail: %+v", d)
+	}
+	if !reflect.DeepEqual(d.Stats.ArtifactsByKind, map[string]int{"design": 0, "test": 0, "coding": 1, "unclassified": 0}) {
+		t.Fatalf("wrong HTTP artifacts: %+v", d.Stats.ArtifactsByKind)
+	}
+	changes := d.Stats.CodeChanges
+	if changes.Error != "" || changes.Base != base || changes.Added != 2 || changes.Removed != 1 || changes.Files != 1 || changes.Untracked != 1 || changes.Binary != 0 {
+		t.Fatalf("wrong HTTP codeChanges: %+v", changes)
 	}
 	req := httptest.NewRequest("GET", "/api/project-control/projects/"+p.ID+"/detail", nil)
 	unauth := httptest.NewRecorder()
@@ -403,8 +440,12 @@ func TestI2ActivityCountsDistinctSourcesAndPersists(t *testing.T) {
 	p, _ := controlProject(state, "project-i2")
 	d := aggregateProjectDetail(state, p, nil)
 	counts := d.Stats.CheckpointsByKind
-	if counts["design"] != 2 || counts["test"] != 1 || counts["coding"] != 1 || counts["unclassified"] != 1 {
+	if !reflect.DeepEqual(counts, map[string]int{"design": 1, "test": 0, "coding": 0, "unclassified": 0}) {
 		t.Fatal(counts)
+	}
+	artifacts := d.Stats.ArtifactsByKind
+	if !reflect.DeepEqual(artifacts, map[string]int{"design": 1, "test": 1, "coding": 1, "unclassified": 1}) {
+		t.Fatal(artifacts)
 	}
 }
 

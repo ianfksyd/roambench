@@ -12,12 +12,11 @@ package server
 //
 // Git problems never fail the request: the project's `git` block reports
 // available=false plus a human-readable error instead. Symlinked repoPaths are
-// resolved with filepath.EvalSymlinks before validation so a link cannot point
-// the git read outside the user's home directory.
+// resolved inside repoPath validation so a link cannot point the git read
+// outside the user's home directory.
 
 import (
 	"net/http"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -102,12 +101,6 @@ func (s *Server) boardGitStatus(repoPath string) gitstatus.Status {
 	resolved := strings.TrimSpace(repoPath)
 	if resolved == "" {
 		resolved = s.projectControl.runtimeRootDir
-	}
-	// Resolve symlinks first: EvalSymlinks gives us the real location the git
-	// commands will run in, so the home-directory confinement cannot be
-	// escaped via an in-home link pointing outside.
-	if real, err := filepath.EvalSymlinks(resolved); err == nil {
-		resolved = real
 	}
 	validated, err := validateProjectControlRepoPath(resolved)
 	if err != nil {

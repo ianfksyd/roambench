@@ -323,6 +323,16 @@ func (r *Repository) Close() error {
 }
 
 func (r *Repository) CreateInteraction(ctx context.Context, input CreateInteraction) (Interaction, error) {
+	input.RiskClass = NormalizeRiskClass(input.RiskClass)
+	if IsHighRisk(input.RiskClass) {
+		actions := []string{}
+		for _, action := range normalizedStrings(input.AllowedActions) {
+			if action != "approve_session" {
+				actions = append(actions, action)
+			}
+		}
+		input.AllowedActions = actions
+	}
 	if err := validateCreate(input); err != nil {
 		return Interaction{}, err
 	}
@@ -887,6 +897,9 @@ func validateCreate(input CreateInteraction) error {
 }
 
 func validateResponse(interaction Interaction, input RespondInput) error {
+	if IsHighRisk(interaction.RiskClass) && input.Action == "approve_session" {
+		return fmt.Errorf("%w: high-risk requests require per-request approval", ErrValidation)
+	}
 	if !contains(interaction.AllowedActions, input.Action) {
 		return fmt.Errorf("%w: action is not allowed", ErrValidation)
 	}

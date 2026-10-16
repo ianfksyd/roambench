@@ -114,6 +114,7 @@ type projectControlTask struct {
 	MilestoneID          string   `json:"milestoneId,omitempty"`
 	DependsOn            []string `json:"dependsOn,omitempty"`
 	AcceptanceCommand    []string `json:"acceptanceCommand,omitempty"`
+	AcceptanceBaseline   string   `json:"acceptanceBaseline,omitempty"`
 	AcceptancePassed     bool     `json:"acceptancePassed,omitempty"`
 	AcceptanceFailures   int      `json:"acceptanceFailures,omitempty"`
 	PauseReason          string   `json:"pauseReason,omitempty"`
@@ -390,7 +391,14 @@ func validateProjectControlRepoPath(value string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("repoPath validation failed: %w", err)
 	}
-	clean := filepath.Clean(p)
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		return "", fmt.Errorf("repoPath home validation failed: %w", err)
+	}
+	clean, err := filepath.EvalSymlinks(filepath.Clean(p))
+	if err != nil {
+		return "", fmt.Errorf("repoPath validation failed: %w", err)
+	}
 	rel, err := filepath.Rel(home, clean)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("repoPath must stay under the home directory")
@@ -3337,6 +3345,11 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 				// Dispatch pipeline (K4, WS-20261015-001): approving a dispatch
 				// checkpoint makes the task claimable by agent runtimes.
 				if checkpoint.Kind == "dispatch" {
+					baseline, err := s.acceptanceFingerprint(*state, task)
+					if err != nil {
+						return err
+					}
+					task.AcceptanceBaseline = baseline
 					task.DispatchState = "ready"
 					task.RecentSummary = "Dispatch approved by human operator; task is ready to be claimed."
 					task.NextStep = "An agent runtime can now claim this task via /api/agent/v1/claim."
@@ -5362,6 +5375,7 @@ func projectControlNormalizeState(state *projectControlState) {
 	if state.Decisions == nil {
 		state.Decisions = []projectControlDecision{}
 	}
+	trimProjectActivity(state)
 	if state.Events == nil {
 		state.Events = []projectControlRecordedEvent{}
 	}
@@ -6277,7 +6291,7 @@ type agentCheckpointRequest struct {
 }
 
 func (s *projectControlStore) agentRequestCheckpoint(username string, req agentCheckpointRequest) error {
-	if req.TaskID == "" || req.Reason == "" {
+	if req.TaskID == "" || len(req.TaskID) > 128 || !isValidProjectControlID(req.TaskID) || strings.TrimSpace(req.Reason) == "" {
 		return errors.New("taskId and reason are required")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -6286,7 +6300,7 @@ func (s *projectControlStore) agentRequestCheckpoint(username string, req agentC
 		// Checkpoints may refer to external runtimes without a project task
 		// (same semantics as handleAgentInteractions): skip the takeover
 		// pause logic for unknown tasks but still record the checkpoint.
-		if ok && managedProject(*state, task) {
+		if ok && takeoverRunning(*state, task) {
 			reason := req.ReasonCode
 			if !pauseProjectScope(reason) {
 				reason = "agent_request"

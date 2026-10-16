@@ -65,16 +65,21 @@ func (s *projectControlStore) releaseManagedTask(username string, req agentRelea
 		if dir == "" {
 			dir = s.runtimeRootDir
 		}
-		real, err := filepath.EvalSymlinks(dir)
-		if err == nil {
-			real, err = validateProjectControlRepoPath(real)
-		}
+		real, err := validateProjectControlRepoPath(dir)
 		if err != nil {
 			_, pauseErr := s.controlTakeover(username, task.ProjectID, projectTakeoverRequest{Action: "pause", TaskID: task.ID, Reason: "path_violation"}, true)
 			if pauseErr != nil {
 				return 500, nil, pauseErr, true
 			}
 			return 409, nil, errors.New("acceptance workspace is outside allowed paths"), true
+		}
+		baseline, baselineErr := s.acceptanceFingerprint(state, task)
+		if baselineErr != nil || task.AcceptanceBaseline == "" || baseline != task.AcceptanceBaseline {
+			_, pauseErr := s.controlTakeover(username, task.ProjectID, projectTakeoverRequest{Action: "pause", TaskID: task.ID, Reason: "acceptance_inputs_changed"}, true)
+			if pauseErr != nil {
+				return 500, nil, pauseErr, true
+			}
+			return 409, nil, errors.New("acceptance inputs changed or cannot be verified; human review required before restart"), true
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), controlplane.LeaseTTL)
 		defer cancel()
@@ -103,6 +108,7 @@ func (s *projectControlStore) releaseManagedTask(username string, req agentRelea
 		defer func() { s.mu.Lock(); delete(s.acceptanceRuns, username+"/"+task.ID); s.mu.Unlock() }()
 		cmd := exec.CommandContext(ctx, task.AcceptanceCommand[0], task.AcceptanceCommand[1:]...)
 		cmd.Dir = real
+		cmd.Env = acceptanceEnvironment()
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
 			if cmd.Process != nil {
@@ -203,7 +209,7 @@ func applyTakeoverEvents(state *projectControlState, previous map[string]bool) {
 		reason := ""
 		switch event.Action {
 		case "task_updated":
-			if task.RiskLevel == "high" {
+			if isHighRisk(task.RiskLevel) {
 				reason = "high_risk"
 			}
 		case "tool_run_failed", "phase_failed":
@@ -261,10 +267,13 @@ func (s *projectControlStore) pauseExecutionViolation(username, taskID, reason s
 	if !ok {
 		return fmt.Errorf("task not found")
 	}
-	if !managedProject(state, task) {
+	if !takeoverRunning(state, task) {
 		return nil
 	}
 	_, err = s.controlTakeover(username, task.ProjectID, projectTakeoverRequest{Action: "pause", TaskID: taskID, Reason: reason}, true)
+	if errors.Is(err, errProjectNotUnderTakeover) {
+		return nil
+	}
 	return err
 }
 
@@ -307,10 +316,7 @@ func (s *projectControlStore) controlledProjectDir(state projectControlState, ta
 	if dir == "" {
 		dir = s.runtimeRootDir
 	}
-	real, err := filepath.EvalSymlinks(dir)
-	if err == nil {
-		real, err = validateProjectControlRepoPath(real)
-	}
+	real, err := validateProjectControlRepoPath(dir)
 	if err != nil {
 		return "", takeoverViolationError{reason: "path_violation", detail: err.Error()}
 	}

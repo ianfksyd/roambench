@@ -11,8 +11,7 @@ package server
 //     expireStaleClaimsForUser(username) once at server start for parity.
 //   - Approval hook (checkpoint Kind=="dispatch", see K4/GATE-1): on approve,
 //     set task.DispatchState="ready"; on reject, set it to "none" (or leave
-//     awaiting_approval). Until that hook is wired in recordCheckpointDecision,
-//     tests set DispatchState directly.
+//     awaiting_approval). Lease-focused tests also set DispatchState directly.
 
 import (
 	"context"
@@ -73,7 +72,7 @@ func (s *projectControlStore) agentClaimTask(username string, req agentClaimRequ
 	_, err := s.withStateLocked(username, func(state *projectControlState) error {
 		for _, task := range state.Tasks {
 			p, _ := controlProject(*state, task.ProjectID)
-			if task.DispatchState == "ready" && p.Takeover.Mode == "active" && task.RiskLevel == "high" {
+			if task.DispatchState == "ready" && p.Takeover.Mode == "active" && isHighRisk(task.RiskLevel) {
 				pauseControlState(state, task.ProjectID, task.ID, "high_risk")
 			}
 		}
@@ -85,6 +84,15 @@ func (s *projectControlStore) agentClaimTask(username string, req agentClaimRequ
 			if sharedDirectoryConflict(*state, *task) {
 				pauseControlState(state, task.ProjectID, task.ID, "shared_directory_conflict")
 				continue
+			}
+			// Legacy ready tasks establish their baseline before granting a lease.
+			if task.AcceptanceBaseline == "" {
+				baseline, err := s.acceptanceFingerprint(*state, *task)
+				if err != nil {
+					pauseControlState(state, task.ProjectID, task.ID, "acceptance_inputs_unavailable")
+					continue
+				}
+				task.AcceptanceBaseline = baseline
 			}
 			candidate, err := claims.ClaimReadyTask(context.Background(), username, []string{task.ID}, req.RuntimeID, req.AgentLabel)
 			if errors.Is(err, controlplane.ErrNotFound) {
@@ -188,6 +196,7 @@ func (s *projectControlStore) agentReleaseTask(username string, req agentRelease
 	default:
 		return http.StatusBadRequest, nil, errors.New("outcome must be done, failed or released")
 	}
+	req.Outcome = outcome
 	if status, payload, err, handled := s.releaseManagedTask(username, req); handled {
 		return status, payload, err
 	}

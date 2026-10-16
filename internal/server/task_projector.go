@@ -62,6 +62,13 @@ func (s *Server) applyTaskProjection(ctx context.Context, username string, proje
 				if err := applyProjectedTaskDecision(task, interaction.RequestKind, response.Action, response.ResponseID); err != nil {
 					return err
 				}
+				if interaction.RequestKind == "dispatch" && task.DispatchState == "ready" {
+					baseline, err := s.projectControl.acceptanceFingerprint(*state, *task)
+					if err != nil {
+						return err
+					}
+					task.AcceptanceBaseline = baseline
+				}
 				task.RowVersion++
 				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 					ID: eventID, Timestamp: time.Now().UTC().Format(time.RFC3339), Actor: response.Actor,

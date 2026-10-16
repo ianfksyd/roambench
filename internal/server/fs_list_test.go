@@ -17,8 +17,9 @@ import (
 func TestFSListHomeBoundary(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	outside := filepath.Join(root, "home-other")
-	for _, dir := range []string{home, outside, filepath.Join(home, "alpha"), filepath.Join(home, "zeta")} {
+	outside := filepath.Join(root, "outside")
+	sibling := filepath.Join(root, "home-other")
+	for _, dir := range []string{home, outside, sibling, filepath.Join(home, "alpha"), filepath.Join(home, "zeta")} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +46,7 @@ func TestFSListHomeBoundary(t *testing.T) {
 		{"empty directory", filepath.Join(home, "alpha"), "GET", true, 200},
 		{"internal link", filepath.Join(home, "safe-link"), "GET", true, 200},
 		{"outside", outside, "GET", true, 403},
-		{"prefix sibling", outside, "GET", true, 403},
+		{"prefix sibling", sibling, "GET", true, 403},
 		{"traversal", home + "/../home-other", "GET", true, 403},
 		{"symlink escape", filepath.Join(home, "escape"), "GET", true, 403},
 		{"symlink descendant", filepath.Join(home, "escape", "missing"), "GET", true, 403},

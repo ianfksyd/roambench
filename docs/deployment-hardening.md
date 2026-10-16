@@ -245,3 +245,38 @@ If you want the shortest safe summary:
 - use `tmux`
 - expose the service only behind TLS or a trusted reverse proxy
 - keep IP filtering or firewall restrictions in place unless the deployment is truly local-only
+
+## 13. Agent Takeover and Acceptance Trust Boundary
+
+An agent running under the same Unix UID as RoamBench is inside the server's
+trust boundary. It can potentially read the server's files and process data or
+modify the JSON state and SQLite database directly. API approval gates and file
+hashes do not isolate such a process. Use separate OS identities or containers
+with restricted mounts for agents that must not have those privileges.
+
+Acceptance commands receive only PATH, HOME, LANG, LC_ALL, LC_CTYPE, TMPDIR and TZ
+from the service environment. Service credentials (including
+ROAMBENCH_PASSWORD_HASH) and interpreter injection variables are not inherited.
+HOME and PATH still refer to the operator's account and tools; this is not a
+sandbox and does not prevent reads of files accessible to that account.
+
+Human dispatch approval records a SHA-256 baseline of common acceptance inputs:
+test/spec directories and filenames, shell scripts, executable files, common
+build/dependency manifests, and local files named in the command arguments.
+Legacy ready tasks without a baseline capture it before granting their first
+lease. Before acceptance runs, added, deleted or changed inputs (including mode
+and symlink changes) pause the task as acceptance_inputs_changed. The project
+detail asks the operator to inspect the diff; after reviewing it, explicit
+restart=true or a new dispatch approval establishes the reviewed baseline.
+Inputs that cannot be read or exceed the scan limits also require human review.
+
+The scan is deliberately conservative and bounded (10,000 selected files,
+64 MiB); .git, node_modules, vendor, .venv and .roambench directories are excluded.
+It cannot infer every dynamically loaded dependency or prevent concurrent
+rewrites by a same-UID agent. Review the full test/build diff at milestone
+acceptance and use an isolated, trusted validation environment when stronger
+assurance is needed.
+
+Project detail statistics separate human checkpoint decisions
+(checkpointsByKind) from agent artifacts (artifactsByKind). They count distinct
+sources in the most recent 4,096 retained activity records, not lifetime totals.

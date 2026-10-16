@@ -159,6 +159,15 @@ func taskDependenciesPassed(state projectControlState, task projectControlTask) 
 	return true
 }
 
+func isHighRisk(level string) bool {
+	return level == "high" || level == "critical"
+}
+
+func takeoverRunning(state projectControlState, task projectControlTask) bool {
+	p, ok := controlProject(state, task.ProjectID)
+	return ok && (p.Takeover.Mode == "active" || p.Takeover.Mode == "paused")
+}
+
 // The same predicate is checked before INSERT and again under the JSON store
 // mutex, so a concurrent pause/stop wins over a candidate snapshot.
 func taskClaimAllowed(state projectControlState, task projectControlTask) bool {
@@ -167,7 +176,7 @@ func taskClaimAllowed(state projectControlState, task projectControlTask) bool {
 	}
 	p, _ := controlProject(state, task.ProjectID)
 
-	if p.Takeover.Mode != "active" || p.Lifecycle.State != "executing" || len(task.AcceptanceCommand) == 0 || task.RiskLevel == "high" {
+	if p.Takeover.Mode != "active" || p.Lifecycle.State != "executing" || len(task.AcceptanceCommand) == 0 || isHighRisk(task.RiskLevel) {
 		return false
 	}
 	if p.Lifecycle.MilestoneID != "" && task.MilestoneID != p.Lifecycle.MilestoneID {
@@ -435,6 +444,8 @@ func (s *projectControlStore) revokeClosedClaims(username string, state projectC
 	return nil
 }
 
+var errProjectNotUnderTakeover = errors.New("project is not under takeover")
+
 func (s *projectControlStore) controlTakeover(username, projectID string, req projectTakeoverRequest, agent bool) (projectControlProject, error) {
 	if agent && req.Action != "pause" {
 		return projectControlProject{}, errors.New("agents can only request pause")
@@ -468,7 +479,7 @@ func (s *projectControlStore) controlTakeover(username, projectID string, req pr
 			p.Takeover = projectTakeover{Mode: "active"}
 		case "pause":
 			if agent && p.Takeover.Mode != "active" && p.Takeover.Mode != "paused" {
-				return errors.New("project is not under takeover")
+				return errProjectNotUnderTakeover
 			}
 			if strings.TrimSpace(req.Reason) == "" {
 				return errors.New("pause requires reason")
@@ -487,6 +498,9 @@ func (s *projectControlStore) controlTakeover(username, projectID string, req pr
 				if t.ProjectID != projectID || (req.TaskID != "" && t.ID != req.TaskID) || t.PauseReason == "" {
 					continue
 				}
+				if (t.PauseReason == "acceptance_inputs_changed" || t.PauseReason == "acceptance_inputs_unavailable") && !req.Restart {
+					return errors.New("review acceptance input changes and explicitly restart")
+				}
 				checkpoint := durableCheckpoint(*state, t.ID)
 				// Tasks never claimed have no execution to restart; paused running tasks
 				// and their dependencies still require an explicit restart if no checkpoint.
@@ -497,6 +511,11 @@ func (s *projectControlStore) controlTakeover(username, projectID string, req pr
 				if req.Restart {
 					t.ResumeCheckpointID = ""
 					t.CheckpointAfter = time.Now().UTC().Format(time.RFC3339Nano)
+					baseline, err := s.acceptanceFingerprint(*state, *t)
+					if err != nil {
+						return err
+					}
+					t.AcceptanceBaseline = baseline
 				}
 				if t.DispatchState == "released" {
 					t.DispatchState = "ready"

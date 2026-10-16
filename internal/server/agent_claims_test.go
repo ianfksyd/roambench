@@ -3,11 +3,6 @@ package server
 // C5 handler tests (WS-20261015-001): claim/heartbeat/release over HTTP,
 // injected-clock expiry through the handler path, and the checkpoint
 // approval linkage (approve -> ready -> claimable; reject -> not claimable).
-//
-// The real wiring will make recordCheckpointDecision set DispatchState on
-// checkpoints with Kind=="dispatch" (see agent_claims.go header). Until that
-// lands in project_control.go (owned by C1/Hermes), these tests drive the
-// dispatch state directly, which is exactly what the approval hook will do.
 
 import (
 	"encoding/json"
@@ -25,7 +20,7 @@ import (
 )
 
 // setTaskDispatchState writes DispatchState directly into the project-control
-// task, bypassing the (not yet wired) checkpoint approval hook.
+// task, bypassing the checkpoint approval hook for lease-focused fixtures.
 func setTaskDispatchState(t *testing.T, srv *Server, token, taskID, dispatchState string) {
 	t.Helper()
 	state, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
@@ -216,19 +211,28 @@ func TestAgentClaimConcurrentOnlyOneWins(t *testing.T) {
 
 	var mu sync.Mutex
 	var winners []string
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	ready.Add(10)
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
+			ready.Done()
+			<-start
 			rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-`+string(rune('a'+n))+`","agentLabel":"hermes"}`)
 			mu.Lock()
 			defer mu.Unlock()
 			if rec.Code == http.StatusOK {
 				winners = append(winners, rec.Body.String())
+			} else if rec.Code != http.StatusNoContent {
+				t.Errorf("concurrent claim returned %d: %s", rec.Code, rec.Body.String())
 			}
 		}(i)
 	}
+	ready.Wait()
+	close(start)
 	wg.Wait()
 	if len(winners) != 1 {
 		t.Fatalf("concurrent HTTP claims won by %d handlers, want exactly 1", len(winners))
