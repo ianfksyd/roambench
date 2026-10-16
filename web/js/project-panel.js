@@ -514,7 +514,9 @@
         if (!badge) {
             return;
         }
-        badge.textContent = String(count);
+        badge.textContent = 'HERMES · ' + count;
+        badge.setAttribute('aria-haspopup', 'dialog');
+        badge.setAttribute('aria-label', i4('drawer') + ' · ' + count);
         badge.classList.toggle('has-pending', count > 0);
         badge.title = count > 0
             ? tr('project.badgePending', 'Pending approvals: {count}', { count: count })
@@ -2106,7 +2108,7 @@
         }
         if (kind === 'dispatch') {
             return item && item.status === 'pending'
-                ? tr('project.dispatchPendingSummary', 'Approving lets an agent runtime claim this task and start working on it.')
+                ? tr('project.dispatchPendingSummary', 'Approving lets an agent pick up this task and start working on it.')
                 : tr('project.dispatchResolvedSummary', 'Shows the result of the dispatch approval for this task.');
         }
         return tr('project.genericApprovalSummary', 'This item is waiting on a human decision.');
@@ -2237,9 +2239,9 @@
         case 'awaiting_approval':
             return tr('project.dispatchStateAwaiting', 'Awaiting approval');
         case 'ready':
-            return tr('project.dispatchStateReady', 'Ready to claim');
+            return tr('project.dispatchStateReady', 'Ready to pick up');
         case 'claimed':
-            return tr('project.dispatchStateClaimed', 'Claimed by agent');
+            return tr('project.dispatchStateClaimed', 'Picked up by agent');
         case 'released':
             return tr('project.dispatchStateReleased', 'Released');
         case 'done':
@@ -2270,11 +2272,11 @@
         var rows = '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.dispatchState', 'Dispatch state')) + '</div>'
             + '<div class="project-fact-value">' + escapeHTML(dispatchStateLabel(dispatchState)) + '</div></div>';
         if (claimedBy) {
-            rows += '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.claimedBy', 'Claimed by')) + '</div>'
+            rows += '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.claimedBy', 'Picked up by')) + '</div>'
                 + '<div class="project-fact-value">' + escapeHTML(claimedBy) + '</div></div>';
         }
         if (leaseSeconds !== null) {
-            rows += '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.leaseRemaining', 'Lease remaining')) + '</div>'
+            rows += '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.leaseRemaining', 'Pickup validity remaining')) + '</div>'
                 + '<div class="project-fact-value">' + escapeHTML(tr('project.leaseSeconds', '{count} s', { count: leaseSeconds })) + '</div></div>';
         }
         return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.dispatchTitle', 'Agent dispatch')) + '</h3>'
@@ -4183,7 +4185,7 @@
             + (session.workspaceRef ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.workspace', 'Workspace')) + ':</strong> ' + escapeHTML(humanizeWorkspaceRef(session.workspaceRef)) + '</div>' : '')
             + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.startedAt', 'Started')) + ':</strong> ' + escapeHTML(formatTime(session.startedAt)) + '</div>'
             + '</div>'
-            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.claims', 'Claims')) + '</h3>'
+            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.claims', 'Self-reports')) + '</h3>'
             + (session.claims || []).map(function(item) { return '<div class="project-list-item">' + escapeHTML(item) + '</div>'; }).join('')
             + '<h3>' + escapeHTML(tr('project.artifacts', 'Artifacts')) + '</h3>'
             + (session.artifacts || []).map(function(item) { return '<div class="project-list-item">' + escapeHTML(item) + '</div>'; }).join('')
@@ -4539,8 +4541,9 @@
         var items = boardSessions(), groups = boardGroups(items), counts = boardAPI().statusCounts(items);
         return '<section class="project-main-section project-board-view board-v3"><div class="page-heading"><div><h1>' + escapeHTML(tr('project.boardTitle', 'Project Board'))
             + '</h1><p class="page-meta">' + escapeHTML(tr('project.boardUpdated', 'Updated {time}', { time: formatTime(state.boardGeneratedAt) }))
-            + (state.boardLoading ? ' · ' + escapeHTML(tr('project.boardRefreshing', 'Refreshing…')) : '') + '</p></div><button type="button" class="btn" data-board-refresh="1">' + escapeHTML(tr('project.boardRefresh', 'Refresh')) + '</button></div>'
+            + (state.boardLoading ? ' · ' + escapeHTML(tr('project.boardRefreshing', 'Refreshing…')) : '') + '</p></div><div class="task-toolbar">' + i4Button('newProject', 'data-create-project', '', true) + i4Button('drawer', 'data-open-drawer') + '<button type="button" class="btn" data-board-refresh="1">' + escapeHTML(tr('project.boardRefresh', 'Refresh')) + '</button></div></div>'
             + (state.boardError ? '<p role="alert" class="board-inline-error">' + escapeHTML(tr('project.boardRefreshFailed', 'Board refresh failed') + ': ' + state.boardError) + '</p>' : '')
+            + renderDrawerSummary(boardAPI().drawerGroups(state.snapshot))
             + '<div class="view-toolbar"><div class="view-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.boardTitle', 'Project Board')) + '">'
             + ['wall', 'timeline'].map(function(view) { return '<button type="button" class="view-tab" role="tab" id="board-tab-' + view + '" aria-controls="board-panel-' + view + '" aria-selected="' + (state.boardView === view) + '" tabindex="' + (state.boardView === view ? 0 : -1) + '" data-board-view="' + view + '">' + escapeHTML(bt(view)) + '</button>'; }).join('')
             + '</div><ul class="legend" aria-label="' + escapeHTML(bt('summary')) + '">' + ['active', 'idle', 'exited', 'detached'].concat(counts.unknown ? ['unknown'] : []).map(function(key) {
@@ -4590,6 +4593,8 @@
     }
     var boardDialog = null, boardPreviewTimer = null, boardPreviewAnchor = null;
     function closeBoardDialog() {
+        window.clearInterval(drawerTimer); drawerTimer = null;
+        if (folderDialog) { folderDialog.close(); folderDialog.remove(); folderDialog = null; }
         if (boardDialog) { boardDialog.close(); boardDialog.remove(); boardDialog = null; }
         state.boardDetailId = '';
     }
@@ -4601,8 +4606,7 @@
         dialog.innerHTML = '<header class="dialog-header"><h2 id="board-dialog-title">' + escapeHTML(title) + '</h2><button type="button" class="btn small" data-board-dialog-close>' + escapeHTML(bt('close')) + '</button></header><div class="dialog-body">' + content + '</div>';
         document.body.appendChild(dialog); boardDialog = dialog;
         dialog.querySelector('[data-board-dialog-close]').addEventListener('click', closeBoardDialog);
-        dialog.addEventListener('cancel', function(event) { event.preventDefault(); closeBoardDialog(); });
-        dialog.addEventListener('click', function(event) { if (event.target === dialog) { var box = dialog.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) closeBoardDialog(); } });
+        bindDialogDismiss(dialog, closeBoardDialog);
         dialog.showModal();
         return dialog;
     }
@@ -4691,6 +4695,238 @@
         var node = getPanel().querySelector(selector);
         if (node) node.focus({ preventScroll: true });
     }
+    // I4: registration, folder navigation and the task drawer extend the I3 dialogs.
+    var drawerTimer = null, folderDialog = null, drawerBusy = false;
+    function i4(key, vars) { return tr('project.boardI4.' + key, key, vars); }
+    function i4Button(key, attr, value, primary) {
+        return '<button type="button" class="btn small' + (primary ? ' primary' : '') + '" ' + attr + '="' + escapeHTML(value || '') + '">' + escapeHTML(i4(key)) + '</button>';
+    }
+    function boardRequest(url, method, body) {
+        return fetchJSON('/api/project-control/' + url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    }
+    function entryPreferences() {
+        try { return JSON.parse(localStorage.getItem(storageKey('board-entries')) || '{}') || {}; } catch (_) { return {}; }
+    }
+    function saveEntryPreference(id, value) {
+        var entries = entryPreferences(); entries[id] = value;
+        try { localStorage.setItem(storageKey('board-entries'), JSON.stringify(entries)); } catch (_) { /* Private browsing may disable persistence. */ }
+    }
+    function bindDialogDismiss(dialog, close) {
+        var origin = document.activeElement, downOutside = false;
+        function outside(event) {
+            var box = dialog.getBoundingClientRect();
+            return event.target === dialog && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom);
+        }
+        dialog.addEventListener('pointerdown', function(event) { downOutside = outside(event); });
+        dialog.addEventListener('click', function(event) { if (downOutside && outside(event)) close(); downOutside = false; });
+        dialog.addEventListener('cancel', function(event) { event.preventDefault(); close(); });
+        dialog.addEventListener('close', function() { if (origin && origin.isConnected) origin.focus({ preventScroll: true }); });
+    }
+    function openFolderPicker(input) {
+        if (folderDialog) return;
+        var dialog = document.createElement('dialog'), home = '', current = '', version = 0;
+        dialog.className = 'board-v3 fs-dialog';
+        dialog.setAttribute('aria-labelledby', 'board-folder-title');
+        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-folder-title">' + escapeHTML(i4('chooseFolder')) + '</h2>' + i4Button('close', 'data-fs-close') + '</header><div class="dialog-body"><nav class="fs-crumb" aria-label="' + escapeHTML(i4('folderPath')) + '"></nav><ul class="fs-list"></ul><p class="form-error" role="alert"></p></div><footer class="dialog-footer">' + i4Button('home', 'data-fs-home') + i4Button('selectFolder', 'data-fs-select', '', true) + '</footer>';
+        document.body.appendChild(dialog); folderDialog = dialog;
+        function close() { version++; dialog.close(); dialog.remove(); if (folderDialog === dialog) folderDialog = null; }
+        bindDialogDismiss(dialog, close);
+        dialog.querySelector('[data-fs-close]').onclick = close;
+        dialog.querySelector('[data-fs-home]').onclick = function() { navigate(home); };
+        dialog.querySelector('[data-fs-select]').onclick = function() { if (current) { input.value = current; input.dispatchEvent(new Event('input', { bubbles: true })); close(); } };
+        async function navigate(path, initial) {
+            var request = ++version, select = dialog.querySelector('[data-fs-select]');
+            select.disabled = true; current = '';
+            dialog.querySelector('.form-error').textContent = '';
+            dialog.querySelector('.fs-list').innerHTML = '<li class="fs-empty">' + escapeHTML(i4('loading')) + '</li>';
+            try {
+                var data = await fetchJSON('/api/fs/list?path=' + encodeURIComponent(path || ''));
+                if (request !== version || !dialog.isConnected) return;
+                if (!home) home = data.path;
+                var crumbs = boardAPI().folderBreadcrumbs(home, data.path);
+                if (!crumbs.length || !Array.isArray(data.directories)) throw new Error(i4('invalidFolder'));
+                current = data.path;
+                dialog.querySelector('.fs-crumb').innerHTML = crumbs.map(function(c) { return i4Button('home', 'data-fs-path', c.path).replace(escapeHTML(i4('home')) + '</button>', escapeHTML(c.name) + '</button>'); }).join('<span class="sep">/</span>');
+                dialog.querySelector('.fs-list').innerHTML = data.directories.length ? data.directories.map(function(name) {
+                    return '<li><button type="button" class="fs-item" data-fs-path="' + escapeHTML(current + '/' + name) + '"><span class="ficon" aria-hidden="true">▱</span>' + escapeHTML(name) + '</button></li>';
+                }).join('') : '<li class="fs-empty">' + escapeHTML(i4('emptyFolder')) + '</li>';
+                dialog.querySelectorAll('[data-fs-path]').forEach(function(node) { node.onclick = function() { navigate(node.dataset.fsPath); }; });
+                select.disabled = false;
+                if (initial && input.value.trim() && input.value.trim() !== home) navigate(input.value.trim());
+            } catch (error) {
+                if (request !== version || !dialog.isConnected) return;
+                dialog.querySelector('.fs-list').innerHTML = '';
+                dialog.querySelector('.form-error').textContent = error.message;
+            }
+        }
+        dialog.showModal(); navigate('', true);
+    }
+    function openNewProject() {
+        var dialog = showBoardDialog(i4('newProject'), '<form data-board-entry><fieldset><div class="entry-options">'
+            + '<label class="entry-option"><input type="radio" name="type" value="folder" checked>' + escapeHTML(i4('folder')) + '</label>'
+            + '<label class="entry-option"><input type="radio" name="type" value="git">Git URL</label></div>'
+            + '<div class="field" data-entry-folder><label for="board-entry-path">' + escapeHTML(i4('folderPath')) + '</label><div class="path-row"><input id="board-entry-path" name="path" required maxlength="1000" autocomplete="off" placeholder="/home/…">'
+            + '<button class="path-pick" type="button" data-pick-folder aria-haspopup="dialog" aria-label="' + escapeHTML(i4('chooseFolder')) + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg></button></div></div>'
+            + '<label class="field" data-entry-git hidden><span>Git URL</span><input name="git" required disabled maxlength="1000" placeholder="' + escapeHTML(i4('gitPlaceholder')) + '"></label>'
+            + '<label class="field"><span>' + escapeHTML(i4('goal')) + '</span><input name="goal" required maxlength="300" autocomplete="off"></label>'
+            + '<label class="auto-option"><input type="checkbox" name="autoTakeover" checked><span>' + escapeHTML(i4('autoTakeover')) + '</span></label><p class="auto-help">' + escapeHTML(i4('manualHelp')) + '</p><p class="risk-note">' + escapeHTML(i4('riskNote')) + '</p></fieldset>'
+            + '<p class="form-error" role="alert"></p><footer class="dialog-footer"><span class="source-note">' + escapeHTML(i4('entryNote')) + '</span><button type="submit" class="btn primary">' + escapeHTML(i4('submit')) + '</button></footer></form>');
+        dialog.classList.add('create-dialog');
+        var form = dialog.querySelector('form'), progress = { projectId: '', workstreamId: '' }, busy = false, entry = null;
+        form.querySelectorAll('[name="type"]').forEach(function(node) { node.onchange = function() {
+            var git = form.elements.type.value === 'git';
+            form.querySelector('[data-entry-folder]').hidden = git; form.querySelector('[data-entry-git]').hidden = !git;
+            form.elements.path.disabled = git; form.elements.git.disabled = !git;
+        }; });
+        form.querySelector('[data-pick-folder]').onclick = function() { openFolderPicker(form.elements.path); };
+        form.onsubmit = async function(event) {
+            event.preventDefault(); if (busy) return;
+            if (!entry) entry = boardAPI().projectEntry({ type: form.elements.type.value, source: form.elements.type.value === 'git' ? form.elements.git.value : form.elements.path.value, goal: form.elements.goal.value, autoTakeover: form.elements.autoTakeover.checked });
+            var errorNode = form.querySelector('.form-error'), submit = form.querySelector('[type="submit"]');
+            if (entry.error) { errorNode.textContent = i4(entry.error); entry = null; return; }
+            busy = true; submit.disabled = true; form.querySelector('fieldset').disabled = true; errorNode.textContent = ''; submit.textContent = i4('saving');
+            var epoch = state.boardEpoch;
+            try {
+                var snapshot;
+                if (!progress.projectId) {
+                    // Persist remote source as description; the server has no clone endpoint.
+                    snapshot = await boardRequest('projects', 'POST', { name: entry.name, currentGoal: entry.goal, repoPath: entry.type === 'folder' ? entry.source : '', description: entry.type === 'git' ? 'Git URL: ' + entry.source : '', brief: { understanding: entry.goal } });
+                    progress.projectId = snapshot.activeProjectId;
+                    if (epoch !== state.boardEpoch) return;
+                    state.snapshot = snapshot;
+                    saveEntryPreference(progress.projectId, { autoTakeover: entry.autoTakeover, source: entry.source, type: entry.type });
+                }
+                if (!progress.workstreamId) {
+                    snapshot = await boardRequest('workstreams', 'POST', { projectId: progress.projectId, title: entry.goal, scopeSummary: entry.goal, priority: 'medium' });
+                    if (epoch !== state.boardEpoch) return;
+                    state.snapshot = snapshot;
+                    var workstream = findCreatedWorkstream(snapshot, progress.projectId, entry.goal);
+                    if (!workstream) throw new Error(i4('registrationIncomplete'));
+                    progress.workstreamId = workstream.id;
+                }
+                snapshot = await boardRequest('tasks', 'POST', { projectId: progress.projectId, workstreamId: progress.workstreamId, title: entry.goal, goal: entry.goal, priority: 'medium', riskLevel: 'medium' });
+                if (epoch !== state.boardEpoch) return;
+                state.snapshot = snapshot; updateBadge();
+                if (boardDialog === dialog) openTaskDrawer();
+            } catch (error) {
+                if (!dialog.isConnected) return;
+                errorNode.textContent = (progress.projectId ? i4('partialRegistration') + ' ' : '') + error.message;
+                // Known successful stages are retained so retry never recreates them.
+                if (!progress.projectId) { entry = null; form.querySelector('fieldset').disabled = false; }
+            } finally { busy = false; submit.disabled = false; submit.textContent = i4('submit'); }
+        };
+    }
+    function renderDrawerSummary(groups) {
+        return '<div class="task-toolbar task-summary" aria-label="' + escapeHTML(i4('drawer')) + '">' + ['approval', 'ready', 'running', 'ended'].map(function(key) {
+            return '<span class="pill">' + escapeHTML(i4(key)) + ' <strong>' + groups[key].length + '</strong></span>';
+        }).join('') + '</div>';
+    }
+    function renderTaskDrawer() {
+        var groups = boardAPI().drawerGroups(state.snapshot), prefs = entryPreferences();
+        return renderDrawerSummary(groups) + '<div class="task-toolbar">' + i4Button('newProject', 'data-drawer-new') + i4Button('refresh', 'data-drawer-refresh') + '</div><p class="form-error" data-drawer-error role="alert"></p>'
+            + ['approval', 'ready', 'running', 'ended'].map(function(key) {
+                return '<section class="task-section"><h3>' + escapeHTML(i4(key)) + ' · ' + groups[key].length + '</h3><ul class="task-list">' + (groups[key].length ? groups[key].map(function(row) {
+                    var task = row.task, preference = prefs[task.projectId], project = findById(projects(), task.projectId);
+                    var evidence = boardAPI().latestVerification(task.id, state.snapshot);
+                    var approvals = row.checkpoints.filter(function(c) { return !row.planning || c.kind !== 'dispatch'; });
+                    return '<li class="task-item"><div class="task-item-meta"><span class="pill">' + escapeHTML(row.planning ? i4('planning') : key === 'approval' ? i4('approval') : humanizeTaskState(task.state))
+                        + '</span><small>' + escapeHTML(project ? project.name : task.projectId) + '</small></div><strong>' + escapeHTML(task.title) + '</strong>'
+                        + (key === 'approval' ? '<span class="source-tag">' + escapeHTML(i4('separated')) + '</span><p class="source-note">' + escapeHTML(i4('evidence') + ': ' + (evidence ? evidence.value : i4('noEvidence'))) + '</p><p class="source-note">' + escapeHTML(i4('selfReport') + ': ' + (task.recentSummary || '—')) + '</p>' : '')
+                        + (row.planning ? '<p class="source-note">' + escapeHTML(i4('planningNote')) + '</p>' : '')
+                        + (preference && preference.type === 'git' && !(project && project.repoPath) ? '<p class="source-note">' + escapeHTML(i4('gitPending')) + '</p>' : '')
+                        + (row.draft && key === 'approval' ? '<details class="draft-card"><summary>' + escapeHTML(i4('draft')) + '</summary><p class="pre-line">' + escapeHTML(row.draft.value) + '</p>'
+                            + '<form data-draft-task="' + escapeHTML(task.id) + '"><label class="field"><span>' + escapeHTML(i4('acceptanceCommand')) + '</span><textarea name="command" rows="3">' + escapeHTML(JSON.stringify(task.acceptanceCommand || [])) + '</textarea><small>' + escapeHTML(i4('commandHelp')) + '</small></label>'
+                            + '<label class="field"><span>' + escapeHTML(i4('outOfScope')) + '</span><textarea name="outOfScope" rows="3">' + escapeHTML(project && project.brief && project.brief.outOfScope || '') + '</textarea></label><button type="submit" class="btn small">' + escapeHTML(i4('saveDraft')) + '</button></form></details>' : '')
+                        + '<div class="task-row-actions">' + (approvals.length ? approvals.map(function(c) {
+                            return '<span>' + escapeHTML(approvalKindLabel(c.kind)) + ' ' + ['approve', 'reject'].filter(function(action) { return (c.allowedActions || []).includes(action); }).map(function(action) {
+                                return '<button type="button" class="btn small' + (action === 'approve' ? ' primary' : '') + '" data-drawer-decision="' + action + '" data-checkpoint="' + escapeHTML(c.id) + '">' + escapeHTML(i4(action)) + '</button>';
+                            }).join('') + '</span>';
+                        }).join('') : i4Button('details', 'data-drawer-task', task.id)) + '</div></li>';
+                }).join('') : '<li class="fs-empty">' + escapeHTML(i4('emptyGroup')) + '</li>') + '</ul></section>';
+            }).join('');
+    }
+    async function refreshDrawer(dialog) {
+        if (drawerBusy || boardDialog !== dialog || !dialog.open) return;
+        try {
+            var snapshot = await fetchJSON('/api/project-control');
+            if (boardDialog !== dialog || !dialog.open || drawerBusy) return;
+            state.snapshot = snapshot; updateBadge();
+            // Keep draft edits and keyboard focus intact during automatic refresh.
+            if (!dialog.querySelector('details[open]') && !dialog.querySelector('.dialog-body').contains(document.activeElement)) updateTaskDrawer(dialog);
+        } catch (error) { if (dialog.isConnected) dialog.querySelector('[data-drawer-error]').textContent = error.message; }
+    }
+    function updateTaskDrawer(dialog) {
+        if (boardDialog !== dialog) return;
+        dialog.querySelector('.dialog-body').innerHTML = renderTaskDrawer(); bindTaskDrawer(dialog);
+    }
+    function openTaskDrawer() {
+        var dialog = showBoardDialog(i4('drawer'), renderTaskDrawer()); dialog.classList.add('drawer');
+        bindTaskDrawer(dialog); refreshDrawer(dialog);
+        drawerTimer = window.setInterval(function() { refreshDrawer(dialog); }, 5000);
+    }
+    async function drawerMutation(dialog, action) {
+        if (drawerBusy) return;
+        drawerBusy = true;
+        dialog.querySelectorAll('.dialog-body button').forEach(function(node) { node.disabled = true; });
+        try { await action(); if (dialog.isConnected) updateTaskDrawer(dialog); }
+        catch (error) {
+            if (dialog.isConnected) dialog.querySelector('[data-drawer-error]').textContent = error.message;
+        } finally {
+            drawerBusy = false; updateBadge();
+            if (dialog.isConnected) dialog.querySelectorAll('.dialog-body button').forEach(function(node) { node.disabled = false; });
+        }
+    }
+    function bindTaskDrawer(dialog) {
+        dialog.querySelector('[data-drawer-new]').onclick = openNewProject;
+        dialog.querySelector('[data-drawer-refresh]').onclick = async function() {
+            if (drawerBusy) return;
+            try { state.snapshot = await fetchJSON('/api/project-control'); if (dialog.isConnected) updateTaskDrawer(dialog); updateBadge(); }
+            catch (error) { if (dialog.isConnected) dialog.querySelector('[data-drawer-error]').textContent = error.message; }
+        };
+        dialog.querySelectorAll('[data-drawer-task]').forEach(function(node) { node.onclick = function() { closeBoardDialog(); openTask(node.dataset.drawerTask); }; });
+        dialog.querySelectorAll('[data-draft-task]').forEach(function(form) { form.onsubmit = function(event) {
+            event.preventDefault(); drawerMutation(dialog, async function() {
+                var task = findById(tasks(), form.dataset.draftTask), project = findById(projects(), task.projectId), command;
+                try { command = JSON.parse(form.elements.command.value); } catch (_) { throw new Error(i4('invalidCommand')); }
+                if (!Array.isArray(command) || !command.length || command.some(function(v) { return typeof v !== 'string' || !v.trim(); })) throw new Error(i4('invalidCommand'));
+                var changedCommand = JSON.stringify(command) !== JSON.stringify(task.acceptanceCommand || []);
+                var brief = Object.assign({}, project.brief, { outOfScope: form.elements.outOfScope.value.trim() });
+                if (brief.outOfScope !== (project.brief && project.brief.outOfScope || '')) {
+                    var updated = await boardRequest('projects/' + encodeURIComponent(project.id) + '/contract', 'PATCH', { expectedRowVersion: project.rowVersion, brief: brief });
+                    Object.assign(project, updated);
+                }
+                if (changedCommand) state.snapshot = await boardRequest('tasks/' + encodeURIComponent(task.id), 'PATCH', { expectedRowVersion: task.rowVersion, acceptanceCommand: command });
+            });
+        }; });
+        dialog.querySelectorAll('[data-drawer-decision]').forEach(function(node) { node.onclick = function() {
+            drawerMutation(dialog, async function() {
+                var checkpoint = findById(checkpoints(), node.dataset.checkpoint), task = findById(tasks(), checkpoint.taskId), preference = entryPreferences()[task.projectId];
+                state.snapshot = await boardRequest('checkpoints/' + encodeURIComponent(checkpoint.id) + '/decision', 'POST', { action: node.dataset.drawerDecision });
+                updateTaskDrawer(dialog);
+                if (node.dataset.drawerDecision !== 'approve' || checkpoint.kind !== 'dispatch' || !preference || !preference.autoTakeover) return;
+                var project = findById(projects(), task.projectId);
+                if (project.takeover && project.takeover.mode === 'active') return;
+                if (project.lifecycle.state === 'awaiting_confirmation') {
+                    project = await boardRequest('projects/' + encodeURIComponent(project.id) + '/contract', 'PATCH', { expectedRowVersion: project.rowVersion, lifecycle: 'executing' });
+                }
+                // Only the server can enable takeover; do not synthesize a claim or session.
+                await boardRequest('projects/' + encodeURIComponent(project.id) + '/takeover', 'POST', { action: 'start' });
+                state.snapshot = await fetchJSON('/api/project-control');
+            });
+        }; });
+    }
+    function initBoardFont() {
+        var size = 14;
+        try { size = boardAPI().boardFontSize(localStorage.getItem('roambench-board-font-size')); } catch (_) { /* Use default. */ }
+        function apply(next) {
+            size = boardAPI().boardFontSize(next); document.documentElement.style.setProperty('--board-fs', size + 'px');
+            try { localStorage.setItem('roambench-board-font-size', String(size)); } catch (_) { /* Use session value. */ }
+            document.querySelectorAll('[data-board-font]').forEach(function(node) { node.disabled = node.dataset.boardFont === '-1' ? size <= 12 : node.dataset.boardFont === '1' ? size >= 20 : size === 14; });
+        }
+        document.querySelectorAll('[data-board-font]').forEach(function(node) { node.addEventListener('click', function() { apply(node.dataset.boardFont === 'reset' ? 14 : size + Number(node.dataset.boardFont)); }); });
+        apply(size);
+    }
+
     function bindBoardInteractions(panel) {
         panel.querySelectorAll('[data-board-detail]').forEach(function(node) { node.addEventListener('click', function() { openBoardDetail(node.dataset.boardDetail); }); });
         panel.querySelectorAll('[data-board-session]').forEach(function(node) {
@@ -4835,40 +5071,7 @@
         return renderDashboard();
     }
 
-    function createProject() {
-        var name = window.prompt(tr('project.promptProjectName', 'Project name:'), tr('project.defaultNewProject', 'New Project'));
-        var description;
-        var goal;
-        if (name === null || !String(name).trim()) {
-            return;
-        }
-        description = window.prompt(tr('project.promptProjectDescription', 'Project description:'), '');
-        if (description === null) {
-            description = '';
-        }
-        goal = window.prompt(tr('project.promptProjectGoal', 'Current goal:'), '');
-        if (goal === null) {
-            goal = '';
-        }
-        fetchJSON('/api/project-control/projects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                key: String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-                name: String(name).trim(),
-                description: String(description || '').trim(),
-                currentGoal: String(goal || '').trim()
-            })
-        }).then(function(snapshot) {
-            state.snapshot = snapshot;
-            openDashboard(snapshot.activeProjectId);
-            updateBadge();
-            render();
-        }).catch(function(err) {
-            state.error = err.message || tr('project.createProjectFailed', 'Create project failed');
-            render();
-        });
-    }
+    function createProject() { openNewProject(); }
 
     function createWorkstream(projectId) {
         startWorkstreamWizard(projectId);
@@ -5080,6 +5283,7 @@
 
     function bindInteractions(panel) {
         bindBoardInteractions(panel);
+        panel.querySelectorAll('[data-open-drawer]').forEach(function(node) { node.addEventListener('click', openTaskDrawer); });
         panel.querySelectorAll('[data-project-id]').forEach(function(node) {
             node.addEventListener('click', function() {
                 openDashboard(node.getAttribute('data-project-id'));
@@ -5367,7 +5571,7 @@
 
     function render() {
         hideBoardPreview();
-        if (state.currentView !== 'board') closeBoardDialog();
+        if (state.currentView !== 'board' && boardDialog && !boardDialog.classList.contains('drawer') && !boardDialog.classList.contains('create-dialog')) closeBoardDialog();
         var panel = getPanel();
         if (!panel) {
             return;
@@ -5399,6 +5603,7 @@
     function handleAuth(event) {
         state.authenticated = Boolean(event && event.detail && event.detail.authenticated);
         if (!state.authenticated) {
+            closeBoardDialog();
             state.snapshot = null;
             state.error = '';
             state.currentView = 'dashboard';
@@ -5430,6 +5635,7 @@
     }
 
     function init() {
+        initBoardFont();
         window.addEventListener('scroll', hideBoardPreview, true);
         window.addEventListener('resize', hideBoardPreview);
         document.addEventListener('keydown', function(event) {
@@ -5453,7 +5659,7 @@
                 if (app() && app().setMode) {
                     app().setMode('project');
                 }
-                openApprovals();
+                openTaskDrawer();
                 if (!state.snapshot && state.authenticated) {
                     loadSnapshot();
                 } else {

@@ -250,7 +250,53 @@
         }).sort(function(a, b) { return timestamp(b.createdAt) - timestamp(a.createdAt); })[0] || null;
     }
 
+    function boardFontSize(value) {
+        var size = Number(value);
+        return Number.isFinite(size) && size > 0 ? Math.min(20, Math.max(12, Math.round(size))) : 14;
+    }
+    function folderBreadcrumbs(home, path) {
+        home = String(home || '').replace(/\/+$/, '');
+        path = String(path || '').replace(/\/+$/, '');
+        if (!home || (path !== home && !path.startsWith(home + '/'))) return [];
+        var parts = path.slice(home.length).split('/').filter(Boolean), current = home;
+        if (parts.some(function(part) { return part === '..' || part === '.'; })) return [];
+        return [{ name: home, path: home }].concat(parts.map(function(name) {
+            current += '/' + name; return { name: name, path: current };
+        }));
+    }
+    function projectEntry(input) {
+        input = input || {};
+        var type = input.type === 'git' ? 'git' : 'folder';
+        var source = String(input.source || '').trim(), goal = String(input.goal || '').trim();
+        if (!source || !goal) return { error: 'required' };
+        if (/[\r\n\0]/.test(source) || source.length > 1000 || goal.length > 300) return { error: 'invalidEntry' };
+        if (type === 'folder' && !source.startsWith('/')) return { error: 'absolutePath' };
+        if (type === 'git' && !/^(https?:\/\/[^\s/]+\/\S+|ssh:\/\/[^\s/]+\/\S+|git@[^\s:]+:\S+)$/.test(source)) return { error: 'invalidGit' };
+        var name = source.replace(/\/+$/, '').split(/[/:]/).pop().replace(/\.git$/, '') || goal;
+        return { type: type, source: source, goal: goal, name: name, autoTakeover: input.autoTakeover !== false };
+    }
+    // Planning is not approval: a dispatch checkpoint is raised at registration,
+    // before Hermes has supplied any draft. Never present it as a finished plan.
+    function drawerGroups(snapshot) {
+        snapshot = snapshot || {};
+        var result = { approval: [], ready: [], running: [], ended: [] };
+        list(snapshot.tasks).forEach(function(task) {
+            var pending = list(snapshot.checkpoints).filter(function(c) { return c.taskId === task.id && c.status === 'pending'; });
+            var draft = list(snapshot.artifacts).filter(function(a) { return a.taskId === task.id && a.kind === 'plan' && String(a.value || '').trim(); })
+                .sort(function(a, b) { return (timestamp(b.createdAt) || 0) - (timestamp(a.createdAt) || 0); })[0] || null;
+            var planning = !draft && ['planned', 'queued'].includes(task.state) && !['ready', 'claimed', 'rejected'].includes(task.dispatchState);
+            var group = ['archived', 'execution_complete', 'cancelled'].includes(task.state) ? 'ended'
+                : pending.length || planning ? 'approval'
+                : task.dispatchState === 'claimed' || task.state === 'running' ? 'running' : 'ready';
+            result[group].push({ task: task, checkpoints: pending, draft: draft, planning: planning });
+        });
+        // Newest completed work first; preserve all active tasks, including blocked ones.
+        result.ended.sort(function(a, b) { return (timestamp(b.task.updatedAt) || 0) - (timestamp(a.task.updatedAt) || 0); });
+        return result;
+    }
+
     return {
+        boardFontSize: boardFontSize, folderBreadcrumbs: folderBreadcrumbs, projectEntry: projectEntry, drawerGroups: drawerGroups,
         lifecycleChain: lifecycleChain, formatDuration: formatDuration,
         dateKey: dateKey, calendarRange: calendarRange, calendarDays: calendarDays, rangeTicks: rangeTicks,
         sessionModels: sessionModels, statusCounts: statusCounts,
