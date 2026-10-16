@@ -226,6 +226,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/terminals/", authRequired(s.sessions, s.handleTerminal))
 	s.mux.HandleFunc("/api/terminals", authRequired(s.sessions, s.handleTerminals))
 
+	// I1 routes
+	s.mux.HandleFunc("/api/fs/list", authRequired(s.sessions, s.handleFSList))
+	// I2 routes: lifecycle/contract endpoints
+
 	// File browser (auth required)
 	s.mux.HandleFunc("/api/files/mkdir", authRequired(s.sessions, s.handleFilesMkdir))
 	s.mux.HandleFunc("/api/files/copy", authRequired(s.sessions, s.handleFilesCopy))
@@ -634,7 +638,13 @@ func (s *Server) handleTerminals(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, sessions)
 	case http.MethodPost:
-		session, err := s.terminals.CreateSession(username)
+		var opts terminal.SessionCreateOptions
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&opts); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		session, err := s.terminals.CreateSessionWithOptions(username, opts)
 		if err != nil {
 			log.Printf("create session error: %v", err)
 			status, message, retryAfter := terminalCreateErrorResponse(err)

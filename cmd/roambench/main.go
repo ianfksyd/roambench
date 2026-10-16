@@ -27,6 +27,13 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "ls" || os.Args[1] == "attach") {
+		if err := runSessionCommand(os.Args[1:], os.Stdout, os.Stderr, terminal.ReadSessionStatuses); err != nil && !errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	port := flag.Int("port", 0, "Server port (overrides config)")
 	host := flag.String("host", "", "Server host (overrides config)")
 	configPath := flag.String("config", "", "Path to config file")

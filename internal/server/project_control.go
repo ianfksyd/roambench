@@ -1118,8 +1118,10 @@ func createProjectControlPhaseSession(username string, task projectControlTask, 
 		return projectControlID("session", task.ID+"-"+phaseID), nil
 	}
 	session, err := terminals.CreateSessionWithOptions(username, terminal.SessionCreateOptions{
-		WorkDir: workspaceDir,
-		Name:    projectControlPhaseSessionName(task, phaseID),
+		WorkDir:   workspaceDir,
+		Name:      projectControlPhaseSessionName(task, phaseID),
+		TaskID:    task.ID,
+		ProjectID: task.ProjectID,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create phase session: %w", err)

@@ -60,14 +60,23 @@ PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 )
 
 type SessionInfo struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	TaskID       string     `json:"taskId,omitempty"`
+	ProjectID    string     `json:"projectId,omitempty"`
+	LastActivity time.Time  `json:"lastActivity"`
+	IdleSeconds  int64      `json:"idleSeconds"`
+	Status       string     `json:"status"`
+	DetachedAt   *time.Time `json:"detachedAt,omitempty"`
+	Backend      string     `json:"backend"`
+	CreatedAt    time.Time  `json:"createdAt"`
 }
 
 type SessionCreateOptions struct {
-	WorkDir string
-	Name    string
+	WorkDir   string `json:"workDir"`
+	Name      string `json:"name"`
+	TaskID    string `json:"taskId"`
+	ProjectID string `json:"projectId"`
 }
 
 type ScrollState struct {
@@ -81,6 +90,10 @@ type persistedSession struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	Username     string    `json:"username"`
+	TaskID       string    `json:"taskId,omitempty"`
+	ProjectID    string    `json:"projectId,omitempty"`
+	Backend      string    `json:"backend,omitempty"`
+	PID          int       `json:"pid,omitempty"`
 	WorkDir      string    `json:"workDir,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
 	LastActivity time.Time `json:"lastActivity"`
@@ -176,16 +189,27 @@ func (m *Manager) ListSessions(username string) []SessionInfo {
 	var result []SessionInfo
 	for _, s := range m.sessions {
 		if s.Username == username {
-			result = append(result, s.Info)
+			info := s.Info
+			info.LastActivity = s.LastActivity
+			info.Backend = "pty"
+			if m.hasTmux {
+				info.Backend = "tmux"
+			}
+			classifySession(&info, time.Now(), s.cmd != nil || m.hasTmux)
+			result = append(result, info)
 		}
 	}
 	m.mu.Unlock()
 
 	if m.hasTmux {
+		observations, _ := observeTmuxSessions()
 		filtered := result[:0]
 		for _, info := range result {
 			if m.pruneMissingTmuxSession(info.ID) {
 				continue
+			}
+			if observed, ok := observations[info.ID]; ok {
+				applyTmuxObservation(&info, observed, time.Now())
 			}
 			filtered = append(filtered, info)
 		}
@@ -254,6 +278,8 @@ func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOp
 		Info: SessionInfo{
 			ID:        id,
 			Name:      name,
+			TaskID:    strings.TrimSpace(opts.TaskID),
+			ProjectID: strings.TrimSpace(opts.ProjectID),
 			CreatedAt: now,
 		},
 		Username:        username,
@@ -298,6 +324,12 @@ func (m *Manager) CreateSessionWithOptions(username string, opts SessionCreateOp
 
 	m.mu.Lock()
 	info := session.Info
+	info.LastActivity = session.LastActivity
+	info.Backend = "pty"
+	if m.hasTmux {
+		info.Backend = "tmux"
+	}
+	classifySession(&info, time.Now(), m.hasTmux || session.cmd != nil)
 	m.mu.Unlock()
 	return info, nil
 }
@@ -401,6 +433,7 @@ func (m *Manager) AttachSessionForUser(username, sessionID string) (*os.File, *e
 	session.dirty = true
 	m.mu.Unlock()
 
+	_ = m.persistSession(sessionID)
 	m.reapAttachedCommand(sessionID, cmd, ptmx)
 
 	return ptmx, cmd, nil
@@ -463,6 +496,7 @@ func (m *Manager) reapAttachedCommand(sessionID string, cmd *exec.Cmd, ptyFile *
 		}
 		if session.cmd == cmd {
 			session.cmd = nil
+			session.dirty = true
 		}
 		if session.ptyFile == ptyFile {
 			session.ptyFile = nil
@@ -776,6 +810,7 @@ func (m *Manager) nextDefaultNameLocked(username string) string {
 }
 
 func (m *Manager) configureTmuxTerminal(sessionID, defaultCommand string) {
+	trackTmuxDetachment(sessionID)
 	exec.Command("tmux", "set-option", "-t", sessionID, "default-terminal", terminalClientTerm).Run()
 	exec.Command("tmux", "set-environment", "-t", sessionID, "TERM", terminalClientTerm).Run()
 	exec.Command("tmux", "set-environment", "-t", sessionID, "COLORTERM", terminalColorDepth).Run()
@@ -991,10 +1026,18 @@ func (m *Manager) persistSession(sessionID string) error {
 	data := persistedSession{
 		ID:           session.Info.ID,
 		Name:         session.Info.Name,
+		TaskID:       session.Info.TaskID,
+		ProjectID:    session.Info.ProjectID,
+		Backend:      "pty",
 		Username:     session.Username,
 		WorkDir:      session.WorkDir,
 		CreatedAt:    session.Info.CreatedAt,
 		LastActivity: session.LastActivity,
+	}
+	if m.hasTmux {
+		data.Backend = "tmux"
+	} else if session.cmd != nil && session.cmd.Process != nil {
+		data.PID = session.cmd.Process.Pid
 	}
 	m.mu.Unlock()
 
@@ -1248,6 +1291,7 @@ func (m *Manager) loadPersistedSessions() {
 			m.removePersistedSession(data.Username, data.ID)
 			continue
 		}
+		trackTmuxDetachment(data.ID)
 		if selectedFromWAL {
 			if err := m.writePersistedSession(data); err != nil {
 				continue
@@ -1263,6 +1307,8 @@ func (m *Manager) loadPersistedSessions() {
 				Info: SessionInfo{
 					ID:        data.ID,
 					Name:      data.Name,
+					TaskID:    data.TaskID,
+					ProjectID: data.ProjectID,
 					CreatedAt: data.CreatedAt,
 				},
 				Username:     data.Username,
@@ -1378,6 +1424,7 @@ func (m *Manager) loadOrphanTmuxSessions() {
 		m.sessions[state.ID] = session
 		m.mu.Unlock()
 
+		trackTmuxDetachment(state.ID)
 		m.persistSession(state.ID)
 	}
 }
