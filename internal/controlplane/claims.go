@@ -274,13 +274,17 @@ func (c *ClaimStore) ReleaseClaim(ctx context.Context, username, claimID, outcom
 // SQLite). Returns the recycled leases so the caller can emit Timeline and
 // Audit entries. Safe to call on server start and before claim/heartbeat.
 func (c *ClaimStore) ExpireStaleClaims(ctx context.Context) ([]ExpiredClaim, error) {
+	return c.expireStaleClaims(ctx, "")
+}
+
+func (c *ClaimStore) expireStaleClaims(ctx context.Context, username string) ([]ExpiredClaim, error) {
 	now := c.now().UTC()
 	tx, err := c.repo.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, claimSelect+` WHERE status='active'`)
+	rows, err := tx.QueryContext(ctx, claimSelect+` WHERE status='active' AND (?='' OR username=?)`, username, username)
 	if err != nil {
 		return nil, err
 	}
@@ -376,4 +380,16 @@ func isUniqueViolation(err error) bool {
 		strings.Contains(msg, "unique") ||
 		strings.Contains(msg, "SQLITE_CONSTRAINT") ||
 		strings.Contains(msg, "2067")
+}
+
+// RevokeTaskClaims closes even overdue active leases, scoped to one user's task.
+// The project-control store closes its execution gate before calling this.
+func (c *ClaimStore) RevokeTaskClaims(ctx context.Context, username, taskID string) error {
+	_, err := c.repo.db.ExecContext(ctx, `UPDATE task_claims SET status='released', updated_at=? WHERE username=? AND task_id=? AND status='active'`, formatTime(c.now().UTC()), username, taskID)
+	return err
+}
+
+// ExpireStaleClaimsForUser avoids consuming another user's expiry events.
+func (c *ClaimStore) ExpireStaleClaimsForUser(ctx context.Context, username string) ([]ExpiredClaim, error) {
+	return c.expireStaleClaims(ctx, username)
 }

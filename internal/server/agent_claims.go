@@ -69,32 +69,48 @@ func (s *projectControlStore) agentClaimTask(username string, req agentClaimRequ
 	if _, err := s.expireStaleClaimsForUser(username); err != nil {
 		return http.StatusInternalServerError, nil, fmt.Errorf("lease expiry sweep: %w", err)
 	}
-	candidates := s.readyTaskIDsForUser(username)
-	claim, err := claims.ClaimReadyTask(context.Background(), username, candidates, req.RuntimeID, req.AgentLabel)
-	if errors.Is(err, controlplane.ErrNotFound) {
-		return http.StatusNoContent, nil, nil
-	}
-	if err != nil {
-		return http.StatusInternalServerError, nil, err
-	}
-	// TOCTOU re-check (K5): the candidate snapshot was taken before the lease
-	// INSERT. Re-verify inside withStateLocked that the task is still
-	// dispatch-ready before overwriting its dispatch state; a checkpoint
-	// rejection that raced in between must win over the claim.
-	if err := s.applyClaimToTaskRechecked(username, claim.TaskID, controlplane.DispatchStateClaimed, claim.RuntimeID, claim.ClaimID, func(current string) error {
-		if current != controlplane.DispatchStateReady {
-			return controlplane.ErrConflict
+	var claim controlplane.TaskClaim
+	_, err := s.withStateLocked(username, func(state *projectControlState) error {
+		for _, task := range state.Tasks {
+			p, _ := controlProject(*state, task.ProjectID)
+			if task.DispatchState == "ready" && p.Takeover.Mode == "active" && task.RiskLevel == "high" {
+				pauseControlState(state, task.ProjectID, task.ID, "high_risk")
+			}
+		}
+		for i := range state.Tasks {
+			task := &state.Tasks[i]
+			if task.DispatchState != "ready" || !taskClaimAllowed(*state, *task) {
+				continue
+			}
+			if sharedDirectoryConflict(*state, *task) {
+				pauseControlState(state, task.ProjectID, task.ID, "shared_directory_conflict")
+				continue
+			}
+			candidate, err := claims.ClaimReadyTask(context.Background(), username, []string{task.ID}, req.RuntimeID, req.AgentLabel)
+			if errors.Is(err, controlplane.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			claim = candidate
+			task.DispatchState, task.ClaimedByRuntimeID = "claimed", claim.RuntimeID
+			task.RowVersion++
+			appendControlEvent(state, task.ProjectID, task.ID, "task_dispatch_state_changed", "Task claimed with lease "+claim.ClaimID+".")
+			break
 		}
 		return nil
-	}); err != nil {
-		// Roll the losing lease back so the lease table stays consistent
-		// with the task projection.
-		_, _ = claims.ReleaseClaim(context.Background(), username, claim.ClaimID, controlplane.ReleaseOutcomeReleased)
-		if errors.Is(err, controlplane.ErrConflict) {
-			return http.StatusConflict, nil, fmt.Errorf("task %s is no longer dispatch-ready", claim.TaskID)
+	})
+	if err != nil {
+		if claim.ClaimID != "" {
+			_ = claims.RevokeTaskClaims(context.Background(), username, claim.TaskID)
 		}
 		return http.StatusInternalServerError, nil, err
 	}
+	if claim.ClaimID == "" {
+		return http.StatusNoContent, nil, nil
+	}
+
 	s.recordClaimTimeline(username, claim.TaskID, claim.AgentLabel, "task_claimed",
 		fmt.Sprintf("Task claimed by runtime %s (lease %s, agent %s) until %s.",
 			claim.RuntimeID, claim.ClaimID, claim.AgentLabel, claim.LeaseExpiresAt.UTC().Format(time.RFC3339)))
@@ -126,7 +142,22 @@ func (s *projectControlStore) agentHeartbeatTask(username string, req agentHeart
 	if _, err := s.expireStaleClaimsForUser(username); err != nil {
 		return http.StatusInternalServerError, nil, fmt.Errorf("lease expiry sweep: %w", err)
 	}
-	result, err := claims.HeartbeatClaim(context.Background(), username, req.LeaseID)
+	var result controlplane.HeartbeatResult
+	_, err := s.withStateLocked(username, func(state *projectControlState) error {
+		claim, err := claims.GetClaim(context.Background(), username, req.LeaseID)
+		if err != nil {
+			return err
+		}
+		task, ok := controlTask(*state, claim.TaskID)
+		if !ok {
+			return controlplane.ErrNotFound
+		}
+		if err := s.requireManagedLease(username, *state, task, req.LeaseID); err != nil {
+			return controlplane.ErrNotFound
+		}
+		result, err = claims.HeartbeatClaim(context.Background(), username, req.LeaseID)
+		return err
+	})
 	if errors.Is(err, controlplane.ErrNotFound) {
 		return http.StatusNotFound, nil, errors.New("lease not found, released or expired")
 	}
@@ -156,6 +187,9 @@ func (s *projectControlStore) agentReleaseTask(username string, req agentRelease
 	case controlplane.ReleaseOutcomeDone, controlplane.ReleaseOutcomeFailed, controlplane.ReleaseOutcomeReleased:
 	default:
 		return http.StatusBadRequest, nil, errors.New("outcome must be done, failed or released")
+	}
+	if status, payload, err, handled := s.releaseManagedTask(username, req); handled {
+		return status, payload, err
 	}
 	result, err := claims.ReleaseClaim(context.Background(), username, req.LeaseID, outcome)
 	if errors.Is(err, controlplane.ErrNotFound) {
@@ -191,7 +225,7 @@ func (s *projectControlStore) expireStaleClaimsForUser(username string) ([]contr
 	if claims == nil {
 		return nil, nil
 	}
-	expired, err := claims.ExpireStaleClaims(context.Background())
+	expired, err := claims.ExpireStaleClaimsForUser(context.Background(), username)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +233,7 @@ func (s *projectControlStore) expireStaleClaimsForUser(username string) ([]contr
 		if item.Claim.Username != username {
 			continue
 		}
-		if err := s.applyClaimToTask(username, item.Claim.TaskID, controlplane.DispatchStateReady, "", item.Claim.ClaimID); err != nil {
+		if err := s.applyExpiredClaim(username, item.Claim); err != nil {
 			return expired, err
 		}
 		s.recordClaimTimeline(username, item.Claim.TaskID, item.Claim.AgentLabel, "task_lease_expired",
@@ -221,7 +255,7 @@ func (s *projectControlStore) readyTaskIDsForUser(username string) []string {
 		if dispatchState == "" {
 			dispatchState = controlplane.DispatchStateNone
 		}
-		if dispatchState == controlplane.DispatchStateReady {
+		if dispatchState == controlplane.DispatchStateReady && taskClaimAllowed(state, task) {
 			ids = append(ids, task.ID)
 		}
 	}
@@ -252,6 +286,14 @@ func (s *projectControlStore) applyClaimToTaskRechecked(username, taskID, dispat
 				continue
 			}
 			found = true
+			if recheckDispatchState != nil && !taskClaimAllowed(*state, state.Tasks[i]) {
+				return controlplane.ErrConflict
+			}
+			if dispatchState == "ready" && managedProject(*state, state.Tasks[i]) {
+				// A release/expiry is never permission for a blind retry.
+				pauseControlState(state, state.Tasks[i].ProjectID, taskID, "lease_interrupted")
+				return nil
+			}
 			if recheckDispatchState != nil {
 				current := strings.TrimSpace(state.Tasks[i].DispatchState)
 				if current == "" {
@@ -322,14 +364,18 @@ func (s *projectControlStore) agentTaskPayloadForTaskID(username, taskID string)
 			phase = p
 		}
 		return map[string]interface{}{
-			"title":             task.Title,
-			"goal":              task.Goal,
-			"state":             task.State,
-			"currentPhase":      task.CurrentPhase,
-			"runbookState":      task.RunbookState,
-			"requiredArtifacts": phase.RequiredArtifacts,
-			"missingEvidence":   task.MissingEvidence,
-			"nextStep":          task.NextStep,
+			"title":              task.Title,
+			"acceptanceCommand":  task.AcceptanceCommand,
+			"resumeCheckpointId": task.ResumeCheckpointID,
+			"resumeCheckpoint":   checkpointPayload(state, task.ResumeCheckpointID),
+			"restart":            task.Restart,
+			"goal":               task.Goal,
+			"state":              task.State,
+			"currentPhase":       task.CurrentPhase,
+			"runbookState":       task.RunbookState,
+			"requiredArtifacts":  phase.RequiredArtifacts,
+			"missingEvidence":    task.MissingEvidence,
+			"nextStep":           task.NextStep,
 		}
 	}
 	return nil

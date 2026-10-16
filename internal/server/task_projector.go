@@ -85,6 +85,7 @@ func appendProjectedDecisionEvents(state *projectControlState, task projectContr
 	events := []projectControlRecordedEvent{
 		{
 			ID: "event-projection-checkpoint-resolved-" + decisionID, Timestamp: now, Actor: response.Actor,
+			Kind: activityKind(interaction.RequestKind), SourceID: interaction.RequestID,
 			Action: "checkpoint_resolved", Detail: "Resolved checkpoint " + interaction.RequestID + " as " + checkpointStatus + ".",
 		},
 		{

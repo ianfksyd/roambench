@@ -90,6 +90,16 @@ func (s *Server) handleAgentInteractions(w http.ResponseWriter, r *http.Request)
 		writeControlPlaneError(w, err)
 		return
 	}
+	if interaction.RiskClass == "high" || interaction.RiskClass == "critical" || interaction.RiskClass == "high_risk" {
+		if err := s.projectControl.pauseExecutionViolation(username, interaction.TaskID, "high_risk"); err != nil {
+			// Interactions may refer to external runtimes without a project task.
+			state, loadErr := s.projectControl.loadOrSeed(username)
+			if _, exists := controlTask(state, interaction.TaskID); exists || loadErr != nil {
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+	}
 	writeJSON(w, http.StatusCreated, interaction)
 }
 

@@ -83,12 +83,16 @@ type projectControlSnapshot struct {
 }
 
 type projectControlProject struct {
-	ID          string `json:"id"`
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	CurrentGoal string `json:"currentGoal"`
+	Brief       projectBrief       `json:"brief"`
+	Milestones  []projectMilestone `json:"milestones"`
+	Lifecycle   projectLifecycle   `json:"lifecycle"`
+	Takeover    projectTakeover    `json:"takeover"`
+	ID          string             `json:"id"`
+	Key         string             `json:"key"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Status      string             `json:"status"`
+	CurrentGoal string             `json:"currentGoal"`
 	// RepoPath is the absolute path of the git repository backing this project.
 	// When empty, the server falls back to runtimeRootDir. Optional (K1, WS-20261015-001).
 	RepoPath   string `json:"repoPath,omitempty"`
@@ -107,39 +111,48 @@ type projectControlWorkstream struct {
 }
 
 type projectControlTask struct {
-	ID                   string                    `json:"id"`
-	ProjectID            string                    `json:"projectId"`
-	WorkstreamID         string                    `json:"workstreamId"`
-	Title                string                    `json:"title"`
-	Goal                 string                    `json:"goal"`
-	State                string                    `json:"state"`
-	AcceptanceStatus     string                    `json:"acceptanceStatus"`
-	AcceptanceDecisionID string                    `json:"acceptanceDecisionId,omitempty"`
-	ArchiveDecisionID    string                    `json:"archiveDecisionId,omitempty"`
+	MilestoneID          string   `json:"milestoneId,omitempty"`
+	DependsOn            []string `json:"dependsOn,omitempty"`
+	AcceptanceCommand    []string `json:"acceptanceCommand,omitempty"`
+	AcceptancePassed     bool     `json:"acceptancePassed,omitempty"`
+	AcceptanceFailures   int      `json:"acceptanceFailures,omitempty"`
+	PauseReason          string   `json:"pauseReason,omitempty"`
+	ResumeCheckpointID   string   `json:"resumeCheckpointId,omitempty"`
+	CheckpointAfter      string   `json:"checkpointAfter,omitempty"`
+	Restart              bool     `json:"restart,omitempty"`
+	ID                   string   `json:"id"`
+	ProjectID            string   `json:"projectId"`
+	WorkstreamID         string   `json:"workstreamId"`
+	Title                string   `json:"title"`
+	Goal                 string   `json:"goal"`
+	State                string   `json:"state"`
+	AcceptanceStatus     string   `json:"acceptanceStatus"`
+	AcceptanceDecisionID string   `json:"acceptanceDecisionId,omitempty"`
+	ArchiveDecisionID    string   `json:"archiveDecisionId,omitempty"`
 	// Dispatch pipeline fields (K4, WS-20261015-001).
 	// DispatchState: none -> awaiting_approval -> (checkpoint approved) ready ->
 	// claimed -> released|done. Empty value is treated as "none" on read.
-	DispatchState      string `json:"dispatchState,omitempty"`
-	ClaimedByRuntimeID string `json:"claimedByRuntimeId,omitempty"`
-	RiskLevel          string `json:"riskLevel"`
-	Priority             string                    `json:"priority"`
-	AgentLabel           string                    `json:"agentLabel"`
-	RuntimeID            string                    `json:"runtimeId"`
-	SelectedSkill        string                    `json:"selectedSkill"`
-	RunbookID            string                    `json:"runbookId"`
-	CurrentPhase         string                    `json:"currentPhase"`
-	RunbookState         string                    `json:"runbookState"`
-	AutoProgress         *bool                     `json:"autoProgress,omitempty"`
-	MissingEvidence      []string                  `json:"missingEvidence"`
-	RecentSummary        string                    `json:"recentSummary"`
-	NextStep             string                    `json:"nextStep"`
-	FilesChanged         []string                  `json:"filesChanged"`
-	DiffSummary          string                    `json:"diffSummary"`
-	SessionIDs           []string                  `json:"sessionIds"`
-	Timeline             []projectControlEvent     `json:"timeline"`
-	Evidence             []projectControlEvidence  `json:"evidence"`
-	Audit                []projectControlAuditItem `json:"audit"`
-	RowVersion           int                       `json:"rowVersion,omitempty"`
+	DispatchState      string                    `json:"dispatchState,omitempty"`
+	ClaimedByRuntimeID string                    `json:"claimedByRuntimeId,omitempty"`
+	RiskLevel          string                    `json:"riskLevel"`
+	Priority           string                    `json:"priority"`
+	AgentLabel         string                    `json:"agentLabel"`
+	RuntimeID          string                    `json:"runtimeId"`
+	SelectedSkill      string                    `json:"selectedSkill"`
+	RunbookID          string                    `json:"runbookId"`
+	CurrentPhase       string                    `json:"currentPhase"`
+	RunbookState       string                    `json:"runbookState"`
+	AutoProgress       *bool                     `json:"autoProgress,omitempty"`
+	MissingEvidence    []string                  `json:"missingEvidence"`
+	RecentSummary      string                    `json:"recentSummary"`
+	NextStep           string                    `json:"nextStep"`
+	FilesChanged       []string                  `json:"filesChanged"`
+	DiffSummary        string                    `json:"diffSummary"`
+	SessionIDs         []string                  `json:"sessionIds"`
+	Timeline           []projectControlEvent     `json:"timeline"`
+	Evidence           []projectControlEvidence  `json:"evidence"`
+	Audit              []projectControlAuditItem `json:"audit"`
+	RowVersion         int                       `json:"rowVersion,omitempty"`
 }
 
 type projectControlSession struct {
@@ -188,6 +201,7 @@ type projectControlRunbookPhase struct {
 }
 
 type projectControlPhaseAttempt struct {
+	Released      bool     `json:"released,omitempty"`
 	ID            string   `json:"id"`
 	TaskID        string   `json:"taskId"`
 	RunbookID     string   `json:"runbookId"`
@@ -256,6 +270,7 @@ type projectControlCheckpoint struct {
 }
 
 type projectControlDecision struct {
+	Kind         string `json:"kind"`
 	ID           string `json:"id"`
 	DecisionType string `json:"decisionType"`
 	Actor        string `json:"actor"`
@@ -286,6 +301,8 @@ type projectControlEvent struct {
 }
 
 type projectControlRecordedEvent struct {
+	Kind         string `json:"kind,omitempty"`
+	SourceID     string `json:"sourceId,omitempty"`
 	ID           string `json:"id"`
 	Timestamp    string `json:"timestamp"`
 	Actor        string `json:"actor"`
@@ -325,6 +342,7 @@ type projectControlAuditItem struct {
 }
 
 type projectControlState struct {
+	Activity        []projectActivityEvent        `json:"activity,omitempty"`
 	ActiveProjectID string                        `json:"activeProjectId"`
 	Projects        []projectControlProject       `json:"projects"`
 	Workstreams     []projectControlWorkstream    `json:"workstreams"`
@@ -346,10 +364,12 @@ type projectControlDecisionRequest struct {
 }
 
 type projectControlProjectCreateRequest struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	CurrentGoal string `json:"currentGoal"`
+	Brief       projectBrief       `json:"brief"`
+	Milestones  []projectMilestone `json:"milestones"`
+	Key         string             `json:"key"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	CurrentGoal string             `json:"currentGoal"`
 	// RepoPath optional: absolute path to the git repository backing this
 	// project (K1, WS-20261015-001). Validated by validateProjectControlRepoPath.
 	RepoPath string `json:"repoPath"`
@@ -394,14 +414,17 @@ type projectControlWorkstreamCreateRequest struct {
 }
 
 type projectControlTaskCreateRequest struct {
-	ProjectID     string `json:"projectId"`
-	WorkstreamID  string `json:"workstreamId"`
-	Title         string `json:"title"`
-	Goal          string `json:"goal"`
-	Priority      string `json:"priority"`
-	RiskLevel     string `json:"riskLevel"`
-	SelectedSkill string `json:"selectedSkill"`
-	RunbookID     string `json:"runbookId"`
+	MilestoneID       string   `json:"milestoneId"`
+	DependsOn         []string `json:"dependsOn"`
+	AcceptanceCommand []string `json:"acceptanceCommand"`
+	ProjectID         string   `json:"projectId"`
+	WorkstreamID      string   `json:"workstreamId"`
+	Title             string   `json:"title"`
+	Goal              string   `json:"goal"`
+	Priority          string   `json:"priority"`
+	RiskLevel         string   `json:"riskLevel"`
+	SelectedSkill     string   `json:"selectedSkill"`
+	RunbookID         string   `json:"runbookId"`
 }
 
 type projectControlWorkstreamUpdateRequest struct {
@@ -415,21 +438,25 @@ type projectControlWorkstreamUpdateRequest struct {
 }
 
 type projectControlTaskUpdateRequest struct {
-	ExpectedRowVersion int    `json:"expectedRowVersion"`
-	Action             string `json:"action"`
-	Title              string `json:"title"`
-	Goal               string `json:"goal"`
-	Priority           string `json:"priority"`
-	RiskLevel          string `json:"riskLevel"`
-	State              string `json:"state"`
-	AcceptanceStatus   string `json:"acceptanceStatus"`
-	PhaseID            string `json:"phaseId"`
-	ArtifactKind       string `json:"artifactKind"`
-	ArtifactOutcome    string `json:"artifactOutcome"`
-	ArtifactLabel      string `json:"artifactLabel"`
-	ArtifactValue      string `json:"artifactValue"`
-	FailureReason      string `json:"failureReason"`
-	ToolID             string `json:"toolId"`
+	LeaseID            string    `json:"-"`
+	MilestoneID        *string   `json:"milestoneId,omitempty"`
+	DependsOn          *[]string `json:"dependsOn,omitempty"`
+	AcceptanceCommand  *[]string `json:"acceptanceCommand,omitempty"`
+	ExpectedRowVersion int       `json:"expectedRowVersion"`
+	Action             string    `json:"action"`
+	Title              string    `json:"title"`
+	Goal               string    `json:"goal"`
+	Priority           string    `json:"priority"`
+	RiskLevel          string    `json:"riskLevel"`
+	State              string    `json:"state"`
+	AcceptanceStatus   string    `json:"acceptanceStatus"`
+	PhaseID            string    `json:"phaseId"`
+	ArtifactKind       string    `json:"artifactKind"`
+	ArtifactOutcome    string    `json:"artifactOutcome"`
+	ArtifactLabel      string    `json:"artifactLabel"`
+	ArtifactValue      string    `json:"artifactValue"`
+	FailureReason      string    `json:"failureReason"`
+	ToolID             string    `json:"toolId"`
 }
 
 type projectControlEventsResponse struct {
@@ -465,6 +492,8 @@ type projectControlReplayResponse struct {
 }
 
 type projectControlStore struct {
+	acceptanceRuns   map[string]context.CancelFunc
+	notifyControl    func(projectControlRecordedEvent)
 	rootDir          string
 	runtimeRootDir   string
 	workspaceRootDir string
@@ -1177,6 +1206,13 @@ func findRunningProjectControlPhaseAttemptIndex(attempts []projectControlPhaseAt
 }
 
 func startProjectControlTaskPhase(state *projectControlState, task *projectControlTask, phaseID, now, username string, resolveWorkspace func(projectControlTask, projectControlRunbookPhase, string) (string, error), terminals *terminal.Manager) error {
+	if managedProject(*state, *task) {
+		candidate := *task
+		candidate.CurrentPhase = phaseID
+		if sharedDirectoryConflict(*state, candidate) {
+			return takeoverViolationError{reason: "shared_directory_conflict", detail: "shared project directory already has a writer"}
+		}
+	}
 	if state == nil || task == nil {
 		return errors.New("missing project control state")
 	}
@@ -1347,10 +1383,11 @@ func recordProjectControlPhaseArtifact(state *projectControlState, task *project
 		task.DiffSummary = value
 	}
 	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
-		ID:           projectControlID("event", "artifact-recorded"),
-		Timestamp:    now,
-		Actor:        actor,
-		Action:       "artifact_recorded",
+		ID:        projectControlID("event", "artifact-recorded"),
+		Timestamp: now,
+		Actor:     actor,
+		Action:    "artifact_recorded",
+		Kind:      activityKind(artifactKind), SourceID: artifact.ID,
 		Detail:       "Recorded " + artifactKind + " artifact for phase " + phaseID + ".",
 		ProjectID:    task.ProjectID,
 		WorkstreamID: task.WorkstreamID,
@@ -1629,6 +1666,9 @@ func startProjectControlTaskPhaseTool(state *projectControlState, task *projectC
 		return "", errors.New("workspace is unavailable for tool execution")
 	}
 	if err := validateProjectControlToolForPhase(toolID, phase, attempt, projectControlToolsForState(state)); err != nil {
+		if managedProject(*state, *task) {
+			return "", takeoverViolationError{reason: "tool_violation", detail: err.Error()}
+		}
 		return "", err
 	}
 	if runningIndex := findRunningProjectControlToolRunIndex(state.ToolRuns, task.ID, attempt.ID, ""); runningIndex != -1 {
@@ -1755,6 +1795,11 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 	if toolRun.Status != "running" {
 		return nil
 	}
+	if task, ok := controlTask(state, toolRun.TaskID); ok {
+		if err := s.executionGate(username, state, task); err != nil {
+			return err
+		}
+	}
 	workspaceDir := s.workspaceDirForRef(toolRun.WorkspaceRef)
 	if workspaceDir == "" {
 		for _, attempt := range state.PhaseAttempts {
@@ -1762,6 +1807,14 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 				workspaceDir = s.workspaceDirForRef(attempt.WorkspaceRef)
 				break
 			}
+		}
+	}
+	if task, ok := controlTask(state, toolRun.TaskID); ok && managedProject(state, task) {
+		if err := s.validateControlledWorkspace(state, task, workspaceDir); err != nil {
+			if pauseErr := s.pauseExecutionViolation(username, task.ID, "path_violation"); pauseErr != nil {
+				return pauseErr
+			}
+			return err
 		}
 	}
 	result, runErr := projectControlExecuteTool(toolRun.ToolID, workspaceDir)
@@ -1791,6 +1844,9 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 		if taskIndex == -1 {
 			return fmt.Errorf("tool run task not found: %s", state.ToolRuns[runIndex].TaskID)
 		}
+		if err := s.executionGate(username, *state, state.Tasks[taskIndex]); err != nil {
+			return err
+		}
 		handleToolRunFailure := func(failErr string, detail string) {
 			run := &state.ToolRuns[runIndex]
 			task := &state.Tasks[taskIndex]
@@ -1805,7 +1861,7 @@ func (s *projectControlStore) completeProjectControlToolRun(username, toolRunID 
 				Detail: detail, ProjectID: task.ProjectID,
 				WorkstreamID: task.WorkstreamID, TaskID: task.ID,
 			})
-			if run.RetryCount < run.MaxRetries {
+			if run.RetryCount < run.MaxRetries && !managedProject(*state, *task) {
 				retry := projectControlToolRun{
 					ID:     projectControlID("tool-run", task.ID+"-"+run.PhaseID+"-"+run.ToolID+"-retry"),
 					TaskID: task.ID, PhaseAttemptID: run.PhaseAttemptID,
@@ -2040,6 +2096,9 @@ func projectControlToolForPhase(tools []projectControlToolDef, phase projectCont
 }
 
 func autoProgressAfterPhaseComplete(state *projectControlState, task *projectControlTask, username, now string, resolveWorkspace func(projectControlTask, projectControlRunbookPhase, string) (string, error), terminals *terminal.Manager) (string, error) {
+	if managedProject(*state, *task) {
+		return "", nil
+	}
 	if !projectControlTaskAutoProgressEnabled(*task) {
 		return "", nil
 	}
@@ -2569,6 +2628,10 @@ func (s *projectControlStore) createReadOnlySnapshotWorkspace(username string, t
 	if err != nil {
 		return "", err
 	}
+	return s.createReadOnlySnapshotFromSource(username, task, phase, attemptID, sourceDir)
+}
+
+func (s *projectControlStore) createReadOnlySnapshotFromSource(username string, task projectControlTask, phase projectControlRunbookPhase, attemptID, sourceDir string) (string, error) {
 	workspaceRootDir := strings.TrimSpace(s.workspaceRootDir)
 	if workspaceRootDir == "" {
 		return "", errors.New("workspace root is unavailable")
@@ -2686,7 +2749,12 @@ func (s *projectControlStore) createProject(username string, req projectControlP
 		if err != nil {
 			return err
 		}
+		if err := validateMilestones(req.Milestones); err != nil {
+			return err
+		}
 		project := projectControlProject{
+			Brief: req.Brief, Milestones: req.Milestones,
+			Lifecycle: projectLifecycle{State: "delegated"}, Takeover: projectTakeover{Mode: "manual"},
 			ID:          projectControlID("project", name),
 			Key:         key,
 			Name:        name,
@@ -2773,6 +2841,7 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		task := projectControlTask{
+			MilestoneID: req.MilestoneID, DependsOn: req.DependsOn, AcceptanceCommand: req.AcceptanceCommand,
 			ID:               projectControlID("task", title),
 			ProjectID:        projectID,
 			WorkstreamID:     workstreamID,
@@ -2798,6 +2867,9 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			Evidence:         []projectControlEvidence{},
 			Audit:            []projectControlAuditItem{},
 			RowVersion:       1,
+		}
+		if err := validateTaskContract(*state, task); err != nil {
+			return err
 		}
 		refreshProjectControlTaskRunbookFields(&task, state.Artifacts)
 		state.Tasks = append(state.Tasks, task)
@@ -2908,6 +2980,35 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			if agentBypass {
 				req.ExpectedRowVersion = task.RowVersion
 			}
+			if req.AcceptanceCommand != nil || req.DependsOn != nil || req.MilestoneID != nil {
+				if agentBypass || task.DispatchState == "claimed" {
+					return errors.New("cannot change an executing task contract")
+				}
+				if req.AcceptanceCommand != nil {
+					task.AcceptanceCommand = *req.AcceptanceCommand
+				}
+				if req.DependsOn != nil {
+					task.DependsOn = *req.DependsOn
+				}
+				if req.MilestoneID != nil {
+					task.MilestoneID = *req.MilestoneID
+				}
+				if err := validateTaskContract(*state, task); err != nil {
+					return err
+				}
+				task.DispatchState = "none"
+				task.AcceptancePassed = false
+			}
+			if agentBypass {
+				if err := s.requireManagedLease(username, *state, task, req.LeaseID); err != nil {
+					return err
+				}
+			}
+			if req.Action == "start_execution" || req.Action == "start_phase" || req.Action == "run_tool" || req.Action == "complete_phase" {
+				if err := s.executionGate(username, *state, task); err != nil {
+					return err
+				}
+			}
 			originalState := task.State
 			originalAcceptance := task.AcceptanceStatus
 			action := strings.TrimSpace(strings.ToLower(req.Action))
@@ -2921,7 +3022,7 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			switch action {
 			case "start_phase":
 				if err := startProjectControlTaskPhase(state, &task, req.PhaseID, now, username, func(task projectControlTask, phase projectControlRunbookPhase, attemptID string) (string, error) {
-					return s.prepareWorkspaceDirForPhase(username, task, phase, attemptID)
+					return s.prepareControlledWorkspace(username, *state, task, phase, attemptID)
 				}, terminals); err != nil {
 					return err
 				}
@@ -2951,7 +3052,7 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 				}
 				if firstPhase != "" && firstPhase != "ready_for_acceptance" {
 					if err := startProjectControlTaskPhase(state, &task, firstPhase, now, username, func(t projectControlTask, p projectControlRunbookPhase, attemptID string) (string, error) {
-						return s.prepareWorkspaceDirForPhase(username, t, p, attemptID)
+						return s.prepareControlledWorkspace(username, *state, t, p, attemptID)
 					}, terminals); err != nil {
 						return err
 					}
@@ -3080,6 +3181,12 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 		return errors.New("task not found")
 	})
 	if err != nil {
+		var violation takeoverViolationError
+		if errors.As(err, &violation) {
+			if pauseErr := s.pauseExecutionViolation(username, taskID, violation.reason); pauseErr != nil {
+				return projectControlSnapshot{}, pauseErr
+			}
+		}
 		return projectControlSnapshot{}, err
 	}
 	if toolRunID != "" {
@@ -3172,6 +3279,7 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 		decision := projectControlDecision{
 			ID:           projectControlID("decision", decisionAction),
 			DecisionType: decisionAction,
+			Kind:         activityKind(checkpoint.Kind),
 			Actor:        "human",
 			Timestamp:    now,
 			Summary:      checkpoint.DecisionSummary,
@@ -3185,10 +3293,11 @@ func (s *projectControlStore) recordCheckpointDecision(username, checkpointID, a
 		checkpoint.RowVersion += 1
 		state.Checkpoints[idx] = checkpoint
 		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
-			ID:           projectControlID("event", "checkpoint-resolved"),
-			Timestamp:    now,
-			Actor:        "human",
-			Action:       "checkpoint_resolved",
+			ID:        projectControlID("event", "checkpoint-resolved"),
+			Timestamp: now,
+			Actor:     "human",
+			Action:    "checkpoint_resolved",
+			Kind:      activityKind(checkpoint.Kind), SourceID: checkpoint.ID,
 			Detail:       "Resolved checkpoint " + checkpoint.ID + " as " + checkpoint.Status + ".",
 			ProjectID:    checkpointProjectID(state, checkpoint.TaskID),
 			WorkstreamID: checkpointWorkstreamID(state, checkpoint.TaskID),
@@ -4293,13 +4402,36 @@ func (s *projectControlStore) withStateLocked(username string, fn func(*projectC
 	if err := s.hydrateApprovalsLocked(username, &state); err != nil {
 		return projectControlState{}, err
 	}
+	previousEvents := map[string]bool{}
+	for _, e := range state.Events {
+		previousEvents[e.ID] = true
+	}
 	if err := fn(&state); err != nil {
 		return projectControlState{}, err
 	}
+	applyTakeoverEvents(&state, previousEvents)
 	projectControlNormalizeState(&state)
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	if err := s.saveLocked(username, state); err != nil {
 		return projectControlState{}, err
+	}
+	for _, t := range state.Tasks {
+		p, _ := controlProject(state, t.ProjectID)
+		if t.PauseReason != "" || p.Takeover.Mode == "paused" || p.Takeover.Mode == "manual" {
+			if cancel := s.acceptanceRuns[username+"/"+t.ID]; cancel != nil {
+				cancel()
+			}
+		}
+	}
+	if err := s.revokeClosedClaims(username, state); err != nil {
+		return projectControlState{}, err
+	}
+	if s.notifyControl != nil {
+		for _, e := range state.Events {
+			if !previousEvents[e.ID] && e.Action == "takeover_paused" {
+				s.notifyControl(e)
+			}
+		}
 	}
 	return state, nil
 }
@@ -4670,6 +4802,9 @@ func projectControlPhaseAttemptSessionID(attempt projectControlPhaseAttempt) str
 }
 
 func projectControlPhaseAttemptSessionState(attempt projectControlPhaseAttempt) string {
+	if attempt.Released {
+		return "released"
+	}
 	switch normalizeProjectControlPhaseAttemptStatus(attempt.Status) {
 	case "completed":
 		return "completed"
@@ -5166,7 +5301,7 @@ func normalizeProjectControlToolRunStatus(value string) string {
 
 func normalizeProjectControlArtifactKind(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "plan", "diff_summary", "doc_summary", "test_result", "review_result", "completion_check":
+	case "checkpoint", "plan", "diff_summary", "doc_summary", "test_result", "review_result", "completion_check":
 		return strings.TrimSpace(strings.ToLower(value))
 	default:
 		return strings.TrimSpace(strings.ToLower(value))
@@ -5194,6 +5329,14 @@ func normalizeProjectControlWorkstreamStatus(value string) string {
 func projectControlNormalizeState(state *projectControlState) {
 	if state == nil {
 		return
+	}
+	for i := range state.Projects {
+		if state.Projects[i].Lifecycle.State == "" {
+			state.Projects[i].Lifecycle.State = "delegated"
+		}
+		if state.Projects[i].Milestones == nil {
+			state.Projects[i].Milestones = []projectMilestone{}
+		}
 	}
 	if state.Projects == nil {
 		state.Projects = []projectControlProject{}
@@ -5423,6 +5566,7 @@ func projectControlAppendRecordedEvent(state *projectControlState, event project
 	if strings.TrimSpace(event.ID) == "" {
 		event.ID = projectControlID("event", event.Action)
 	}
+	recordProjectActivity(state, event)
 	state.Events = append(state.Events, event)
 }
 
@@ -5543,6 +5687,9 @@ func applyProjectControlArtifactsToTasks(tasks []projectControlTask, artifacts [
 func cloneProjectControlProjects(items []projectControlProject) []projectControlProject {
 	out := make([]projectControlProject, len(items))
 	copy(out, items)
+	for i := range out {
+		out[i].Milestones = append([]projectMilestone{}, items[i].Milestones...)
+	}
 	return out
 }
 
@@ -5556,6 +5703,8 @@ func cloneProjectControlTasks(items []projectControlTask) []projectControlTask {
 	out := make([]projectControlTask, len(items))
 	for i, item := range items {
 		out[i] = item
+		out[i].DependsOn = append([]string{}, item.DependsOn...)
+		out[i].AcceptanceCommand = append([]string{}, item.AcceptanceCommand...)
 		out[i].MissingEvidence = append([]string{}, item.MissingEvidence...)
 		out[i].FilesChanged = append([]string{}, item.FilesChanged...)
 		out[i].SessionIDs = append([]string{}, item.SessionIDs...)
@@ -5741,6 +5890,9 @@ func (s *projectControlStore) runScheduledTools(username string) {
 		s.withStateLocked(username, func(state *projectControlState) error {
 			for i := range state.Tasks {
 				if state.Tasks[i].ID == task.ID {
+					if err := s.executionGate(username, *state, state.Tasks[i]); err != nil {
+						return err
+					}
 					id, err := startProjectControlTaskPhaseTool(state, &state.Tasks[i], projectControlTaskUpdateRequest{
 						PhaseID: phaseID,
 						ToolID:  toolDef.ID,
@@ -5763,6 +5915,7 @@ func (s *projectControlStore) runScheduledTools(username string) {
 }
 
 func (s *projectControlStore) checkHealth(username string, hub *notificationHub) {
+	_, _ = s.expireStaleClaimsForUser(username)
 	state, err := s.loadOrSeed(username)
 	if err != nil {
 		return
@@ -6032,6 +6185,7 @@ func (s *projectControlStore) agentGetTask(username string) (map[string]interfac
 }
 
 type agentArtifactRequest struct {
+	LeaseID      string `json:"leaseId"`
 	TaskID       string `json:"taskId"`
 	PhaseID      string `json:"phaseId"`
 	ArtifactKind string `json:"artifactKind"`
@@ -6044,8 +6198,48 @@ func (s *projectControlStore) agentSubmitArtifact(username string, req agentArti
 	if req.TaskID == "" || req.ArtifactKind == "" {
 		return projectControlSnapshot{}, errors.New("taskId and artifactKind are required")
 	}
+	state, err := s.loadOrSeed(username)
+	if err != nil {
+		return projectControlSnapshot{}, err
+	}
+	task, ok := controlTask(state, req.TaskID)
+	if !ok {
+		return projectControlSnapshot{}, errors.New("task not found")
+	}
+	if err := s.requireManagedLease(username, state, task, req.LeaseID); err != nil {
+		return projectControlSnapshot{}, err
+	}
+	// Durable execution checkpoints do not complete a runbook phase.
+	if req.ArtifactKind == "checkpoint" {
+		if strings.TrimSpace(req.Value) == "" || normalizeProjectControlArtifactOutcome(req.Outcome) != "pass" {
+			return projectControlSnapshot{}, errors.New("checkpoint requires nonempty persisted content and pass outcome")
+		}
+		saved, err := s.withStateLocked(username, func(state *projectControlState) error {
+			task, ok := controlTask(*state, req.TaskID)
+			if !ok {
+				return controlplane.ErrNotFound
+			}
+			if err := s.requireManagedLease(username, *state, task, req.LeaseID); err != nil {
+				return err
+			}
+			attempt := projectControlPhaseAttempt{}
+			recordProjectControlPhaseArtifact(state, &task, &attempt, task.CurrentPhase, "checkpoint", "pass", req.Label, req.Value, "agent", time.Now().UTC().Format(time.RFC3339Nano))
+			return nil
+		})
+		if err != nil {
+			return projectControlSnapshot{}, err
+		}
+		return buildProjectControlSnapshot(saved, username, terminals), nil
+	}
 	// Complete any waiting agent tool run for this task/phase
-	s.withStateLocked(username, func(state *projectControlState) error {
+	_, err = s.withStateLocked(username, func(state *projectControlState) error {
+		task, ok := controlTask(*state, req.TaskID)
+		if !ok {
+			return controlplane.ErrNotFound
+		}
+		if err := s.requireManagedLease(username, *state, task, req.LeaseID); err != nil {
+			return err
+		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		for i := range state.ToolRuns {
 			run := &state.ToolRuns[i]
@@ -6061,7 +6255,11 @@ func (s *projectControlStore) agentSubmitArtifact(username string, req agentArti
 		}
 		return nil
 	})
+	if err != nil {
+		return projectControlSnapshot{}, err
+	}
 	return s.updateTask(username, req.TaskID, projectControlTaskUpdateRequest{
+		LeaseID:            req.LeaseID,
 		ExpectedRowVersion: -1, // agent bypass
 		Action:             "complete_phase",
 		PhaseID:            req.PhaseID,
@@ -6073,8 +6271,9 @@ func (s *projectControlStore) agentSubmitArtifact(username string, req agentArti
 }
 
 type agentCheckpointRequest struct {
-	TaskID string `json:"taskId"`
-	Reason string `json:"reason"`
+	ReasonCode string `json:"reasonCode,omitempty"`
+	TaskID     string `json:"taskId"`
+	Reason     string `json:"reason"`
 }
 
 func (s *projectControlStore) agentRequestCheckpoint(username string, req agentCheckpointRequest) error {
@@ -6083,6 +6282,17 @@ func (s *projectControlStore) agentRequestCheckpoint(username string, req agentC
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.withStateLocked(username, func(state *projectControlState) error {
+		task, ok := controlTask(*state, req.TaskID)
+		// Checkpoints may refer to external runtimes without a project task
+		// (same semantics as handleAgentInteractions): skip the takeover
+		// pause logic for unknown tasks but still record the checkpoint.
+		if ok && managedProject(*state, task) {
+			reason := req.ReasonCode
+			if !pauseProjectScope(reason) {
+				reason = "agent_request"
+			}
+			pauseControlState(state, task.ProjectID, task.ID, reason)
+		}
 		checkpoint := projectControlCheckpoint{
 			ID:             projectControlID("checkpoint", "agent-"+req.TaskID),
 			TaskID:         req.TaskID,

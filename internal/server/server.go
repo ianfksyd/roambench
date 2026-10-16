@@ -177,6 +177,9 @@ func NewServer(
 			return cfg.Server.AllowAllIPs
 		},
 	}
+	s.projectControl.notifyControl = func(event projectControlRecordedEvent) {
+		s.notifHub.broadcast(terminal.OSCNotification{Code: 777, Title: "接管已暂停", Body: event.Detail, Timestamp: time.Now().UTC()})
+	}
 	s.registerRoutes()
 	return s
 }
@@ -229,6 +232,8 @@ func (s *Server) registerRoutes() {
 	// I1 routes
 	s.mux.HandleFunc("/api/fs/list", authRequired(s.sessions, s.handleFSList))
 	// I2 routes: lifecycle/contract endpoints
+	s.mux.HandleFunc("/api/project-control/projects/", authRequired(s.sessions, s.handleProjectLifecycle))
+	s.mux.HandleFunc("/api/agent/v1/pause", s.tokenRequired(s.handleAgentPause))
 
 	// File browser (auth required)
 	s.mux.HandleFunc("/api/files/mkdir", authRequired(s.sessions, s.handleFilesMkdir))

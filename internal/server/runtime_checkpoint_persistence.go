@@ -90,7 +90,8 @@ func projectControlCheckpointFromInteraction(interaction controlplane.Interactio
 
 func projectControlDecisionFromResponse(interaction controlplane.Interaction, response controlplane.Response) projectControlDecision {
 	decision := projectControlDecision{
-		ID: response.ResponseID, DecisionType: compatibilityDecisionType(interaction.RequestKind, response.Action), Actor: response.Actor,
+		Kind: activityKind(interaction.RequestKind),
+		ID:   response.ResponseID, DecisionType: compatibilityDecisionType(interaction.RequestKind, response.Action), Actor: response.Actor,
 		Timestamp: response.CreatedAt.Format(time.RFC3339Nano), Summary: response.Feedback,
 		TaskID: interaction.TaskID, CheckpointID: interaction.RequestID,
 	}

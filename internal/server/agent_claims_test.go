@@ -29,6 +29,9 @@ import (
 func setTaskDispatchState(t *testing.T, srv *Server, token, taskID, dispatchState string) {
 	t.Helper()
 	state, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		if _, ok := controlProject(*state, "project-test"); !ok {
+			state.Projects = append(state.Projects, projectControlProject{ID: "project-test", Takeover: projectTakeover{Mode: "active"}, Lifecycle: projectLifecycle{State: "executing"}})
+		}
 		for i := range state.Tasks {
 			if state.Tasks[i].ID != taskID {
 				continue
@@ -42,7 +45,7 @@ func setTaskDispatchState(t *testing.T, srv *Server, token, taskID, dispatchStat
 		}
 		state.Tasks = append(state.Tasks, projectControlTask{
 			ID: taskID, ProjectID: "project-test", Title: "Test task " + taskID,
-			State: "queued", DispatchState: dispatchState,
+			State: "queued", DispatchState: dispatchState, AcceptanceCommand: []string{"/bin/true"},
 			Timeline: []projectControlEvent{}, Audit: []projectControlAuditItem{},
 			FilesChanged: []string{}, SessionIDs: []string{},
 		})
@@ -183,10 +186,13 @@ func TestCheckpointApprovalGatesClaimability(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&payload)
 	leaseID, _ := payload["leaseId"].(string)
 
-	// Release as failed: the task returns to ready and can be re-claimed.
+	// I2: failed release pauses the task; an explicit restart permits re-claim.
 	rec = agentAPIPost(t, srv, "/api/agent/v1/release", agentToken, `{"leaseId":"`+leaseID+`","outcome":"failed"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("release failed outcome = %d, want 200", rec.Code)
+	}
+	if _, err := srv.projectControl.controlTakeover("ian", "project-test", projectTakeoverRequest{Action: "resume", TaskID: "task-gate-1", Restart: true}, false); err != nil {
+		t.Fatal(err)
 	}
 	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-2","agentLabel":"codex"}`)
 	if rec.Code != http.StatusOK {
@@ -248,9 +254,14 @@ func TestAgentLeaseExpiryReturnsTaskToReady(t *testing.T) {
 		t.Fatalf("claim = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 
-	// Move the clock past the TTL. The next claim sweeps the stale lease and
-	// the task returns to ready — claimable by a different runtime.
+	// Move past TTL: I2 pauses until an explicit restart; the old lease stays revoked.
 	clockValue.Store(base.Add(controlplane.LeaseTTL + time.Second))
+	if _, err := srv.projectControl.expireStaleClaimsForUser("ian"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.projectControl.controlTakeover("ian", "project-test", projectTakeoverRequest{Action: "resume", TaskID: "task-exp-1", Restart: true}, false); err != nil {
+		t.Fatal(err)
+	}
 	rec = agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-2","agentLabel":"codex"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("claim after lease expiry = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -298,6 +309,17 @@ func TestDispatchCheckpointCreationAndApprovalGatesClaim(t *testing.T) {
 	}
 	projectSnapshot := decodeProjectControlSnapshot(t, projectRec)
 	createdProject := projectSnapshot.Projects[len(projectSnapshot.Projects)-1]
+	if _, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		for i := range state.Projects {
+			if state.Projects[i].ID == createdProject.ID {
+				state.Projects[i].Takeover.Mode = "active"
+				state.Projects[i].Lifecycle.State = "executing"
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	workstreamReq := httptest.NewRequest(http.MethodPost, "/api/project-control/workstreams", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"title":"K4 Stream"}`, createdProject.ID)))
 	workstreamReq.Header.Set("Content-Type", "application/json")
@@ -310,7 +332,7 @@ func TestDispatchCheckpointCreationAndApprovalGatesClaim(t *testing.T) {
 	workstreamSnapshot := decodeProjectControlSnapshot(t, workstreamRec)
 	createdWorkstream := workstreamSnapshot.Workstreams[len(workstreamSnapshot.Workstreams)-1]
 
-	taskReq := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"K4 dispatch task"}`, createdProject.ID, createdWorkstream.ID)))
+	taskReq := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"K4 dispatch task","acceptanceCommand":["/bin/true"]}`, createdProject.ID, createdWorkstream.ID)))
 	taskReq.Header.Set("Content-Type", "application/json")
 	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	taskRec := httptest.NewRecorder()
