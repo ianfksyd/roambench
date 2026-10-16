@@ -440,6 +440,112 @@
       border-radius: 50%;
       background: var(--bg);
     }
+    /* v3.5：时间范围日历 */
+    .range-wrap { position: relative; }
+    .range-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      background: var(--surface);
+      font: 11px/1.6 var(--mono);
+    }
+    .range-btn:hover { color: var(--text); border-color: var(--muted); }
+    .range-btn .caret { color: var(--accent); }
+    .range-pop {
+      position: absolute;
+      z-index: 30;
+      top: calc(100% + 6px);
+      right: 0;
+      width: 300px;
+      max-width: calc(100vw - 24px);
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      box-shadow: 0 10px 34px #0009;
+    }
+    .range-presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 0 0 12px;
+      padding: 0;
+      list-style: none;
+    }
+    .range-presets .pill { cursor: pointer; }
+    .range-presets .pill[aria-pressed="true"] {
+      color: var(--accent);
+      border-color: #37665c;
+      background: #23312d;
+    }
+    .cal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .cal-head .cal-title { font: 500 12px/1.5 var(--mono); color: var(--text); }
+    .cal-nav {
+      display: flex;
+      gap: 4px;
+    }
+    .cal-nav button {
+      min-width: 26px;
+      padding: 2px 6px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--muted);
+      background: var(--bg);
+    }
+    .cal-nav button:hover { color: var(--text); }
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 2px;
+    }
+    .cal-grid .dow {
+      text-align: center;
+      color: var(--subtle);
+      font: 9px/1.8 var(--mono);
+    }
+    .cal-day {
+      min-height: 28px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      color: var(--text);
+      background: transparent;
+      font: 11px/28px var(--mono);
+    }
+    .cal-day:hover { background: var(--hover); }
+    .cal-day.other { color: var(--subtle); opacity: .5; }
+    .cal-day.today { border-color: var(--accent); }
+    .cal-day.in-range { background: #23312d; }
+    .cal-day.edge {
+      color: var(--text);
+      background: var(--accent);
+    }
+    .cal-day.edge::after {
+      content: "";
+      display: block;
+      height: 2px;
+      margin-top: -2px;
+    }
+    .range-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .range-foot .range-hint {
+      color: var(--muted);
+      font: 10px/1.5 var(--mono);
+    }
     .gantt-footnote {
       display: flex;
       justify-content: space-between;
@@ -615,6 +721,72 @@
     .steps li[aria-current="step"] { border-color: var(--accent); color: var(--text); }
     fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
     legend { margin-bottom: 12px; font-size: 15px; font-weight: 600; }
+    .path-row {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
+    }
+    .path-row input { flex: 1; min-width: 0; }
+    .path-pick {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      background: var(--surface);
+    }
+    .path-pick:hover { color: var(--accent); border-color: var(--muted); }
+    .fs-dialog { width: 420px; }
+    .fs-crumb {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 2px;
+      margin: 0 0 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      font: 11px/1.6 var(--mono);
+    }
+    .fs-crumb button {
+      border: 0;
+      padding: 1px 3px;
+      color: var(--accent);
+      background: transparent;
+      font: inherit;
+    }
+    .fs-crumb button:hover { text-decoration: underline; }
+    .fs-crumb .sep { color: var(--subtle); }
+    .fs-list {
+      margin: 0;
+      padding: 0;
+      max-height: 220px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      list-style: none;
+    }
+    .fs-list li + li { border-top: 1px solid var(--border); }
+    .fs-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 10px;
+      border: 0;
+      color: var(--text);
+      background: transparent;
+      font: 12px/1.5 var(--mono);
+      text-align: left;
+    }
+    .fs-item:hover { background: var(--hover); }
+    .fs-item .ficon { flex: 0 0 auto; color: var(--folder); }
+    .fs-empty { padding: 18px; color: var(--muted); font: 12px/1.6 var(--mono); }
     .entry-options { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 16px; }
     .entry-option { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
     .entry-option input { margin: 0; }
@@ -703,7 +875,73 @@
       .dialog-footer .btn { padding-right: 10px; padding-left: 10px; }
       .project-group + .project-group { margin-top: 22px; }
       .draft-card { padding: 12px; }
-      .entry-options { gap: 12px 16px; font-size: 13px; }
+      .path-row {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
+    }
+    .path-row input { flex: 1; min-width: 0; }
+    .path-pick {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      background: var(--surface);
+    }
+    .path-pick:hover { color: var(--accent); border-color: var(--muted); }
+    .fs-dialog { width: 420px; }
+    .fs-crumb {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 2px;
+      margin: 0 0 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      font: 11px/1.6 var(--mono);
+    }
+    .fs-crumb button {
+      border: 0;
+      padding: 1px 3px;
+      color: var(--accent);
+      background: transparent;
+      font: inherit;
+    }
+    .fs-crumb button:hover { text-decoration: underline; }
+    .fs-crumb .sep { color: var(--subtle); }
+    .fs-list {
+      margin: 0;
+      padding: 0;
+      max-height: 220px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      list-style: none;
+    }
+    .fs-list li + li { border-top: 1px solid var(--border); }
+    .fs-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 10px;
+      border: 0;
+      color: var(--text);
+      background: transparent;
+      font: 12px/1.5 var(--mono);
+      text-align: left;
+    }
+    .fs-item:hover { background: var(--hover); }
+    .fs-item .ficon { flex: 0 0 auto; color: var(--folder); }
+    .fs-empty { padding: 18px; color: var(--muted); font: 12px/1.6 var(--mono); }
+    .entry-options { gap: 12px 16px; font-size: 13px; }
       .task-toolbar select { max-width: 210px; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -1035,7 +1273,41 @@
     <section id="panel-gantt" role="tabpanel" aria-labelledby="tab-gantt" tabindex="0" hidden>
       <div class="panel-heading">
         <h2>会话时间轴</h2>
-        <p class="panel-note"><time datetime="2026-10-15">2026-10-15</time> · 09:00–17:00 · UTC+8</p>
+        <div class="range-wrap">
+          <button class="range-btn" id="range-btn" type="button"
+            aria-haspopup="dialog" aria-expanded="false">
+            <span id="range-label">2026-10-15 · 09:00–17:00 · UTC+8</span>
+            <span class="caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="range-pop" id="range-pop" role="dialog"
+            aria-label="选择时间范围" hidden>
+            <ul class="range-presets" role="group" aria-label="快捷范围">
+              <li><button class="pill" type="button" data-range="today"
+                aria-pressed="true">今天</button></li>
+              <li><button class="pill" type="button" data-range="3d"
+                aria-pressed="false">近 3 天</button></li>
+              <li><button class="pill" type="button" data-range="7d"
+                aria-pressed="false">近 7 天</button></li>
+              <li><button class="pill" type="button" data-range="month"
+                aria-pressed="false">本月</button></li>
+            </ul>
+            <div class="cal-head">
+              <div class="cal-nav">
+                <button type="button" id="cal-prev" aria-label="上月">‹</button>
+              </div>
+              <div class="cal-title" id="cal-title">2026-10</div>
+              <div class="cal-nav">
+                <button type="button" id="cal-next" aria-label="下月">›</button>
+              </div>
+            </div>
+            <div class="cal-grid" id="cal-grid" role="grid"
+              aria-label="选择开始与结束日期"></div>
+            <div class="range-foot">
+              <span class="range-hint" id="range-hint">单日 · 09:00–17:00</span>
+              <button class="btn small primary" type="button" id="range-apply">应用</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="gantt-scroll" role="region" aria-label="会话时间轴，可横向滚动" tabindex="0">
         <table class="gantt-table">
@@ -1046,7 +1318,7 @@
               <th scope="col" class="gantt-label">会话 · 点击查看详情</th>
               <th scope="col">
                 <span class="sr-only">运行时间，09:00 至 17:00</span>
-                <div class="time-axis" aria-hidden="true">
+                <div class="time-axis" id="time-axis" aria-hidden="true">
                   <span style="--tick:0%">09:00</span>
                   <span style="--tick:12.5%">10:00</span>
                   <span style="--tick:25%">11:00</span>
@@ -1089,6 +1361,28 @@
         aria-label="关闭会话详情" autofocus>关闭</button>
     </header>
     <div class="dialog-body" id="detail-body"></div>
+  </dialog>
+
+  <dialog class="fs-dialog" id="fs-dialog" aria-label="选择文件夹">
+    <header class="dialog-header">
+      <div>
+        <h2>选择文件夹</h2>
+        <p>点击目录进入 · 选定当前目录</p>
+      </div>
+      <button class="btn close-button" type="button" data-close="fs-dialog"
+        aria-label="关闭文件夹选择">关闭</button>
+    </header>
+    <div class="dialog-body">
+      <div class="fs-crumb" id="fs-crumb"></div>
+      <ul class="fs-list" id="fs-list"></ul>
+    </div>
+    <footer class="dialog-footer">
+      <span class="source-note" id="fs-current"></span>
+      <div class="actions">
+        <button class="btn" type="button" data-close="fs-dialog">取消</button>
+        <button class="btn primary" type="button" id="fs-select">选定此文件夹</button>
+      </div>
+    </footer>
   </dialog>
 
   <dialog class="project-dialog" id="project-dialog" aria-labelledby="project-detail-title" aria-describedby="project-detail-stats">
@@ -1170,11 +1464,20 @@
               </label>
             </div>
 
-            <label class="field" id="folder-field">
+            <div class="field" id="folder-field">
               <span>项目文件夹路径 *</span>
-              <input id="project-path" required maxlength="500" autocomplete="off"
-                placeholder="/home/ian/项目/xxx" spellcheck="false">
-            </label>
+              <div class="path-row">
+                <input id="project-path" required maxlength="500" autocomplete="off"
+                  placeholder="/home/ian/项目/xxx" spellcheck="false">
+                <button class="path-pick" id="path-pick" type="button"
+                  aria-haspopup="dialog" aria-label="浏览选择文件夹">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
 
             <label class="field" id="git-field" hidden>
               <span>Git 仓库地址 *</span>
@@ -1244,6 +1547,20 @@
       const WINDOW_START = 9 * 60;
       const WINDOW_DURATION = 8 * 60;
       const SNAPSHOT_MINUTE = 14 * 60 + 32;
+
+      // v3.5 时间范围：单日=当日分钟窗；多日=天粒度绝对分钟
+      const DAY_MIN = 1440;
+      const RANGE = {
+        mode: "day",            // "day" | "multi"
+        startMin: WINDOW_START, // day 模式：当日分钟
+        endMin: WINDOW_START + WINDOW_DURATION,
+        startAbs: 0,            // multi 模式：以 2026-10-15 0 点为 0 的绝对分钟
+        endAbs: 0
+      };
+      const rangeState = {
+        draftStart: null, draftEnd: null, calMonth: 2026 * 12 + 9,
+        preset: "today"
+      };
       const PREVIEW_DELAY = 200;
       const DRAFT_DELAY = 2000;
       const $ = id => document.getElementById(id);
@@ -1979,10 +2296,10 @@ function hermesBadge(session) {
         const bar = el("span", "timeline-bar");
         const end = session.end ?? SNAPSHOT_MINUTE;
         bar.dataset.status = session.status;
-        bar.style.setProperty("--start",
-          ((session.start - WINDOW_START) / WINDOW_DURATION * 100) + "%");
-        bar.style.setProperty("--duration",
-          ((end - session.start) / WINDOW_DURATION * 100) + "%");
+        const pos = rangeBarPosition(session, end);
+        bar.style.setProperty("--start", pos.start + "%");
+        bar.style.setProperty("--duration", pos.duration + "%");
+        bar.hidden = pos.duration <= 0;
         const detail = session.name + "，" + statusLabels[session.status] +
           "，时间段 " + clockTime(session.start) + "–" + clockTime(end) +
           (session.localOnly ? "，本页模拟领取，未启动外部进程" :
@@ -2002,6 +2319,184 @@ function hermesBadge(session) {
         row.append(nameCell, timeCell);
         return row;
       }
+
+      function rangeBarPosition(session, endMin) {
+        // 会话起止换算为「范围窗口内」百分比；超出范围裁剪
+        const day = session.day || 0;
+        const sAbs = day * DAY_MIN + session.start;
+        const eAbs = (session.endDay ?? day) * DAY_MIN + endMin;
+        let ws, we;
+        if (RANGE.mode === "day") {
+          ws = RANGE.startMin; we = RANGE.endMin;
+          if (day !== 0) return { start: 0, duration: 0 };
+        } else {
+          ws = RANGE.startAbs; we = RANGE.endAbs;
+        }
+        const s = Math.max(sAbs, ws), e = Math.min(eAbs, we);
+        if (e <= s) return { start: 0, duration: 0 };
+        return {
+          start: (s - ws) / (we - ws) * 100,
+          duration: (e - s) / (we - ws) * 100
+        };
+      }
+
+      function renderTimeAxis() {
+        const axis = $("time-axis");
+        if (!axis) return;
+        axis.replaceChildren();
+        const label = $("range-label");
+        const hint = $("range-hint");
+        if (RANGE.mode === "day") {
+          for (let h = 9; h <= 17; h++) {
+            const span = el("span");
+            span.style.setProperty("--tick", ((h - 9) / 8 * 100) + "%");
+            span.textContent = String(h).padStart(2, "0") + ":00";
+            axis.append(span);
+          }
+          label.textContent = "2026-10-15 · 09:00–17:00 · UTC+8";
+          if (hint) hint.textContent = "单日 · 09:00–17:00";
+        } else {
+          const days = Math.round((RANGE.endAbs - RANGE.startAbs) / DAY_MIN);
+          for (let d = 0; d < days; d++) {
+            const span = el("span");
+            span.style.setProperty("--tick", (d / (days - 1) * 100) + "%");
+            const day = new Date(2026, 9, 15);
+            day.setDate(day.getDate() + Math.round(RANGE.startAbs / DAY_MIN) + d);
+            span.textContent = (day.getMonth() + 1) + "/" + day.getDate();
+            axis.append(span);
+          }
+          const s = new Date(2026, 9, 15), e = new Date(2026, 9, 15);
+          s.setDate(s.getDate() + Math.round(RANGE.startAbs / DAY_MIN));
+          e.setDate(e.getDate() + Math.round(RANGE.endAbs / DAY_MIN) - 1);
+          const fmt = d => (d.getMonth() + 1) + "/" + d.getDate();
+          label.textContent = fmt(s) + " – " + fmt(e) + " · " + days + " 天 · UTC+8";
+          if (hint) hint.textContent = "多日 · 日粒度";
+        }
+        const caption = document.querySelector("#panel-gantt caption");
+        if (caption) caption.textContent =
+          "28 个模拟会话的运行时间；细竖线表示 14:32 快照时间。当前范围：" +
+          label.textContent;
+      }
+
+      function applyRange(mode) {
+        rangeState.preset = mode;
+        if (mode === "today") {
+          RANGE.mode = "day";
+          RANGE.startMin = WINDOW_START;
+          RANGE.endMin = WINDOW_START + WINDOW_DURATION;
+        } else {
+          const days = mode === "3d" ? 3 : mode === "7d" ? 7 :
+            15; // 本月：10-01 → 10-15
+          RANGE.mode = "multi";
+          RANGE.startAbs = mode === "month" ? -14 * DAY_MIN : -(days - 1) * DAY_MIN;
+          RANGE.endAbs = 0;
+        }
+        document.querySelectorAll("[data-range]").forEach(btn =>
+          btn.setAttribute("aria-pressed", String(btn.dataset.range === mode)));
+        renderTimeAxis();
+        render();
+      }
+
+      function renderCalendar() {
+        const grid = $("cal-grid");
+        grid.replaceChildren();
+        ["日", "一", "二", "三", "四", "五", "六"].forEach(d =>
+          grid.append(el("div", "dow", d)));
+        const y = Math.floor(rangeState.calMonth / 12);
+        const m = rangeState.calMonth % 12;
+        $("cal-title").textContent = y + "-" + String(m + 1).padStart(2, "0");
+        const first = new Date(y, m, 1);
+        const offset = first.getDay();
+        for (let i = 0; i < 42; i++) {
+          const d = new Date(y, m, 1 - offset + i);
+          const btn = el("button", "cal-day");
+          btn.type = "button";
+          btn.textContent = d.getDate();
+          if (d.getMonth() !== m) btn.classList.add("other");
+          const iso = y + "-" + String(m + 1).padStart(2, "0") + "-" +
+            String(d.getDate()).padStart(2, "0");
+          btn.dataset.date = iso;
+          if (iso === "2026-10-15") btn.classList.add("today");
+          const { draftStart, draftEnd } = rangeState;
+          if (draftStart && draftEnd) {
+            if (iso === draftStart || iso === draftEnd) btn.classList.add("edge");
+            else if (iso > draftStart && iso < draftEnd) btn.classList.add("in-range");
+          } else if (draftStart && iso === draftStart) btn.classList.add("edge");
+          btn.addEventListener("click", () => {
+            const { draftStart: s, draftEnd: e } = rangeState;
+            if (!s || (s && e)) {
+              rangeState.draftStart = iso; rangeState.draftEnd = null;
+            } else if (iso < s) {
+              rangeState.draftEnd = s; rangeState.draftStart = iso;
+            } else {
+              rangeState.draftEnd = iso;
+            }
+            const hint = $("range-hint");
+            if (rangeState.draftStart && rangeState.draftEnd) {
+              hint.textContent = rangeState.draftStart + " → " +
+                rangeState.draftEnd + " · 待应用";
+            } else {
+              hint.textContent = "开始：" + rangeState.draftStart + " · 请选择结束";
+            }
+            document.querySelectorAll("[data-range]").forEach(b =>
+              b.setAttribute("aria-pressed", "false"));
+            rangeState.preset = null;
+            renderCalendar();
+          });
+          grid.append(btn);
+        }
+      }
+
+      function openRangePop(open) {
+        const pop = $("range-pop"), btn = $("range-btn");
+        pop.hidden = !open;
+        btn.setAttribute("aria-expanded", String(open));
+        if (open) {
+          rangeState.draftStart = null;
+          rangeState.draftEnd = null;
+          renderCalendar();
+          $("range-hint").textContent = RANGE.mode === "day"
+            ? "单日 · 09:00–17:00" : "多日 · 日粒度";
+        }
+      }
+
+      $("range-btn").addEventListener("click", () =>
+        openRangePop($("range-pop").hidden));
+      $("cal-prev").addEventListener("click", () => {
+        rangeState.calMonth--; renderCalendar();
+      });
+      $("cal-next").addEventListener("click", () => {
+        rangeState.calMonth++; renderCalendar();
+      });
+      document.querySelectorAll("[data-range]").forEach(btn =>
+        btn.addEventListener("click", () => applyRange(btn.dataset.range)));
+      $("range-apply").addEventListener("click", () => {
+        const { draftStart, draftEnd } = rangeState;
+        if (draftStart && draftEnd) {
+          const toAbs = iso => {
+            const [y, m, d] = iso.split("-").map(Number);
+            return Math.round((new Date(y, m - 1, d) - new Date(2026, 9, 15)) /
+              86400000) * DAY_MIN;
+          };
+          RANGE.mode = "multi";
+          RANGE.startAbs = toAbs(draftStart);
+          RANGE.endAbs = toAbs(draftEnd) + DAY_MIN;
+          if (RANGE.endAbs - RANGE.startAbs <= DAY_MIN) {
+            // 单日回落为 day 模式
+            RANGE.mode = "day";
+            RANGE.startMin = WINDOW_START;
+            RANGE.endMin = WINDOW_START + WINDOW_DURATION;
+          }
+          renderTimeAxis();
+          render();
+        }
+        openRangePop(false);
+      });
+      document.addEventListener("click", event => {
+        const pop = $("range-pop");
+        if (pop.hidden) return;
+        if (!event.target.closest(".range-wrap")) openRangePop(false);
+      });
 
       function renderGantt(visible) {
         durationObserver.disconnect();
@@ -2676,6 +3171,77 @@ function hermesBadge(session) {
           $("create-submit").disabled = false;
         }
       }
+
+      // v3.6 文件夹选择器（原型模拟目录树；真实版走 server 目录列表）
+      const MOCK_FS = {
+        "/home/ian": ["项目", "文档", "下载", "workspace"],
+        "/home/ian/项目": ["roambench", "atlas-api", "fieldnotes", "infra-kit"],
+        "/home/ian/文档": ["多Agent流水线方案", "roambench"],
+        "/home/ian/下载": [],
+        "/home/ian/workspace": ["sbanner", "wheeltec-r550", "leggedrobot"],
+        "/home/ian/项目/roambench": ["design", "web", "internal"],
+        "/home/ian/项目/atlas-api": ["src", "tests"],
+        "/home/ian/项目/fieldnotes": ["app"],
+        "/home/ian/项目/infra-kit": ["playbooks"]
+      };
+      let fsPath = "/home/ian/项目";
+
+      function renderFs() {
+        const crumb = $("fs-crumb");
+        crumb.replaceChildren();
+        const parts = fsPath.split("/").filter(Boolean);
+        let acc = "";
+        parts.forEach((part, i) => {
+          acc += "/" + part;
+          if (i) crumb.append(el("span", "sep", "/"));
+          const btn = el("button");
+          btn.type = "button";
+          btn.textContent = part;
+          const target = acc;
+          btn.addEventListener("click", () => {
+            if (MOCK_FS[target] !== undefined) { fsPath = target; renderFs(); }
+          });
+          crumb.append(btn);
+        });
+        const list = $("fs-list");
+        list.replaceChildren();
+        const subs = MOCK_FS[fsPath] || [];
+        if (!subs.length) {
+          list.append(el("li", "fs-empty", "（空文件夹）"));
+        }
+        subs.forEach(sub => {
+          const li = el("li");
+          const btn = el("button", "fs-item");
+          btn.type = "button";
+          const icon = el("span", "ficon");
+          icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg>';
+          btn.append(icon, document.createTextNode(sub));
+          btn.addEventListener("click", () => {
+            const next = fsPath + "/" + sub;
+            if (MOCK_FS[next] !== undefined) {
+              fsPath = next; renderFs();
+            } else {
+              $("project-path").value = next;
+              closeDialog($("fs-dialog"));
+            }
+          });
+          li.append(btn);
+          list.append(li);
+        });
+        $("fs-current").textContent = fsPath;
+      }
+
+      $("path-pick").addEventListener("click", () => {
+        const current = $("project-path").value.trim();
+        const parent = current.split("/").slice(0, -1).join("/") || "/home/ian";
+        fsPath = MOCK_FS[parent] !== undefined ? parent : "/home/ian/项目";
+        renderFs();
+        showDialog($("fs-dialog"));
+      });
+      $("fs-select").addEventListener("click", () => {
+        $("project-path").value = fsPath;
+        closeDialog($("fs-dialog"));
+      });
 
       $("open-create").addEventListener("click", () => openCreate());
       document.querySelectorAll('input[name="entry-type"]').forEach(radio => {
