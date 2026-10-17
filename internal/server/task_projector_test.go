@@ -14,7 +14,7 @@ import (
 func TestMobileDecisionProjectsTaskBeforeResponseReturns(t *testing.T) {
 	persistDir := t.TempDir()
 	store := newProjectControlStore(persistDir)
-	state := defaultProjectControlState()
+	state := demoProjectControlState()
 	for index := range state.Tasks {
 		if state.Tasks[index].ID == projectControlTaskPanelID {
 			state.Tasks[index].State = "execution_complete"
@@ -57,7 +57,7 @@ func TestMobileDecisionProjectsTaskBeforeResponseReturns(t *testing.T) {
 func TestPendingFinalAcceptanceProjectionResumesAfterServerRestart(t *testing.T) {
 	persistDir := t.TempDir()
 	store := newProjectControlStore(persistDir)
-	state := defaultProjectControlState()
+	state := demoProjectControlState()
 	for index := range state.Tasks {
 		if state.Tasks[index].ID == projectControlTaskPanelID {
 			state.Tasks[index].State = "execution_complete"

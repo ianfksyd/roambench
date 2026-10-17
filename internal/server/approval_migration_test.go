@@ -14,7 +14,7 @@ import (
 func TestLegacyApprovalsMigrateToSQLiteAndLeaveReadOnlyBackup(t *testing.T) {
 	persistDir := t.TempDir()
 	legacyStore := newProjectControlStore(persistDir)
-	state := defaultProjectControlState()
+	state := demoProjectControlState()
 	state.Checkpoints = append(state.Checkpoints, projectControlCheckpoint{
 		ID: "checkpoint-resolved-migration", TaskID: projectControlTaskPanelID,
 		Kind: "agent_request", Title: "Resolved request", Reason: "Choose a path",
@@ -82,7 +82,7 @@ func TestLegacyApprovalsMigrateToSQLiteAndLeaveReadOnlyBackup(t *testing.T) {
 func TestLegacyApprovalMigrationRecoversAfterDatabaseCommitBeforeJSONCleanup(t *testing.T) {
 	persistDir := t.TempDir()
 	legacyStore := newProjectControlStore(persistDir)
-	state := defaultProjectControlState()
+	state := demoProjectControlState()
 	if err := legacyStore.save("ian", state); err != nil {
 		t.Fatalf("save legacy state: %v", err)
 	}

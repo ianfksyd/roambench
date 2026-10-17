@@ -35,7 +35,9 @@ func testProjectControlServer(t *testing.T) (*Server, string, *auth.SessionManag
 		t.Fatalf("CreateSession error: %v", err)
 	}
 
-	return NewServer(cfg, nil, sessions, nil, nil), token, sessions
+	srv := NewServer(cfg, nil, sessions, nil, nil)
+	seedDemoControl(t, srv)
+	return srv, token, sessions
 }
 
 func decodeProjectControlSnapshot(t *testing.T, rec *httptest.ResponseRecorder) projectControlSnapshot {
@@ -1138,6 +1140,7 @@ func TestProjectControlStartReadOnlyPhaseCreatesLogicalSessionWithoutAttach(t *t
 	termMgr := terminal.NewManager(&cfg.Terminal)
 	defer termMgr.Stop()
 	srv := NewServer(cfg, nil, sessions, termMgr, nil)
+	seedDemoControl(t, srv)
 
 	startReq := httptest.NewRequest(http.MethodPatch, "/api/project-control/tasks/"+projectControlTaskPanelID, strings.NewReader(`{"expectedRowVersion":1,"action":"start_phase","phaseId":"plan"}`))
 	startReq.Header.Set("Content-Type", "application/json")
@@ -1228,6 +1231,7 @@ func TestProjectControlStartWritePhaseCreatesAttachableTerminalSession(t *testin
 	termMgr := terminal.NewManager(&cfg.Terminal)
 	defer termMgr.Stop()
 	srv := NewServer(cfg, nil, sessions, termMgr, nil)
+	seedDemoControl(t, srv)
 
 	task := projectControlTask{ID: projectControlTaskPanelID, RowVersion: 1}
 	task = startProjectControlTaskPhaseViaAPI(t, srv, token, task, "plan")
@@ -2114,6 +2118,7 @@ func TestProjectControlDecisionAppendsTaskTimelineEventAndPersists(t *testing.T)
 	}
 
 	srv := NewServer(cfg, nil, sessions, nil, nil)
+	seedDemoControl(t, srv)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/project-control/checkpoints/"+projectControlCheckpointAcceptanceID+"/decision", strings.NewReader(`{"action":"approve"}`))
 	decisionReq.Header.Set("Content-Type", "application/json")
 	decisionReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
@@ -2962,6 +2967,7 @@ func TestProjectControlFinalAcceptanceDecisionPersistsAndBackfillsTaskReference(
 	}
 
 	srv := NewServer(cfg, nil, sessions, nil, nil)
+	seedDemoControl(t, srv)
 	completeProjectControlTaskToAcceptanceReview(t, srv, token, projectControlTaskPanelID, 1)
 
 	snapshotReq := httptest.NewRequest(http.MethodGet, "/api/project-control", nil)
@@ -3842,6 +3848,7 @@ func TestProjectControlTaskReplayIncludesLiveSessionAndRuntimeEvents(t *testing.
 	}
 
 	srv := NewServer(cfg, nil, sessions, termMgr, nil)
+	seedDemoControl(t, srv)
 	replayReq := httptest.NewRequest(http.MethodGet, "/api/project-control/tasks/"+projectControlTaskPanelID+"/replay", nil)
 	replayReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	replayRec := httptest.NewRecorder()
@@ -3943,6 +3950,7 @@ func TestProjectControlStatePersistsAcrossServerRestart(t *testing.T) {
 	}
 
 	srv := NewServer(cfg, nil, sessions, nil, nil)
+	seedDemoControl(t, srv)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/project-control/projects", strings.NewReader(`{"key":"persisted","name":"Persisted Project","description":"survives restart"}`))
 	createReq.Header.Set("Content-Type", "application/json")
 	createReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
