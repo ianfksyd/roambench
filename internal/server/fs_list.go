@@ -5,55 +5,46 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ianf339/roambench/internal/roots"
 )
 
-// resolveHomeDirectory checks both lexical and resolved boundaries. A sibling
-// sharing the home's prefix and a symlink pointing outside are both forbidden.
-func resolveHomeDirectory(home, path string) (string, bool) {
-	if !filepath.IsAbs(path) {
-		return "", false
-	}
-	within := func(root, candidate string) bool {
-		rel, err := filepath.Rel(root, candidate)
-		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-	}
-	if !within(home, filepath.Clean(path)) {
-		return "", false
-	}
-	root, err := filepath.EvalSymlinks(home)
-	if err != nil {
-		return "", false
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil || !within(root, resolved) {
-		return "", false
-	}
-	info, err := os.Stat(resolved)
-	if err != nil || !info.IsDir() {
-		return "", false
-	}
-	return resolved, true
-}
-
-// GET /api/fs/list?path=/absolute/home/path returns sorted child directory names.
-// An empty path opens home. Files and links escaping home are omitted.
+// GET /api/fs/list?path=/absolute/path returns the child directory names of
+// that directory plus the browse roots the user can jump to.
+//
+// Browsing is not confined to the home directory: the roots are quick-access
+// entries, so any absolute path on the machine may be listed. An empty path
+// opens the home directory.
 func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
+	username := GetUsername(r)
+	home := roots.HomeDir(username)
+	if home == "" {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "home unavailable"})
 		return
 	}
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = home
+	expanded, err := roots.ExpandRaw(strings.TrimSpace(r.URL.Query().Get("path")), home)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
-	resolved, ok := resolveHomeDirectory(home, path)
-	if !ok {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "directory must exist within home"})
+	// Resolve symlinks before collapsing "..", so "link/.." keeps its POSIX
+	// meaning.
+	resolved, err := filepath.EvalSymlinks(expanded)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "directory does not exist"})
+		return
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "directory does not exist"})
+		return
+	}
+	if !info.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not a directory"})
 		return
 	}
 	entries, err := os.ReadDir(resolved)
@@ -61,24 +52,20 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "directory is not readable"})
 		return
 	}
-	// Map the resolved location back under the lexical home (which may itself
-	// be a symlink), so subsequent navigation and child checks use this directory.
-	realHome, err := filepath.EvalSymlinks(home)
-	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "home unavailable"})
-		return
-	}
-	rel, err := filepath.Rel(realHome, resolved)
-	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "directory unavailable"})
-		return
-	}
-	path = filepath.Join(home, rel)
 	directories := make([]string, 0)
 	for _, entry := range entries {
-		if _, ok := resolveHomeDirectory(home, filepath.Join(path, entry.Name())); ok {
+		if entry.IsDir() {
+			directories = append(directories, entry.Name())
+			continue
+		}
+		// Follow symlinks so linked directories stay browsable.
+		if target, statErr := os.Stat(filepath.Join(resolved, entry.Name())); statErr == nil && target.IsDir() {
 			directories = append(directories, entry.Name())
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"path": filepath.Clean(path), "directories": directories})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"path":        resolved,
+		"directories": directories,
+		"roots":       s.roots.List(username),
+	})
 }

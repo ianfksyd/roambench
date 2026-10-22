@@ -14,7 +14,9 @@ import (
 	"github.com/ianf339/roambench/internal/auth"
 )
 
-func TestFSListHomeBoundary(t *testing.T) {
+// Browsing is not confined to the home directory: any absolute path may be
+// listed. The roots returned alongside are quick-access entries only.
+func TestFSListListsAnyAbsolutePath(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	outside := filepath.Join(root, "outside")
@@ -45,16 +47,14 @@ func TestFSListHomeBoundary(t *testing.T) {
 		{"default", "", "GET", true, 200},
 		{"empty directory", filepath.Join(home, "alpha"), "GET", true, 200},
 		{"internal link", filepath.Join(home, "safe-link"), "GET", true, 200},
-		{"outside", outside, "GET", true, 403},
-		{"prefix sibling", sibling, "GET", true, 403},
-		{"traversal", home + "/../home-other", "GET", true, 403},
-		{"symlink escape", filepath.Join(home, "escape"), "GET", true, 403},
-		{"symlink descendant", filepath.Join(home, "escape", "missing"), "GET", true, 403},
-		{"relative", "alpha", "GET", true, 403},
-		{"missing", filepath.Join(home, "missing"), "GET", true, 403},
-		{"file", filepath.Join(home, "file.txt"), "GET", true, 403},
-		{"broken", filepath.Join(home, "broken"), "GET", true, 403},
-		{"nul", home + "/\x00", "GET", true, 403},
+		{"outside home", outside, "GET", true, 200},
+		{"prefix sibling", sibling, "GET", true, 200},
+		{"traversal", home + "/../home-other", "GET", true, 200},
+		{"symlink escape", filepath.Join(home, "escape"), "GET", true, 200},
+		{"relative", "alpha", "GET", true, 200},
+		{"missing", filepath.Join(home, "missing"), "GET", true, 404},
+		{"file", filepath.Join(home, "file.txt"), "GET", true, 400},
+		{"broken", filepath.Join(home, "broken"), "GET", true, 404},
 		{"method", home, "POST", true, 405},
 		{"auth", home, "GET", false, 401},
 	} {
@@ -77,8 +77,13 @@ func TestFSListHomeBoundary(t *testing.T) {
 					t.Fatal(err)
 				}
 				want := []string{}
-				if tc.path == home || tc.path == "" {
-					want = []string{"alpha", "safe-link", "zeta"}
+				switch tc.path {
+				case home, "":
+					// "escape" is a symlink to a directory outside the home
+					// tree; linked directories stay browsable.
+					want = []string{"alpha", "escape", "safe-link", "zeta"}
+				case "alpha":
+					want = []string{}
 				}
 				if !reflect.DeepEqual(body.Directories, want) {
 					t.Fatalf("directories=%v want=%v", body.Directories, want)
@@ -86,7 +91,7 @@ func TestFSListHomeBoundary(t *testing.T) {
 			}
 		})
 	}
-	// Resolve link/.. before checking child paths: cleaning it first would list
+	// Resolve link/.. before listing children: cleaning it first would list
 	// the wrong directory or drop valid children.
 	nested := filepath.Join(home, "alpha", "nested")
 	if err := os.Mkdir(nested, 0700); err != nil {
@@ -109,12 +114,44 @@ func TestFSListHomeBoundary(t *testing.T) {
 	if rec.Code != 200 || resolvedBody.Path != filepath.Join(home, "alpha") || !reflect.DeepEqual(resolvedBody.Directories, []string{"nested"}) {
 		t.Fatalf("symlink parent: %d %s", rec.Code, rec.Body.String())
 	}
-	// HOME itself may legitimately be a symlink.
-	alias := filepath.Join(root, "home-alias")
-	if err := os.Symlink(home, alias); err != nil {
+}
+
+// The response carries the browse roots so the picker can offer them as
+// shortcuts.
+func TestFSListReturnsRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	defer srv.Shutdown(context.Background())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/fs/list?path="+url.QueryEscape(home), nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Roots []struct {
+			Path   string `json:"path"`
+			Label  string `json:"label"`
+			Source string `json:"source"`
+		} `json:"roots"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := resolveHomeDirectory(alias, filepath.Join(alias, "alpha")); !ok {
-		t.Fatal("symlink home rejected")
+	if len(body.Roots) == 0 {
+		t.Fatal("expected at least one browse root")
+	}
+	found := false
+	for _, entry := range body.Roots {
+		if entry.Path == "/" && entry.Source == "instance" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the default instance root /, got %+v", body.Roots)
 	}
 }

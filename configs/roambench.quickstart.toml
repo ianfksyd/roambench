@@ -36,6 +36,13 @@ persist_max_bytes = 67108864
 [ui]
 title = "RoamBench"
 
+# Browse roots offered by the file browser and the folder picker.
+# Roots are quick-access entries, not a boundary: any absolute path can be
+# browsed or typed.
+[filesystem]
+roots = ["/"]
+allow_user_roots = true
+
 # [telegram]
 # enabled = false
 # bot_token = "YOUR_BOT_TOKEN"

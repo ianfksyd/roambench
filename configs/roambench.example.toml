@@ -61,6 +61,16 @@ session_io_weight = 80
 title = "RoamBench"
 # motd = "Welcome to my server"
 
+# Browse roots offered by the file browser and the folder picker.
+#
+# Roots are quick-access entries, not a boundary: any absolute path can be
+# browsed or typed. "/" offers the whole machine, "~" the user's home
+# directory. Each user may keep personal extras in
+# ~/.config/roambench/roots.toml and manage them from the web UI.
+[filesystem]
+roots = ["/"]
+allow_user_roots = true
+
 # [telegram]
 # enabled = false
 # bot_token = "YOUR_BOT_TOKEN"

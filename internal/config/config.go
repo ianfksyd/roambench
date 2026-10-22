@@ -13,11 +13,12 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `toml:"server"`
-	Auth     AuthConfig     `toml:"auth"`
-	Terminal TerminalConfig `toml:"terminal"`
-	UI       UIConfig       `toml:"ui"`
-	Telegram TelegramConfig `toml:"telegram"`
+	Server     ServerConfig     `toml:"server"`
+	Auth       AuthConfig       `toml:"auth"`
+	Terminal   TerminalConfig   `toml:"terminal"`
+	UI         UIConfig         `toml:"ui"`
+	Telegram   TelegramConfig   `toml:"telegram"`
+	Filesystem FilesystemConfig `toml:"filesystem"`
 }
 
 type ServerConfig struct {
@@ -78,6 +79,19 @@ type TelegramConfig struct {
 	PollingInterval string `toml:"polling_interval"`
 }
 
+// FilesystemConfig controls the browse roots offered by the file browser and
+// the folder picker.
+//
+// Roots are quick-access entries, not a boundary: any absolute path can be
+// browsed or typed. "/" browses the whole machine, "~" the user's home
+// directory.
+type FilesystemConfig struct {
+	Roots []string `toml:"roots"`
+	// AllowUserRoots lets every user keep personal extras in
+	// ~/.config/roambench/roots.toml and manage them from the web UI.
+	AllowUserRoots bool `toml:"allow_user_roots"`
+}
+
 func Defaults() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -106,6 +120,10 @@ func Defaults() *Config {
 			Enabled:         false,
 			Mode:            "polling",
 			PollingInterval: "10s",
+		},
+		Filesystem: FilesystemConfig{
+			Roots:          []string{"/"},
+			AllowUserRoots: true,
 		},
 	}
 }
@@ -249,6 +267,15 @@ func Validate(cfg *Config) error {
 	}
 	if err := cfg.Telegram.Validate(); err != nil {
 		return err
+	}
+	for _, root := range cfg.Filesystem.Roots {
+		trimmed := strings.TrimSpace(root)
+		if trimmed == "" {
+			return fmt.Errorf("filesystem.roots entries must not be empty")
+		}
+		if trimmed != "~" && !strings.HasPrefix(trimmed, "~/") && !path.IsAbs(trimmed) {
+			return fmt.Errorf("filesystem.roots entry must be an absolute path or ~: %q", root)
+		}
 	}
 	return nil
 }

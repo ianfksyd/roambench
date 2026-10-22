@@ -150,6 +150,26 @@ Important behavior:
 - `title` controls the main app title
 - `motd` is available for lightweight UI messaging
 
+## Filesystem
+
+```toml
+[filesystem]
+roots = ["/"]
+allow_user_roots = true
+```
+
+Browse roots offered by the file browser and the folder picker.
+
+- `roots` are quick-access entries, **not** a boundary: any absolute path can
+  be browsed or typed into the path field. `"/"` offers the whole machine,
+  `"~"` the home directory of the signed-in user. Defaults to `["/"]`.
+- `allow_user_roots` lets every user keep personal extras in
+  `~/.config/roambench/roots.toml` and add or remove them from the folder
+  picker in the web UI. Instance roots stay read-only there.
+
+A project `repoPath` may point anywhere the service account can reach; the
+board follows symlinks to the real directory.
+
 ## Telegram
 
 ```toml

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -98,16 +99,26 @@ func TestValidateProjectControlRepoPath(t *testing.T) {
 	if _, err := validateProjectControlRepoPath("relative/path"); err == nil {
 		t.Error("relative repoPath should be rejected")
 	}
-	// outside home -> rejected
-	if _, err := validateProjectControlRepoPath("/etc"); err == nil {
-		t.Error("/etc should be rejected (outside home)")
+	// outside home but existing -> accepted: the project path is not confined
+	// to the home directory
+	outside := t.TempDir()
+	if got, err := validateProjectControlRepoPath(outside); err != nil || got != outside {
+		t.Errorf("directory outside home = %q, err %v; want accepted", got, err)
 	}
-	if _, err := validateProjectControlRepoPath(home + "/../elsewhere"); err == nil {
-		t.Error("home/../elsewhere should be rejected")
-	}
-	// inside home but nonexistent -> rejected
+	// nonexistent -> rejected
 	if _, err := validateProjectControlRepoPath(home + "/definitely-not-here-xyz"); err == nil {
 		t.Error("nonexistent dir should be rejected")
+	}
+	if _, err := validateProjectControlRepoPath(filepath.Join(home, "definitely-not-here-xyz", "deeper")); err == nil {
+		t.Error("nonexistent parent should be rejected")
+	}
+	// a file is not a project directory
+	file := filepath.Join(home, ".roambench-repo-path-contract-test")
+	if err := os.WriteFile(file, []byte("x"), 0600); err == nil {
+		t.Cleanup(func() { os.Remove(file) })
+		if _, err := validateProjectControlRepoPath(file); err == nil {
+			t.Error("file should be rejected as repoPath")
+		}
 	}
 	// inside home and exists -> ok
 	if _, err := validateProjectControlRepoPath(home); err != nil {

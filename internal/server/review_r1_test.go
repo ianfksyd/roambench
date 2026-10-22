@@ -369,8 +369,10 @@ func TestR1RepoValidationResolvesHomeAndTarget(t *testing.T) {
 			t.Fatal(got, err)
 		}
 	}
-	if _, err := validateProjectControlRepoPath(filepath.Join(linkedHome, "escape")); err == nil {
-		t.Fatal("symlink escape accepted")
+	// A symlink is resolved to its real target, and the target is no longer
+	// required to sit under the home directory.
+	if got, err := validateProjectControlRepoPath(filepath.Join(linkedHome, "escape")); err != nil || got != outside {
+		t.Fatalf("symlink target = %q, err %v; want %q", got, err, outside)
 	}
 }
 

@@ -6,6 +6,16 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ## [Unreleased]
 
+### Added
+
+- Configurable browse roots (`[filesystem] roots`) shown in the file browser and the folder picker; `/` offers the whole machine, `~` the home directory
+- Per-user roots in `~/.config/roambench/roots.toml`, manageable from the folder picker (`/api/fs/roots`, add and remove)
+
+### Changed
+
+- Browsing is no longer confined to the home directory: the file browser, the folder picker and the project `repoPath` contract accept any absolute path the service account can reach
+- A project `repoPath` only has to be an absolute path to an existing directory; symlinks resolve to the real directory
+
 ## [0.5.0] - 2026-09-01
 
 ### Added

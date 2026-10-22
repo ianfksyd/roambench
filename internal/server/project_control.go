@@ -376,9 +376,13 @@ type projectControlProjectCreateRequest struct {
 	RepoPath string `json:"repoPath"`
 }
 
-// validateProjectControlRepoPath enforces the K1 contract: absolute path,
-// directory exists, and confined under the user's home directory (GATE-1
-// decision #4 limits the command-execution surface of board git reads).
+// validateProjectControlRepoPath enforces the project path contract: an
+// absolute path pointing at an existing directory.
+//
+// The path is not confined to the home directory: the instance owner decides
+// which roots the board offers, and a project may live anywhere the service
+// account can reach. Symlinks are resolved so the stored path is the real
+// directory.
 func validateProjectControlRepoPath(value string) (string, error) {
 	p := strings.TrimSpace(value)
 	if p == "" {
@@ -387,21 +391,9 @@ func validateProjectControlRepoPath(value string) (string, error) {
 	if !filepath.IsAbs(p) {
 		return "", fmt.Errorf("repoPath must be an absolute path")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("repoPath validation failed: %w", err)
-	}
-	home, err = filepath.EvalSymlinks(home)
-	if err != nil {
-		return "", fmt.Errorf("repoPath home validation failed: %w", err)
-	}
 	clean, err := filepath.EvalSymlinks(filepath.Clean(p))
 	if err != nil {
 		return "", fmt.Errorf("repoPath validation failed: %w", err)
-	}
-	rel, err := filepath.Rel(home, clean)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("repoPath must stay under the home directory")
 	}
 	info, err := os.Stat(clean)
 	if err != nil {

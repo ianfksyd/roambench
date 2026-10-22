@@ -21,6 +21,7 @@ import (
 	"github.com/ianf339/roambench/internal/config"
 	"github.com/ianf339/roambench/internal/controlplane"
 	"github.com/ianf339/roambench/internal/filebrowser"
+	"github.com/ianf339/roambench/internal/roots"
 	"github.com/ianf339/roambench/internal/systemstats"
 	"github.com/ianf339/roambench/internal/telegram"
 	"github.com/ianf339/roambench/internal/terminal"
@@ -83,6 +84,7 @@ type Server struct {
 	controlPlane    *controlplane.Repository
 	controlPlaneErr error
 	notifHub        *notificationHub
+	roots           *roots.Store
 
 	telegramClient     *telegram.Client
 	telegramDispatcher *telegram.Dispatcher
@@ -118,6 +120,7 @@ func NewServer(
 		controlPlane:    controlPlane,
 		controlPlaneErr: controlPlaneErr,
 		notifHub:        newNotificationHub(),
+		roots:           roots.NewStore(cfg.Filesystem.Roots, cfg.Filesystem.AllowUserRoots),
 		mux:             http.NewServeMux(),
 		readSystemStats: systemstats.Read,
 	}
@@ -231,6 +234,7 @@ func (s *Server) registerRoutes() {
 
 	// I1 routes
 	s.mux.HandleFunc("/api/fs/list", authRequired(s.sessions, s.handleFSList))
+	s.mux.HandleFunc("/api/fs/roots", authRequired(s.sessions, s.handleFSRoots))
 	// I2 routes: lifecycle/contract endpoints
 	s.mux.HandleFunc("/api/project-control/projects/", authRequired(s.sessions, s.handleProjectLifecycle))
 	s.mux.HandleFunc("/api/agent/v1/pause", s.tokenRequired(s.handleAgentPause))

@@ -13,11 +13,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/ianf339/roambench/internal/roots"
 )
 
 type FileInfo struct {
@@ -98,6 +99,14 @@ func (fb *FileBrowser) Delete(username, path string) error {
 	}
 	if resolved == homeDir {
 		return errors.New("cannot delete home directory")
+	}
+	if resolved == string(filepath.Separator) {
+		return errors.New("cannot delete the filesystem root")
+	}
+	// Browsing is unbounded, but wiping the directory that holds the home
+	// directory would take every user account with it.
+	if isAncestorOrSelf(resolved, homeDir) {
+		return errors.New("cannot delete a parent directory of the home directory")
 	}
 	return os.RemoveAll(resolved)
 }
@@ -461,46 +470,32 @@ func max(a, b int) int {
 	return b
 }
 
-// resolvePath resolves a user-provided path to an absolute path,
-// ensuring it stays within the user's home directory.
+// resolvePath resolves a user-provided path to an absolute path.
+//
+// Browsing is not confined to the home directory: the browser shows whatever
+// the service account can reach, and the roots configured for the instance
+// only provide shortcuts. "~" and relative paths resolve against the home
+// directory.
 func (fb *FileBrowser) resolvePath(username, path string) (string, error) {
 	homeDir, err := fb.getHomeDir(username)
 	if err != nil {
 		return "", err
 	}
 
-	// Handle ~ and relative paths
-	if path == "" || path == "~" {
-		return homeDir, nil
+	expanded, err := roots.Expand(path, homeDir)
+	if err != nil {
+		return "", err
 	}
-	if strings.HasPrefix(path, "~/") {
-		path = filepath.Join(homeDir, path[2:])
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(homeDir, path)
-	}
-
-	// Clean the path
-	path = filepath.Clean(path)
 
 	// Resolve symlinks
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := filepath.EvalSymlinks(expanded)
 	if err != nil {
 		// Path might not exist yet (for mkdir), check parent
-		parent := filepath.Dir(path)
-		resolvedParent, err2 := filepath.EvalSymlinks(parent)
-		if err2 != nil {
+		parent := filepath.Dir(expanded)
+		if _, err2 := filepath.EvalSymlinks(parent); err2 != nil {
 			return "", fmt.Errorf("invalid path: %w", err)
 		}
-		if !isInsideDir(resolvedParent, homeDir) {
-			return "", errors.New("access denied: path outside home directory")
-		}
-		return path, nil
-	}
-
-	// Ensure resolved path is within home directory
-	if !isInsideDir(resolved, homeDir) {
-		return "", errors.New("access denied: path outside home directory")
+		return expanded, nil
 	}
 
 	return resolved, nil
@@ -520,11 +515,23 @@ func isInsideDir(path, dir string) bool {
 	return strings.HasPrefix(path, prefix)
 }
 
-func (fb *FileBrowser) getHomeDir(username string) (string, error) {
-	if u, err := user.Lookup(username); err == nil && u.HomeDir != "" {
-		return u.HomeDir, nil
+// isAncestorOrSelf reports whether ancestor contains path or is path itself.
+func isAncestorOrSelf(ancestor, path string) bool {
+	if ancestor == "" || path == "" {
+		return false
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
+	if ancestor == path {
+		return true
+	}
+	prefix := ancestor
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	return strings.HasPrefix(path, prefix)
+}
+
+func (fb *FileBrowser) getHomeDir(username string) (string, error) {
+	if home := roots.HomeDir(username); home != "" {
 		return home, nil
 	}
 	return "", fmt.Errorf("cannot determine home directory for user %q", username)

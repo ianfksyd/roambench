@@ -220,29 +220,30 @@ func boardTempRepoUnderHome(t *testing.T) string {
 	return dir
 }
 
-func TestBoardRepoPathOutsideHomeIsRejected(t *testing.T) {
+func TestBoardRepoPathOutsideHomeIsAccepted(t *testing.T) {
 	srv, token, sessions := boardTestServer(t)
 	defer sessions.Stop()
 
-	// /etc passes absolute+exists but is outside home; validation must reject
-	// it, and the board must report that as git.available=false, not 500.
+	// A project may live anywhere the service account can reach: /etc passes
+	// absolute+exists, so the board must accept it and report the git probe
+	// as unavailable rather than failing the request.
 	req := httptest.NewRequest(http.MethodPost, "/api/project-control/projects",
 		strings.NewReader(`{"name":"EtcProj","key":"etcproj","repoPath":"/etc"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
-	if rec.Code == http.StatusOK {
-		t.Fatal("creating a project with repoPath=/etc should be rejected by validation")
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("creating a project with repoPath=/etc = %d, want 200/201: %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestBoardSymlinkEscapeReportedUnavailable(t *testing.T) {
+func TestBoardSymlinkToRepoIsResolved(t *testing.T) {
 	home := homeDirForTest(t)
-	outside := t.TempDir() // outside home: EvalSymlinks keeps it outside
+	outside := t.TempDir()
 	boardGitRun(t, outside, "init", "-q", "-b", "main")
 
-	// A symlink inside home pointing at the outside repo.
+	// A symlink inside home pointing at the repo.
 	link := filepath.Join(home, ".roambench-board-escape-test")
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
@@ -252,15 +253,14 @@ func TestBoardSymlinkEscapeReportedUnavailable(t *testing.T) {
 	srv, _, sessions := boardTestServer(t)
 	defer sessions.Stop()
 
-	// The symlink target cannot be created through validation (points
-	// outside home after resolution), so verify the handler-level guard
-	// directly: boardGitStatus must resolve and re-validate.
+	// The symlink is resolved to the real repository, so the board reports
+	// the git status of that repository.
 	status := srv.boardGitStatus(link)
-	if status.Available {
-		t.Errorf("symlink escaping home returned available=true (repoPath=%q)", status.RepoPath)
+	if !status.Available {
+		t.Errorf("symlinked repo reported available=false (repoPath=%q error=%q)", status.RepoPath, status.Error)
 	}
-	if status.Error == "" {
-		t.Error("expected an error explaining the repoPath rejection")
+	if status.RepoPath != outside {
+		t.Errorf("repoPath = %q, want the resolved target %q", status.RepoPath, outside)
 	}
 }
 
