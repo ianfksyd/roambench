@@ -793,6 +793,14 @@
             "project.boardI4.chooseFolder": "Choose folder",
             "project.boardI4.selectFolder": "Select this folder",
             "project.boardI4.home": "Home folder",
+            "project.boardI4.roots": "Roots",
+            "project.boardI4.addRoot": "Add root",
+            "project.boardI4.removeRoot": "Remove root",
+            "project.boardI4.rootPath": "Root path",
+            "project.boardI4.add": "Add",
+            "project.boardI4.cancel": "Cancel",
+            "project.boardI4.rootAdded": "Root added",
+            "project.boardI4.rootRemoved": "Root removed",
             "project.boardI4.close": "Close",
             "project.boardI4.loading": "Loading…",
             "project.boardI4.emptyFolder": "No subfolders",
@@ -1007,6 +1015,14 @@
             "project.boardI4.chooseFolder": "选择文件夹",
             "project.boardI4.selectFolder": "选定此文件夹",
             "project.boardI4.home": "主目录",
+            "project.boardI4.roots": "根目录",
+            "project.boardI4.addRoot": "添加根目录",
+            "project.boardI4.removeRoot": "移除根目录",
+            "project.boardI4.rootPath": "根目录路径",
+            "project.boardI4.add": "添加",
+            "project.boardI4.cancel": "取消",
+            "project.boardI4.rootAdded": "已添加根目录",
+            "project.boardI4.rootRemoved": "已移除根目录",
             "project.boardI4.close": "关闭",
             "project.boardI4.loading": "加载中…",
             "project.boardI4.emptyFolder": "没有子目录",
@@ -1221,6 +1237,14 @@
             "project.boardI4.chooseFolder": "フォルダーを選択",
             "project.boardI4.selectFolder": "このフォルダーを選択",
             "project.boardI4.home": "ホームフォルダー",
+            "project.boardI4.roots": "ルート",
+            "project.boardI4.addRoot": "ルートを追加",
+            "project.boardI4.removeRoot": "ルートを削除",
+            "project.boardI4.rootPath": "ルートのパス",
+            "project.boardI4.add": "追加",
+            "project.boardI4.cancel": "キャンセル",
+            "project.boardI4.rootAdded": "ルートを追加しました",
+            "project.boardI4.rootRemoved": "ルートを削除しました",
             "project.boardI4.close": "閉じる",
             "project.boardI4.loading": "読み込み中…",
             "project.boardI4.emptyFolder": "サブフォルダーなし",
@@ -6512,6 +6536,7 @@
     }
 
     function loadDirectory(path) {
+        loadFileRoots();
         fetchJSON('/api/files?path=' + encodeURIComponent(path), undefined, { authRequired: true })
             .then(files => {
                 applyDirectoryListing(path, files);
@@ -6523,6 +6548,49 @@
                 resetFileSelection();
                 renderFileList([]);
                 showFileListError(err.message);
+            });
+    }
+
+    // Browse roots are quick-access entries: any absolute path stays
+    // reachable, the chips only shorten the way there.
+    let fileRootsLoaded = false;
+
+    function renderFileRoots(roots) {
+        const row = document.getElementById('file-roots');
+        if (!row) {
+            return;
+        }
+        if (!Array.isArray(roots) || !roots.length) {
+            row.hidden = true;
+            row.innerHTML = '';
+            return;
+        }
+        row.hidden = false;
+        row.innerHTML = '';
+        roots.forEach(function(root) {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'browser-root-chip';
+            chip.textContent = root.label;
+            chip.title = root.path;
+            chip.onclick = function() {
+                loadDirectory(root.path);
+            };
+            row.appendChild(chip);
+        });
+    }
+
+    function loadFileRoots() {
+        if (fileRootsLoaded) {
+            return;
+        }
+        fileRootsLoaded = true;
+        fetchJSON('/api/fs/roots', undefined, { authRequired: true })
+            .then(function(data) {
+                renderFileRoots(data && data.roots);
+            })
+            .catch(function() {
+                renderFileRoots([]);
             });
     }
 

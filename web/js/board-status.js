@@ -78,15 +78,30 @@
         var size = Number(value);
         return Number.isFinite(size) && size > 0 ? Math.min(20, Math.max(12, Math.round(size))) : 14;
     }
-    function folderBreadcrumbs(home, path) {
-        home = String(home || '').replace(/\/+$/, '');
-        path = String(path || '').replace(/\/+$/, '');
-        if (!home || (path !== home && !path.startsWith(home + '/'))) return [];
-        var parts = path.slice(home.length).split('/').filter(Boolean), current = home;
+    // folderBreadcrumbs builds the trail for a folder path. Browsing is not
+    // confined to the home directory, so an absolute path starts at the
+    // filesystem root and "~" keeps the home shorthand.
+    function folderBreadcrumbs(path) {
+        var text = String(path || '').trim();
+        if (!text) return [];
+        var root, remainder;
+        if (text === '~' || text.indexOf('~/') === 0) {
+            root = '~';
+            remainder = text.slice(1).replace(/^\/+/, '');
+        } else if (text.charAt(0) === '/') {
+            root = '/';
+            remainder = text.replace(/^\/+/, '');
+        } else {
+            return [];
+        }
+        var parts = remainder ? remainder.split('/').filter(Boolean) : [];
         if (parts.some(function(part) { return part === '..' || part === '.'; })) return [];
-        return [{ name: home, path: home }].concat(parts.map(function(name) {
-            current += '/' + name; return { name: name, path: current };
-        }));
+        var crumbs = [{ name: root, path: root }], current = root;
+        parts.forEach(function(name) {
+            current = current === '/' ? '/' + name : current + '/' + name;
+            crumbs.push({ name: name, path: current });
+        });
+        return crumbs;
     }
     function projectEntry(input) {
         input = input || {};

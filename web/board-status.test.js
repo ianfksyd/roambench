@@ -85,11 +85,15 @@ test('folder registration validates input and returns only the required fields',
     assert.equal(board.projectEntry({source:'/home/\nbad',goal:'x'}).error,'invalidEntry');
     assert.equal(board.projectEntry({source:'/home',goal:'x'.repeat(301)}).error,'invalidEntry');
     assert.equal(board.projectEntry(null).error,'required');
-    assert.deepEqual(board.folderBreadcrumbs('/home/user','/home/user/a/b'),[
-        {name:'/home/user',path:'/home/user'}, {name:'a',path:'/home/user/a'}, {name:'b',path:'/home/user/a/b'}
+    assert.deepEqual(board.folderBreadcrumbs('/home/user/a/b'),[
+        {name:'/',path:'/'}, {name:'home',path:'/home'}, {name:'user',path:'/home/user'},
+        {name:'a',path:'/home/user/a'}, {name:'b',path:'/home/user/a/b'}
     ]);
-    assert.deepEqual(board.folderBreadcrumbs('/home/user','/home/user2'),[]);
-    assert.deepEqual(board.folderBreadcrumbs('/home/user','/home/user/../root'),[]);
+    assert.deepEqual(board.folderBreadcrumbs('/'),[{name:'/',path:'/'}]);
+    assert.deepEqual(board.folderBreadcrumbs('~/work'),[{name:'~',path:'~'},{name:'work',path:'~/work'}]);
+    assert.deepEqual(board.folderBreadcrumbs('relative/path'),[]);
+    assert.deepEqual(board.folderBreadcrumbs('/home/user/../root'),[]);
+    assert.deepEqual(board.folderBreadcrumbs(''),[]);
 });
 
 test('board font preferences clamp to the supported range', () => {

@@ -1848,16 +1848,100 @@
     }
     function openFolderPicker(input) {
         if (folderDialog) return;
-        var dialog = document.createElement('dialog'), home = '', current = '', version = 0;
+        var dialog = document.createElement('dialog'), current = '', version = 0, roots = [], allowUserRoots = false;
         dialog.className = 'board-v3 fs-dialog';
         dialog.setAttribute('aria-labelledby', 'board-folder-title');
-        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-folder-title">' + escapeHTML(i4('chooseFolder')) + '</h2>' + i4Button('close', 'data-fs-close') + '</header><div class="dialog-body"><nav class="fs-crumb" aria-label="' + escapeHTML(i4('folderPath')) + '"></nav><ul class="fs-list"></ul><p class="form-error" role="alert"></p></div><footer class="dialog-footer">' + i4Button('home', 'data-fs-home') + i4Button('selectFolder', 'data-fs-select', '', true) + '</footer>';
+        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-folder-title">' + escapeHTML(i4('chooseFolder')) + '</h2>' + i4Button('close', 'data-fs-close') + '</header><div class="dialog-body">'
+            + '<nav class="fs-roots" aria-label="' + escapeHTML(i4('roots')) + '"><span class="fs-roots-label">' + escapeHTML(i4('roots')) + '</span></nav>'
+            + '<div class="fs-add" hidden><input class="fs-add-input" aria-label="' + escapeHTML(i4('rootPath')) + '" placeholder="/data/…" maxlength="1000" autocomplete="off">'
+            + '<button type="button" class="btn small primary" data-fs-add-save>' + escapeHTML(i4('add')) + '</button>'
+            + '<button type="button" class="btn small" data-fs-add-cancel>' + escapeHTML(i4('cancel')) + '</button></div>'
+            + '<nav class="fs-crumb" aria-label="' + escapeHTML(i4('folderPath')) + '"></nav><ul class="fs-list"></ul><p class="form-error" role="alert"></p></div>'
+            + '<footer class="dialog-footer">' + i4Button('home', 'data-fs-home') + i4Button('selectFolder', 'data-fs-select', '', true) + '</footer>';
         document.body.appendChild(dialog); folderDialog = dialog;
         function close() { version++; dialog.close(); dialog.remove(); if (folderDialog === dialog) folderDialog = null; }
         bindDialogDismiss(dialog, close);
         dialog.querySelector('[data-fs-close]').onclick = close;
-        dialog.querySelector('[data-fs-home]').onclick = function() { navigate(home); };
+        dialog.querySelector('[data-fs-home]').onclick = function() { navigate('~'); };
         dialog.querySelector('[data-fs-select]').onclick = function() { if (current) { input.value = current; input.dispatchEvent(new Event('input', { bubbles: true })); close(); } };
+        var addBox = dialog.querySelector('.fs-add');
+        var addInput = dialog.querySelector('.fs-add-input');
+        dialog.querySelector('[data-fs-add-cancel]').onclick = function() { addBox.hidden = true; };
+        addInput.addEventListener('keydown', function(event) { if (event.key === 'Enter') { event.preventDefault(); saveRoot(); } });
+        dialog.querySelector('[data-fs-add-save]').onclick = saveRoot;
+
+        // Roots are quick-access entries: any absolute path stays reachable,
+        // the chips only shorten the way there.
+        function renderRoots() {
+            var nav = dialog.querySelector('.fs-roots');
+            nav.innerHTML = '<span class="fs-roots-label">' + escapeHTML(i4('roots')) + '</span>';
+            roots.forEach(function(root) {
+                var chip = document.createElement('span');
+                chip.className = 'fs-root' + (root.source === 'user' ? ' fs-root-user' : '');
+                var open = document.createElement('button');
+                open.type = 'button';
+                open.className = 'fs-root-open';
+                open.textContent = root.label;
+                open.title = root.path;
+                open.onclick = function() { navigate(root.path); };
+                chip.appendChild(open);
+                if (root.source === 'user' && allowUserRoots) {
+                    var remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'fs-root-remove';
+                    remove.title = i4('removeRoot');
+                    remove.setAttribute('aria-label', i4('removeRoot'));
+                    remove.textContent = '×';
+                    remove.onclick = function() { removeRoot(root.path); };
+                    chip.appendChild(remove);
+                }
+                nav.appendChild(chip);
+            });
+            if (allowUserRoots) {
+                var add = document.createElement('button');
+                add.type = 'button';
+                add.className = 'fs-root-add';
+                add.title = i4('addRoot');
+                add.setAttribute('aria-label', i4('addRoot'));
+                add.textContent = '+';
+                add.onclick = function() { addBox.hidden = !addBox.hidden; if (!addBox.hidden) addInput.focus(); };
+                nav.appendChild(add);
+            }
+        }
+        async function loadRoots() {
+            try {
+                var data = await fetchJSON('/api/fs/roots');
+                roots = Array.isArray(data.roots) ? data.roots : [];
+                allowUserRoots = Boolean(data.allow_user_roots);
+            } catch (error) {
+                roots = [];
+                allowUserRoots = false;
+            }
+            renderRoots();
+        }
+        async function saveRoot() {
+            var path = addInput.value.trim();
+            if (!path) return;
+            dialog.querySelector('.form-error').textContent = '';
+            try {
+                await fetchJSON('/api/fs/roots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: path }) });
+                addBox.hidden = true;
+                addInput.value = '';
+                await loadRoots();
+                navigate(path);
+            } catch (error) {
+                dialog.querySelector('.form-error').textContent = error.message;
+            }
+        }
+        async function removeRoot(path) {
+            dialog.querySelector('.form-error').textContent = '';
+            try {
+                await fetchJSON('/api/fs/roots?path=' + encodeURIComponent(path), { method: 'DELETE' });
+                await loadRoots();
+            } catch (error) {
+                dialog.querySelector('.form-error').textContent = error.message;
+            }
+        }
         async function navigate(path, initial) {
             var request = ++version, select = dialog.querySelector('[data-fs-select]');
             select.disabled = true; current = '';
@@ -1866,28 +1950,29 @@
             try {
                 var data = await fetchJSON('/api/fs/list?path=' + encodeURIComponent(path || ''));
                 if (request !== version || !dialog.isConnected) return;
-                if (!home) home = data.path;
-                var crumbs = boardAPI().folderBreadcrumbs(home, data.path);
+                var crumbs = boardAPI().folderBreadcrumbs(data.path);
                 if (!crumbs.length || !Array.isArray(data.directories)) throw new Error(i4('invalidFolder'));
                 current = data.path;
+                if (Array.isArray(data.roots)) { roots = data.roots; renderRoots(); }
                 dialog.querySelector('.fs-crumb').innerHTML = crumbs.map(function(c) { return i4Button('home', 'data-fs-path', c.path).replace(escapeHTML(i4('home')) + '</button>', escapeHTML(c.name) + '</button>'); }).join('<span class="sep">/</span>');
                 dialog.querySelector('.fs-list').innerHTML = data.directories.length ? data.directories.map(function(name) {
                     return '<li><button type="button" class="fs-item" data-fs-path="' + escapeHTML(current + '/' + name) + '"><span class="ficon" aria-hidden="true">▱</span>' + escapeHTML(name) + '</button></li>';
                 }).join('') : '<li class="fs-empty">' + escapeHTML(i4('emptyFolder')) + '</li>';
                 dialog.querySelectorAll('[data-fs-path]').forEach(function(node) { node.onclick = function() { navigate(node.dataset.fsPath); }; });
                 select.disabled = false;
-                if (initial && input.value.trim() && input.value.trim() !== home) navigate(input.value.trim());
+                if (initial && input.value.trim()) navigate(input.value.trim());
             } catch (error) {
                 if (request !== version || !dialog.isConnected) return;
                 dialog.querySelector('.fs-list').innerHTML = '';
                 dialog.querySelector('.form-error').textContent = error.message;
             }
         }
-        dialog.showModal(); navigate('', true);
+        dialog.showModal();
+        loadRoots().then(function() { navigate(roots.length ? roots[0].path : '', true); });
     }
     function openNewProject() {
         var dialog = showBoardDialog(i4('newProject'), '<form data-board-entry><fieldset>'
-            + '<div class="field" data-entry-folder><label for="board-entry-path">' + escapeHTML(i4('folderPath')) + '</label><div class="path-row"><input id="board-entry-path" name="path" required maxlength="1000" autocomplete="off" placeholder="/home/…">'
+            + '<div class="field" data-entry-folder><label for="board-entry-path">' + escapeHTML(i4('folderPath')) + '</label><div class="path-row"><input id="board-entry-path" name="path" required maxlength="1000" autocomplete="off" placeholder="/data/…">'
             + '<button class="path-pick" type="button" data-pick-folder aria-haspopup="dialog" aria-label="' + escapeHTML(i4('chooseFolder')) + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg></button></div></div>'
             + '<label class="field"><span>' + escapeHTML(i4('goal')) + '</span><input name="goal" required maxlength="300" autocomplete="off"></label>'
             + '</fieldset>'
