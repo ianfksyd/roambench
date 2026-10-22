@@ -4,58 +4,27 @@
     var state = {
         authenticated: false,
         snapshot: null,
-        loading: false,
         error: '',
-        eventsLoading: false,
-        eventsError: '',
-        currentEvents: [],
-        currentEventsCursor: '',
-        currentEventFilters: null,
-        replayLoading: false,
-        currentReplay: null,
-        selectedEventLane: 'all',
-        selectedReplayLane: 'all',
-        eventSearchQuery: '',
-        replaySearchQuery: '',
-        selectedProjectId: '',
-        selectedWorkstreamId: '',
+
         selectedTaskId: '',
-        selectedTaskTab: 'overview',
-        selectedSessionId: '',
-        currentView: 'dashboard',
-        updatingWorkstreamId: '',
+        currentView: 'board',
         updatingTaskId: '',
-        creatingWorkstreamProjectId: '',
-        creatingWorkstreamTitle: '',
-        creatingWorkstreamScope: '',
-        creatingWorkstreamSaving: false,
-        creatingTaskWorkstreamId: '',
-        creatingTaskTitle: '',
-        creatingTaskGoal: '',
-        creatingTaskSelectedSkill: '',
-        creatingTaskRunbookId: '',
-        creatingTaskStep: 1,
-        creatingTaskSaving: false,
-        agentRecommendations: [],
-        agentRecommendationsLoading: false,
+
         phaseUpdatingTaskId: '',
         toolRunRefreshTimer: null,
         boardLoading: false,
         boardError: '',
-        boardGeneratedAt: '',
-        boardProjects: [],
-        boardExpanded: {},
-        boardTerminals: [], boardLoaded: false, boardEpoch: 0,
-        boardDetails: {}, boardDetailId: '', boardView: 'wall',
-        boardRangePreset: 'today', boardRangeFrom: '', boardRangeTo: '',
-        boardCalendarOpen: false, boardCalendarMonth: '', boardDraftFrom: '', boardDraftTo: '',
+
+        boardEpoch: 0,
+        boardProjectFilter: '',
+        boardTab: 'wall',
+        boardRange: 'all',
+
         boardTimer: null
     };
 
     var TOOL_RUN_REFRESH_INTERVAL_MS = 1200;
     var TOOL_RUN_REFRESH_ATTEMPTS = 130;
-    var TASK_WIZARD_TOTAL_STEPS = 3;
-    var TASK_DETAIL_TABS = ['overview', 'timeline', 'evidence', 'files_diff', 'sessions', 'audit'];
     var BOARD_REFRESH_INTERVAL_MS = 30000;
 
     function app() {
@@ -72,32 +41,8 @@
         return tr(count === 1 ? singularKey : pluralKey, count === 1 ? singularFallback : pluralFallback, { count: count });
     }
 
-    function taskCountText(count) {
-        return countText(count, 'project.countTasksSingular', '{count} task', 'project.countTasksPlural', '{count} tasks');
-    }
-
-    function laneCountText(count) {
-        return countText(count, 'project.countLanesSingular', '{count} lane', 'project.countLanesPlural', '{count} lanes');
-    }
-
-    function workstreamCountText(count) {
-        return countText(count, 'project.countWorkstreamsSingular', '{count} workstream', 'project.countWorkstreamsPlural', '{count} workstreams');
-    }
-
-    function agentCountText(count) {
-        return countText(count, 'project.countAgentsSingular', '{count} agent', 'project.countAgentsPlural', '{count} agents');
-    }
-
-    function sessionCountText(count) {
-        return countText(count, 'project.countSessionsSingular', '{count} session', 'project.countSessionsPlural', '{count} sessions');
-    }
-
     function itemCountText(count) {
         return countText(count, 'project.countItemsSingular', '{count} item', 'project.countItemsPlural', '{count} items');
-    }
-
-    function eventCountText(count) {
-        return countText(count, 'project.countEventsSingular', '{count} event', 'project.countEventsPlural', '{count} events');
     }
 
     function getPanel() {
@@ -108,30 +53,6 @@
         return document.getElementById('approvals-badge');
     }
 
-    function storageKey(suffix) {
-        var bridge = app();
-        var username = bridge && typeof bridge.getUsername === 'function' ? bridge.getUsername() : 'anon';
-        return 'roambench.projectPanel.' + username + '.' + suffix;
-    }
-
-    function loadFilterPreferences() {
-        try {
-            state.selectedEventLane = localStorage.getItem(storageKey('selectedEventLane')) || state.selectedEventLane;
-            state.selectedReplayLane = localStorage.getItem(storageKey('selectedReplayLane')) || state.selectedReplayLane;
-            state.eventSearchQuery = localStorage.getItem(storageKey('eventSearchQuery')) || state.eventSearchQuery;
-            state.replaySearchQuery = localStorage.getItem(storageKey('replaySearchQuery')) || state.replaySearchQuery;
-        } catch (_) {}
-    }
-
-    function persistFilterPreferences() {
-        try {
-            localStorage.setItem(storageKey('selectedEventLane'), state.selectedEventLane || 'all');
-            localStorage.setItem(storageKey('selectedReplayLane'), state.selectedReplayLane || 'all');
-            localStorage.setItem(storageKey('eventSearchQuery'), state.eventSearchQuery || '');
-            localStorage.setItem(storageKey('replaySearchQuery'), state.replaySearchQuery || '');
-        } catch (_) {}
-    }
-
     function escapeHTML(value) {
         return String(value == null ? '' : value)
             .replace(/&/g, '&amp;')
@@ -139,21 +60,6 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
-    }
-
-    function escapeRegExp(value) {
-        return String(value == null ? '' : value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    function highlightHTML(value, query) {
-        var escaped = escapeHTML(value);
-        var pattern;
-        query = String(query || '').trim();
-        if (!query) {
-            return escaped;
-        }
-        pattern = new RegExp('(' + escapeRegExp(query) + ')', 'ig');
-        return escaped.replace(pattern, '<mark class="project-highlight">$1</mark>');
     }
 
     function formatTime(value) {
@@ -207,57 +113,6 @@
         return (kind ? kind + ' - ' : '') + parsed.path;
     }
 
-    function workstreamLabel(plural) {
-        return plural ? tr('project.workstreamPlural', 'Workstreams') : tr('project.workstreamSingular', 'Workstream');
-    }
-
-    function humanizePriority(priority) {
-        switch (String(priority || '').trim().toLowerCase()) {
-        case 'critical':
-            return tr('project.priorityCritical', 'Critical');
-        case 'high':
-            return tr('project.priorityHigh', 'High');
-        case 'low':
-            return tr('project.priorityLow', 'Low');
-        default:
-            return tr('project.priorityMedium', 'Medium');
-        }
-    }
-
-    function humanizeRisk(risk) {
-        switch (String(risk || '').trim().toLowerCase()) {
-        case 'critical':
-            return tr('project.riskCritical', 'Critical');
-        case 'high':
-            return tr('project.riskHigh', 'High');
-        case 'low':
-            return tr('project.riskLow', 'Low');
-        default:
-            return tr('project.riskMedium', 'Medium');
-        }
-    }
-
-    function humanizeWorkstreamStatus(status) {
-        switch (String(status || '').trim().toLowerCase()) {
-        case 'planned':
-            return tr('project.statusNotStarted', 'Not started');
-        case 'running':
-            return tr('project.statusInProgress', 'In progress');
-        case 'waiting_human':
-            return tr('project.statusWaitingInput', 'Waiting for input');
-        case 'blocked':
-            return tr('project.statusBlocked', 'Blocked');
-        case 'failed':
-            return tr('project.statusFailed', 'Failed');
-        case 'completed':
-            return tr('project.statusCompleted', 'Completed');
-        case 'archived':
-            return tr('project.statusArchived', 'Archived');
-        default:
-            return humanizeToken(status);
-        }
-    }
-
     function humanizeTaskState(taskState) {
         switch (String(taskState || '').trim().toLowerCase()) {
         case 'planned':
@@ -280,23 +135,6 @@
             return tr('project.statusArchived', 'Archived');
         default:
             return humanizeToken(taskState);
-        }
-    }
-
-    function humanizeAcceptanceStatus(status) {
-        switch (String(status || '').trim().toLowerCase()) {
-        case 'not_ready':
-            return tr('project.acceptanceNotReady', 'Not ready');
-        case 'ready_for_acceptance':
-            return tr('project.acceptanceReady', 'Ready for approval');
-        case 'under_human_review':
-            return tr('project.acceptanceInApproval', 'In approval');
-        case 'accepted':
-            return tr('project.acceptanceAccepted', 'Accepted');
-        case 'rejected':
-            return tr('project.acceptanceChangesRequested', 'Changes requested');
-        default:
-            return humanizeToken(status);
         }
     }
 
@@ -366,46 +204,18 @@
         }
     }
 
-    function humanizeSkill(skillOrId) {
-        var skill = typeof skillOrId === 'object' && skillOrId ? skillOrId : findById(skills(), skillOrId);
-        if (skill && skill.name) {
-            return skill.name;
-        }
-        switch (String(skillOrId || '').trim().toLowerCase()) {
-        case 'code_change':
-            return tr('project.skillCodeChange', 'Code change');
-        case 'docs_update':
-            return tr('project.skillDocsUpdate', 'Docs update');
-        default:
-            return humanizeToken(skillOrId);
-        }
-    }
-
-    function humanizeAgentLabel(agentLabel) {
-        switch (String(agentLabel || '').trim().toLowerCase()) {
-        case 'worker':
-            return tr('project.agentWorker', 'Worker');
-        case 'reviewer':
-            return tr('project.agentReviewer', 'Reviewer');
-        case 'policy_engine':
-            return tr('project.agentPolicyEngine', 'Policy engine');
-        default:
-            return humanizeToken(agentLabel);
-        }
-    }
-
     function humanizeExecutionRole(role) {
         switch (String(role || '').trim().toLowerCase()) {
         case 'plan':
-            return tr('project.sessionPlanning', 'Planning');
+            return tr('project.phasePlanning', 'Planning');
         case 'implement':
-            return tr('project.sessionImplementation', 'Implementation');
+            return tr('project.phaseImplementation', 'Implementation');
         case 'test':
-            return tr('project.sessionTesting', 'Testing');
+            return tr('project.phaseTesting', 'Testing');
         case 'review':
-            return tr('project.sessionReview', 'Review');
+            return tr('project.phaseReview', 'Review');
         case 'verify':
-            return tr('project.sessionVerification', 'Verification');
+            return tr('project.phaseVerification', 'Verification');
         default:
             return humanizeToken(role);
         }
@@ -421,72 +231,6 @@
             return tr('project.writeAccessFull', 'Full write');
         default:
             return humanizeToken(access);
-        }
-    }
-
-    function humanizeSystemRole(role) {
-        switch (String(role || '').trim().toLowerCase()) {
-        case 'worker':
-            return tr('project.systemWorker', 'Worker');
-        case 'orchestrator':
-            return tr('project.systemOrchestrator', 'Orchestrator');
-        default:
-            return humanizeToken(role);
-        }
-    }
-
-    function compactText(value, fallback, maxLength) {
-        var text = String(value || fallback || '').trim().replace(/\s+/g, ' ');
-        var limit = maxLength || 84;
-        if (!text) {
-            return '';
-        }
-        return text.length > limit ? text.slice(0, limit - 1).trim() + '…' : text;
-    }
-
-    function shortStatusLabel(status) {
-        switch (String(status || '').trim().toLowerCase()) {
-        case 'running':
-        case 'active':
-        case 'online':
-            return tr('project.statusLive', 'Live');
-        case 'waiting_human':
-        case 'waiting_review':
-        case 'pending':
-        case 'under_human_review':
-            return tr('project.statusReview', 'Review');
-        case 'blocked':
-        case 'failed':
-            return tr('project.statusBlocked', 'Blocked');
-        case 'execution_complete':
-        case 'complete':
-        case 'completed':
-        case 'accepted':
-        case 'approved':
-        case 'resolved':
-            return tr('project.statusDone', 'Done');
-        case 'planned':
-        case 'queued':
-            return tr('project.statusNext', 'Next');
-        case 'rejected':
-            return tr('project.statusFix', 'Fix');
-        case 'archived':
-            return tr('project.statusArchive', 'Archive');
-        default:
-            return status ? humanizeToken(status) : tr('project.statusActive', 'Active');
-        }
-    }
-
-    function shortPriorityLabel(priority) {
-        switch (String(priority || '').trim().toLowerCase()) {
-        case 'critical':
-            return 'P0';
-        case 'high':
-            return 'P1';
-        case 'low':
-            return 'P3';
-        default:
-            return 'P2';
         }
     }
 
@@ -508,19 +252,11 @@
 
     function updateBadge() {
         var badge = getBadge();
-        var count = state.snapshot && typeof state.snapshot.approvalsCount === 'number'
-            ? state.snapshot.approvalsCount
-            : 0;
-        if (!badge) {
-            return;
-        }
-        badge.textContent = 'HERMES · ' + count;
-        badge.setAttribute('aria-haspopup', 'dialog');
-        badge.setAttribute('aria-label', i4('drawer') + ' · ' + count);
+        if (!badge) return;
+        var count = checkpoints().filter(function(item) { return item.status === 'pending'; }).length;
+        badge.textContent = tr('project.approvals', 'Approvals') + ' · ' + count;
         badge.classList.toggle('has-pending', count > 0);
-        badge.title = count > 0
-            ? tr('project.badgePending', 'Pending approvals: {count}', { count: count })
-            : tr('project.badgeClear', 'No pending approvals');
+        badge.title = tr('project.badgePending', 'Pending approvals: {count}', { count: count });
     }
 
     function tasks() {
@@ -535,16 +271,8 @@
         return state.snapshot && Array.isArray(state.snapshot.workstreams) ? state.snapshot.workstreams : [];
     }
 
-    function sessions() {
-        return state.snapshot && Array.isArray(state.snapshot.sessions) ? state.snapshot.sessions : [];
-    }
-
     function checkpoints() {
         return state.snapshot && Array.isArray(state.snapshot.checkpoints) ? state.snapshot.checkpoints : [];
-    }
-
-    function skills() {
-        return state.snapshot && Array.isArray(state.snapshot.skills) ? state.snapshot.skills : [];
     }
 
     function runbooks() {
@@ -563,28 +291,8 @@
         return state.snapshot && Array.isArray(state.snapshot.artifacts) ? state.snapshot.artifacts : [];
     }
 
-    function runtimes() {
-        return state.snapshot && Array.isArray(state.snapshot.runtimes) ? state.snapshot.runtimes : [];
-    }
-
     function findById(items, id) {
         return (items || []).find(function(item) { return item.id === id; }) || null;
-    }
-
-    function defaultSkill() {
-        return skills()[0] || { id: 'code_change', name: tr('project.skillCodeChange', 'Code change'), defaultRunbookId: 'code_change_default', allowedRunbookIds: ['code_change_default'] };
-    }
-
-    function skillForId(skillId) {
-        return findById(skills(), skillId) || defaultSkill();
-    }
-
-    function runbookForSkill(skillId, preferredRunbookId) {
-        var skill = skillForId(skillId);
-        var allowed = Array.isArray(skill.allowedRunbookIds) ? skill.allowedRunbookIds : [];
-        var preferred = preferredRunbookId && allowed.indexOf(preferredRunbookId) !== -1 ? preferredRunbookId : '';
-        var runbookId = preferred || skill.defaultRunbookId || allowed[0] || '';
-        return findById(runbooks(), runbookId) || runbooks()[0] || { id: runbookId || 'code_change_default' };
     }
 
     function runbookForTask(task) {
@@ -909,10 +617,6 @@
         return latestPhaseAttempt(task && task.id, currentPhaseForTask(task));
     }
 
-    function sessionForPhaseAttempt(attempt) {
-        return attempt && attempt.sessionId ? findById(sessions(), attempt.sessionId) : null;
-    }
-
     function phaseStatusForTask(task, phase) {
         var current = currentPhaseForTask(task);
         if (!phase) {
@@ -962,21 +666,6 @@
             return tr('project.phaseStatusCurrent', 'Current');
         default:
             return tr('project.phaseStatusPending', 'Pending');
-        }
-    }
-
-    function toolRunStatusTone(status) {
-        switch (String(status || '').trim().toLowerCase()) {
-        case 'completed':
-            return 'success';
-        case 'running':
-            return 'info';
-        case 'failed':
-            return 'danger';
-        case 'cancelled':
-            return 'neutral';
-        default:
-            return 'neutral';
         }
     }
 
@@ -1045,588 +734,74 @@
             && taskMissingEvidence(task).length === 0;
     }
 
-    function getSelectedProject() {
-        return findById(projects(), state.selectedProjectId || (state.snapshot && state.snapshot.activeProjectId));
-    }
-
-    function getSelectedWorkstream() {
-        return findById(workstreams(), state.selectedWorkstreamId);
-    }
-
     function getSelectedTask() {
         return findById(tasks(), state.selectedTaskId);
     }
 
-    function getSelectedSession() {
-        return findById(sessions(), state.selectedSessionId);
-    }
+    // The v3 prototype opens task details as a modal dialog, not a page.
+    var taskDialog = null;
 
-    function tasksForWorkstream(workstreamId) {
-        return tasks().filter(function(task) {
-            return task.workstreamId === workstreamId;
-        });
-    }
-
-    function sessionsForTask(taskId) {
-        return sessions().filter(function(session) {
-            return session.taskId === taskId;
-        });
-    }
-
-    function workstreamsForProject(projectId) {
-        return workstreams().filter(function(item) {
-            return item.projectId === projectId;
-        });
-    }
-
-    function tasksForProject(projectId) {
-        return tasks().filter(function(item) {
-            return item.projectId === projectId;
-        });
-    }
-
-    function taskSortPriority(task) {
-        switch (String(task && task.state || '').trim().toLowerCase()) {
-        case 'running':
-            return 0;
-        case 'queued':
-            return 1;
-        case 'planned':
-            return 2;
-        case 'waiting_review':
-            return 3;
-        case 'waiting_human':
-            return 4;
-        case 'blocked':
-            return 5;
-        case 'execution_complete':
-            return 6;
-        default:
-            return 7;
+    function closeTaskDialog() {
+        if (taskDialog) {
+            taskDialog.close();
+            taskDialog.remove();
+            taskDialog = null;
         }
     }
 
-    function pickPreferredWorkstream(items) {
-        var list = (items || []).slice();
-        if (!list.length) {
-            return null;
-        }
-        list.sort(function(a, b) {
-            var aRunning = a.status === 'running' ? 0 : 1;
-            var bRunning = b.status === 'running' ? 0 : 1;
-            if (aRunning !== bRunning) {
-                return aRunning - bRunning;
-            }
-            return String(a.title || '').localeCompare(String(b.title || ''));
-        });
-        return list[0];
-    }
-
-    function pickPreferredTask(items) {
-        var list = (items || []).slice();
-        if (!list.length) {
-            return null;
-        }
-        list.sort(function(a, b) {
-            var byState = taskSortPriority(a) - taskSortPriority(b);
-            if (byState !== 0) {
-                return byState;
-            }
-            return String(a.title || '').localeCompare(String(b.title || ''));
-        });
-        return list[0];
-    }
-
-    function primaryExecutionSession(taskSessions) {
-        var list = taskSessions || [];
-        return list.find(function(item) {
-            return item && item.supportsAttach && item.terminalId;
-        }) || list.find(function(item) {
-            return item && item.state === 'active';
-        }) || list[0] || null;
-    }
-
-    function ensureSelection() {
-        var activeProject = state.snapshot && state.snapshot.activeProjectId;
-        var checkpointList = checkpoints();
-        if (!state.selectedProjectId) {
-            state.selectedProjectId = activeProject || '';
-        }
-        if (state.currentView === 'approvals' && !checkpointList.length) {
-            state.currentView = 'dashboard';
-        }
-        if (state.currentView === 'workstream' && !getSelectedWorkstream()) {
-            state.currentView = 'dashboard';
-            state.selectedWorkstreamId = '';
-        }
-        if (state.currentView === 'task' && !getSelectedTask()) {
-            state.currentView = state.selectedWorkstreamId ? 'workstream' : 'dashboard';
-            state.selectedTaskId = '';
-        }
-        if (state.currentView === 'session' && !getSelectedSession()) {
-            state.currentView = state.selectedTaskId ? 'task' : 'dashboard';
-            state.selectedSessionId = '';
-        }
-    }
-
-    function loadSnapshot(retryCount) {
-        if (!state.authenticated) {
-            return Promise.resolve(null);
-        }
-        retryCount = retryCount || 0;
-        state.loading = true;
-        state.error = '';
-        render();
-        return fetchJSON('/api/project-control').then(function(snapshot) {
-            state.snapshot = snapshot;
-            state.loading = false;
-            ensureSelection();
-            updateBadge();
-            render();
-            return snapshot;
-        }).catch(function(err) {
-            state.loading = false;
-            state.error = err.message || tr('project.loadFailed', 'Failed to load project panel');
-            render();
-            if (retryCount < 2) {
-                setTimeout(function() { loadSnapshot(retryCount + 1); }, 3000 * (retryCount + 1));
-            }
-        });
-    }
-
-    function resetWorkstreamWizard() {
-        state.creatingWorkstreamProjectId = '';
-        state.creatingWorkstreamTitle = '';
-        state.creatingWorkstreamScope = '';
-        state.creatingWorkstreamSaving = false;
-    }
-
-    function resetTaskWizard() {
-        state.creatingTaskWorkstreamId = '';
-        state.creatingTaskTitle = '';
-        state.creatingTaskGoal = '';
-        state.creatingTaskSelectedSkill = '';
-        state.creatingTaskRunbookId = '';
-        state.creatingTaskStep = 1;
-        state.creatingTaskSaving = false;
-        state.agentRecommendations = [];
-        state.agentRecommendationsLoading = false;
-    }
-
-    // C7: fetch the K3 tier recommendations (GET /api/project-control/agents)
-    // so the task wizard's review step can show which agentLabel to hand the
-    // work to. Failures are silent — the wizard still works without it.
-    function loadAgentRecommendations() {
-        state.agentRecommendationsLoading = true;
-        fetchJSON('/api/project-control/agents').then(function(payload) {
-            state.agentRecommendations = payload && Array.isArray(payload.recommendations) ? payload.recommendations : [];
-            state.agentRecommendationsLoading = false;
-            render();
-        }).catch(function() {
-            state.agentRecommendations = [];
-            state.agentRecommendationsLoading = false;
-            render();
-        });
-    }
-
-    function recommendedAgentLabelForRisk(riskLevel) {
-        var tiers = Array.isArray(state.agentRecommendations) ? state.agentRecommendations : [];
-        if (!tiers.length) {
-            return '';
-        }
-        var risk = String(riskLevel || 'medium').trim().toLowerCase();
-        // Risk -> tier mapping (review R1): critical/high work goes to the
-        // heavy tier (T3/T4), medium to T2, low to T1. Tiers come ordered
-        // T1..T4 from the probe; fall back to the first available.
-        var wanted = risk === 'critical' || risk === 'high' ? ['T3', 'T4'] : (risk === 'low' ? ['T1', 'T2'] : ['T2', 'T3']);
-        for (var i = 0; i < wanted.length; i++) {
-            for (var j = 0; j < tiers.length; j++) {
-                if (String(tiers[j].tier || '').trim() === wanted[i] && tiers[j].workerLabel) {
-                    return String(tiers[j].workerLabel);
-                }
-            }
-        }
-        for (var k = 0; k < tiers.length; k++) {
-            if (tiers[k].workerLabel) {
-                return String(tiers[k].workerLabel);
-            }
-        }
-        return '';
-    }
-
-    function renderAgentRecommendationRows(riskLevel) {
-        var tiers = Array.isArray(state.agentRecommendations) ? state.agentRecommendations : [];
-        if (state.agentRecommendationsLoading && !tiers.length) {
-            return '<div class="project-list-item muted">' + escapeHTML(tr('project.recommendationsLoading', 'Detecting available agents…')) + '</div>';
-        }
-        if (!tiers.length) {
-            return '<div class="project-list-item muted">' + escapeHTML(tr('project.noRecommendations', 'No agent recommendations available.')) + '</div>';
-        }
-        var recommended = recommendedAgentLabelForRisk(riskLevel);
-        return tiers.map(function(item) {
-            var workerLabel = String(item.workerLabel || '—');
-            var reviewerLabel = String(item.reviewerLabel || '—');
-            var isRecommended = recommended && workerLabel === recommended;
-            return '<div class="project-fact-row">'
-                + '<div class="project-fact-label">' + escapeHTML(String(item.tier || '?')) + '</div>'
-                + '<div class="project-fact-value">' + escapeHTML(workerLabel)
-                + (item.reviewerLabel && item.reviewerLabel !== workerLabel ? ' <span class="project-list-meta">/ ' + escapeHTML(reviewerLabel) + '</span>' : '')
-                + (isRecommended ? ' <span class="project-pill tone-success">' + escapeHTML(tr('project.recommended', 'Recommended')) + '</span>' : '')
-                + '</div></div>';
-        }).join('');
-    }
-
-    function focusWorkstreamWizard() {
-        window.setTimeout(function() {
-            var input = document.querySelector('[data-workstream-title-input]');
-            if (input) {
-                input.focus();
-            }
-        }, 0);
-    }
-
-    function focusTaskWizard() {
-        window.setTimeout(function() {
-            var selector = '[data-task-title-input]';
-            var input;
-            if (currentTaskWizardStep() === 2) {
-                selector = '[data-task-skill-select]';
-            } else if (currentTaskWizardStep() >= TASK_WIZARD_TOTAL_STEPS) {
-                selector = '[data-task-wizard-submit]';
-            }
-            input = document.querySelector(selector) || document.querySelector('[data-task-title-input]');
-            if (input) {
-                input.focus();
-            }
-        }, 0);
-    }
-
-    function clampTaskWizardStep(step) {
-        step = Number(step);
-        if (!isFinite(step)) {
-            return 1;
-        }
-        return Math.min(TASK_WIZARD_TOTAL_STEPS, Math.max(1, Math.round(step)));
-    }
-
-    function currentTaskWizardStep() {
-        return clampTaskWizardStep(state.creatingTaskStep || 1);
-    }
-
-    function normalizeTaskDetailTab(tabId) {
-        tabId = String(tabId || '').trim().toLowerCase();
-        return TASK_DETAIL_TABS.indexOf(tabId) !== -1 ? tabId : 'overview';
-    }
-
-    function currentTaskDetailTab() {
-        return normalizeTaskDetailTab(state.selectedTaskTab || 'overview');
-    }
-
-    function syncTaskWizardDraft(form) {
-        var titleInput = form ? form.querySelector('[name="title"]') : null;
-        var goalInput = form ? form.querySelector('[name="goal"]') : null;
-        var skillInput = form ? form.querySelector('[name="selectedSkill"]') : null;
-        var title = titleInput && titleInput.value ? titleInput.value.trim() : String(state.creatingTaskTitle || '').trim();
-        var goal = goalInput && goalInput.value ? goalInput.value.trim() : String(state.creatingTaskGoal || '').trim();
-        var selectedSkill = skillInput && skillInput.value ? skillInput.value.trim() : (state.creatingTaskSelectedSkill || defaultSkill().id || 'code_change');
-        var runbook = runbookForSkill(selectedSkill, state.creatingTaskRunbookId);
-
-        state.creatingTaskTitle = title;
-        state.creatingTaskGoal = goal;
-        state.creatingTaskSelectedSkill = selectedSkill;
-        state.creatingTaskRunbookId = runbook.id || '';
-        return {
-            title: title,
-            goal: goal,
-            selectedSkill: selectedSkill,
-            runbook: runbook
-        };
-    }
-
-    function validateTaskWizardStep(step, workstream, draft) {
-        if (!workstream) {
-            state.error = tr('project.createTaskFailed', 'Create task failed');
-            return false;
-        }
-        if (clampTaskWizardStep(step) >= 1 && !draft.title) {
-            state.error = tr('project.taskTitleRequired', 'Task title required.');
-            return false;
-        }
-        state.error = '';
-        return true;
-    }
-
-    function previousTaskWizardStep() {
-        state.creatingTaskStep = clampTaskWizardStep(currentTaskWizardStep() - 1);
-        state.error = '';
-        render();
-        focusTaskWizard();
-    }
-
-    function nextTaskWizardStep(form) {
-        var workstreamId = form ? (form.getAttribute('data-task-wizard') || state.creatingTaskWorkstreamId) : state.creatingTaskWorkstreamId;
-        var workstream = findById(workstreams(), workstreamId);
-        var draft = syncTaskWizardDraft(form);
-        if (!validateTaskWizardStep(currentTaskWizardStep(), workstream, draft)) {
-            render();
-            focusTaskWizard();
+    function renderTaskDialogContent(dialog) {
+        var task = getSelectedTask();
+        if (!task || !dialog || !dialog.isConnected) {
+            closeTaskDialog();
             return;
         }
-        state.creatingTaskStep = clampTaskWizardStep(currentTaskWizardStep() + 1);
-        if (state.creatingTaskStep >= TASK_WIZARD_TOTAL_STEPS && !state.agentRecommendations.length && !state.agentRecommendationsLoading) {
-            loadAgentRecommendations();
-        }
-        render();
-        focusTaskWizard();
-    }
-
-    function startWorkstreamWizard(projectId) {
-        if (!projectId) {
-            return;
-        }
-        resetTaskWizard();
-        if (state.creatingWorkstreamProjectId !== projectId) {
-            state.creatingWorkstreamTitle = '';
-            state.creatingWorkstreamScope = '';
-        }
-        state.creatingWorkstreamProjectId = projectId;
-        state.creatingWorkstreamSaving = false;
-        state.selectedProjectId = projectId;
-        state.selectedWorkstreamId = '';
-        state.selectedTaskId = '';
-        state.selectedSessionId = '';
-        state.currentView = 'dashboard';
-        state.error = '';
-        render();
-        focusWorkstreamWizard();
-    }
-
-    function openDashboard(projectId) {
-        resetWorkstreamWizard();
-        resetTaskWizard();
-        state.selectedProjectId = projectId || state.selectedProjectId;
-        state.selectedWorkstreamId = '';
-        state.selectedTaskId = '';
-        state.selectedSessionId = '';
-        state.currentView = 'dashboard';
-        render();
-    }
-
-    function openWorkstream(workstreamId) {
-        var workstream = findById(workstreams(), workstreamId);
-        resetWorkstreamWizard();
-        resetTaskWizard();
-        state.selectedWorkstreamId = workstreamId;
-        state.selectedTaskId = '';
-        state.selectedSessionId = '';
-        if (workstream) {
-            state.selectedProjectId = workstream.projectId;
-        }
-        state.currentView = 'workstream';
-        render();
+        var status = boardAPI().taskStatus(task, state.snapshot);
+        var label = tr('project.taskStatus.' + status, status);
+        var stamp = boardAPI().taskTimestamp(task, state.snapshot);
+        var project = findById(projects(), task.projectId);
+        dialog.querySelector('#board-task-dialog-body').innerHTML = renderTaskOverviewCards(task);
+        dialog.querySelector('#board-task-dialog-subtitle').textContent =
+            (project ? project.name : task.projectId || '') + ' · ' + label + ' · ' + boardRelative(stamp);
+        bindInteractions(dialog);
     }
 
     function openTask(taskId) {
-        var task = findById(tasks(), taskId);
-        resetWorkstreamWizard();
-        resetTaskWizard();
         state.selectedTaskId = taskId;
-        state.selectedTaskTab = 'overview';
-        state.selectedSessionId = '';
-        if (task) {
-            state.selectedProjectId = task.projectId;
-            state.selectedWorkstreamId = task.workstreamId;
-        }
-        state.currentView = 'task';
+        state.error = '';
         render();
-    }
-
-    function openSession(sessionId) {
-        var session = findById(sessions(), sessionId);
-        resetWorkstreamWizard();
-        resetTaskWizard();
-        state.selectedSessionId = sessionId;
-        if (session) {
-            state.selectedTaskId = session.taskId;
-            openTask(session.taskId);
-            state.selectedTaskTab = 'sessions';
-            state.selectedSessionId = sessionId;
+        if (!getSelectedTask()) {
+            return;
         }
-        state.currentView = 'session';
-        render();
+        if (!taskDialog) {
+            var dialog = document.createElement('dialog');
+            dialog.className = 'board-v3 board-detail-dialog';
+            dialog.setAttribute('aria-labelledby', 'board-task-dialog-title');
+            dialog.innerHTML = '<header class="dialog-header"><div><h2 id="board-task-dialog-title"></h2>'
+                + '<p class="board-detail-subtitle" id="board-task-dialog-subtitle"></p></div>'
+                + '<button type="button" class="btn small" data-task-dialog-close>' + escapeHTML(i4('close')) + '</button></header>'
+                + '<div class="dialog-body" id="board-task-dialog-body"></div>';
+            document.body.appendChild(dialog);
+            taskDialog = dialog;
+            dialog.querySelector('[data-task-dialog-close]').addEventListener('click', closeTaskDialog);
+            bindDialogDismiss(dialog, closeTaskDialog);
+        }
+        taskDialog.querySelector('#board-task-dialog-title').textContent = getSelectedTask().title || getSelectedTask().id;
+        renderTaskDialogContent(taskDialog);
+        if (!taskDialog.open) {
+            taskDialog.showModal();
+        }
     }
 
     function openApprovals() {
-        resetWorkstreamWizard();
-        resetTaskWizard();
         state.currentView = 'approvals';
-        state.selectedTaskId = '';
-        state.selectedSessionId = '';
+        state.error = '';
         render();
-    }
-
-    function loadEvents(filters, append) {
-        var params = new URLSearchParams();
-        var query;
-        state.eventsLoading = true;
-        state.eventsError = '';
-        state.currentEventFilters = Object.assign({}, filters || {});
-        if (!append) {
-            state.currentEvents = [];
-            state.currentEventsCursor = '';
-        }
-        render();
-        Object.keys(state.currentEventFilters || {}).forEach(function(key) {
-            var value = state.currentEventFilters[key];
-            if (value !== undefined && value !== null && String(value).trim() !== '') {
-                params.set(key, String(value).trim());
-            }
-        });
-        if (!params.has('limit')) {
-            params.set('limit', '20');
-        }
-        if (append && state.currentEventsCursor) {
-            params.set('cursor', state.currentEventsCursor);
-        }
-        query = params.toString();
-        return fetchJSON('/api/project-control/events' + (query ? '?' + query : ''))
-            .then(function(payload) {
-                var nextEvents = payload && Array.isArray(payload.events) ? payload.events : [];
-                state.currentEvents = append ? state.currentEvents.concat(nextEvents) : nextEvents;
-                state.currentEventsCursor = payload && payload.nextCursor ? payload.nextCursor : '';
-                state.eventsLoading = false;
-                render();
-                return state.currentEvents;
-            })
-            .catch(function(err) {
-                state.eventsLoading = false;
-                state.eventsError = err.message || tr('project.loadEventsFailed', 'Failed to load events');
-                render();
-            });
-    }
-
-    function loadTaskReplay(taskId) {
-        state.replayLoading = true;
-        state.currentReplay = null;
-        state.selectedReplayLane = 'all';
-        state.replaySearchQuery = '';
-        state.eventsError = '';
-        render();
-        return fetchJSON('/api/project-control/tasks/' + encodeURIComponent(taskId) + '/replay')
-            .then(function(payload) {
-                state.replayLoading = false;
-                state.currentReplay = payload || null;
-                state.currentView = 'replay';
-                render();
-                return payload;
-            })
-            .catch(function(err) {
-                state.replayLoading = false;
-                state.eventsError = err.message || tr('project.loadReplayFailed', 'Failed to load replay');
-                render();
-            });
-    }
-
-    function openProjectHistory(projectId) {
-        state.selectedProjectId = projectId || state.selectedProjectId;
-        state.selectedEventLane = 'all';
-        state.eventSearchQuery = '';
-        state.currentView = 'events';
-        loadEvents({ projectId: state.selectedProjectId, limit: 20 });
-    }
-
-    function openTaskHistory(taskId) {
-        var task = findById(tasks(), taskId);
-        if (task) {
-            state.selectedProjectId = task.projectId;
-            state.selectedWorkstreamId = task.workstreamId;
-            state.selectedTaskId = task.id;
-        }
-        state.selectedEventLane = 'all';
-        state.eventSearchQuery = '';
-        state.currentView = 'events';
-        loadEvents({ taskId: taskId, limit: 20 });
-    }
-
-    function metricNumericValue(value) {
-        var numeric = Number(value);
-        return isFinite(numeric) ? numeric : 0;
-    }
-
-    function renderMetric(label, value, tone, options) {
-        var numericValue = metricNumericValue(value);
-        var maxValue = options && options.maxValue ? options.maxValue : Math.max(numericValue, 1);
-        var barWidth = maxValue > 0 && numericValue > 0 ? Math.max(14, Math.round((numericValue / maxValue) * 100)) : 0;
-        var chip = options && options.chip ? options.chip : '';
-        return '<div class="project-metric ' + (tone ? 'tone-' + tone : '') + '">'
-            + '<div class="project-metric-topline">'
-            + '<span class="project-metric-mark tone-' + escapeHTML(tone || 'neutral') + '"></span>'
-            + (chip ? '<div class="project-metric-chip ' + (tone ? 'tone-' + tone : '') + '">' + escapeHTML(chip) + '</div>' : '')
-            + '</div>'
-            + '<div class="project-metric-value-row"><div class="project-metric-value">' + escapeHTML(value) + '</div>'
-            + '<div class="project-metric-label">' + escapeHTML(label) + '</div></div>'
-            + '<div class="project-metric-bar"><span class="project-metric-bar-fill ' + (tone ? 'tone-' + tone : '') + '" style="width:' + escapeHTML(String(barWidth)) + '%"></span></div>'
-            + '</div>';
-    }
-
-
-    function renderSelectOptions(options, currentValue) {
-        return options.map(function(option) {
-            var selected = option.value === currentValue ? ' selected' : '';
-            return '<option value="' + escapeHTML(option.value) + '"' + selected + '>' + escapeHTML(option.label) + '</option>';
-        }).join('');
-    }
-
-    function workstreamStatusOptions() {
-        return [
-            { value: 'planned', label: 'planned' },
-            { value: 'running', label: 'running' },
-            { value: 'waiting_human', label: 'waiting_human' },
-            { value: 'blocked', label: 'blocked' },
-            { value: 'failed', label: 'failed' },
-            { value: 'completed', label: 'completed' },
-            { value: 'archived', label: 'archived' }
-        ];
-    }
-
-    function taskStateOptions() {
-        return [
-            { value: 'planned', label: 'planned' },
-            { value: 'queued', label: 'queued' },
-            { value: 'running', label: 'running' },
-            { value: 'waiting_review', label: 'waiting_review' },
-            { value: 'waiting_human', label: 'waiting_human' },
-            { value: 'blocked', label: 'blocked' },
-            { value: 'failed', label: 'failed' },
-            { value: 'execution_complete', label: 'execution_complete' },
-            { value: 'archived', label: 'archived' }
-        ];
-    }
-
-    function acceptanceOptions() {
-        return [
-            { value: 'not_ready', label: 'not_ready' },
-            { value: 'ready_for_acceptance', label: 'ready_for_acceptance' },
-            { value: 'under_human_review', label: 'under_human_review' },
-            { value: 'accepted', label: 'accepted' },
-            { value: 'rejected', label: 'rejected' }
-        ];
-    }
-
-    function priorityOptions() {
-        return [
-            { value: 'low', label: 'low' },
-            { value: 'medium', label: 'medium' },
-            { value: 'high', label: 'high' },
-            { value: 'critical', label: 'critical' }
-        ];
     }
 
     function refreshSnapshotAfterConflict(message) {
         return fetchJSON('/api/project-control').then(function(snapshot) {
             state.snapshot = snapshot;
             state.error = message;
-            ensureSelection();
             updateBadge();
             render();
             return snapshot;
@@ -1640,7 +815,6 @@
     function refreshSnapshotSilently() {
         return fetchJSON('/api/project-control').then(function(snapshot) {
             state.snapshot = snapshot;
-            ensureSelection();
             updateBadge();
             render();
             return snapshot;
@@ -1668,38 +842,6 @@
                 }
             });
         }, TOOL_RUN_REFRESH_INTERVAL_MS);
-    }
-
-    function updateWorkstreamInline(workstreamId, action) {
-        var workstream = findById(workstreams(), workstreamId);
-        if (!workstream) {
-            return;
-        }
-        state.updatingWorkstreamId = workstreamId;
-        state.error = '';
-        render();
-        fetchJSON('/api/project-control/workstreams/' + encodeURIComponent(workstreamId), {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                expectedRowVersion: workstream.rowVersion,
-                action: action
-            })
-        }).then(function(snapshot) {
-            state.updatingWorkstreamId = '';
-            state.snapshot = snapshot;
-            openWorkstream(workstreamId);
-            updateBadge();
-            render();
-        }).catch(function(err) {
-            state.updatingWorkstreamId = '';
-            if (err && err.status === 409) {
-                refreshSnapshotAfterConflict((err.message || tr('project.updateWorkstreamFailed', 'Update workstream failed')) + ' ' + tr('project.reloadedLatest', 'Reloaded latest state.'));
-                return;
-            }
-            state.error = err.message || tr('project.updateWorkstreamFailed', 'Update workstream failed');
-            render();
-        });
     }
 
     function updateTaskInline(taskId, action, extraPayload) {
@@ -1751,30 +893,6 @@
             var disabled = updating || button.disabled ? ' disabled' : '';
             return '<button type="button" class="project-inline-btn' + tone + '" ' + dataAttr + '="' + escapeHTML(entityId) + '" data-action="' + escapeHTML(button.action) + '"' + disabled + '>' + escapeHTML(button.label) + '</button>';
         }).join('');
-    }
-
-    function recommendedWorkstreamActions(workstream) {
-        switch (workstream.status) {
-        case 'planned':
-            return [{ action: 'start_execution', label: tr('project.actionStartWorkstream', 'Start workstream'), tone: 'primary' }];
-        case 'running':
-            return [
-                { action: 'request_human_input', label: tr('project.actionNeedInput', 'Need input') },
-                { action: 'mark_blocked', label: tr('project.actionMarkBlocked', 'Mark blocked') },
-                { action: 'mark_completed', label: tr('project.actionMarkDone', 'Mark done'), tone: 'primary' }
-            ];
-        case 'waiting_human':
-            return [
-                { action: 'resume_execution', label: tr('project.actionResumeWorkstream', 'Resume workstream'), tone: 'primary' },
-                { action: 'mark_blocked', label: tr('project.actionMarkBlocked', 'Mark blocked') }
-            ];
-        case 'blocked':
-            return [{ action: 'resume_execution', label: tr('project.actionResumeWorkstream', 'Resume workstream'), tone: 'primary' }];
-        case 'completed':
-            return [{ action: 'archive', label: tr('project.actionArchiveWorkstream', 'Archive workstream') }];
-        default:
-            return [];
-        }
     }
 
     function recommendedTaskActions(task) {
@@ -1840,20 +958,6 @@
         }
     }
 
-    function renderWorkstreamInlineControls(workstream) {
-        var updating = state.updatingWorkstreamId === workstream.id;
-        var actions = recommendedWorkstreamActions(workstream);
-        if (!actions.length && !updating) {
-            return '';
-        }
-        return '<div class="project-inline-controls" data-workstream-controls="' + escapeHTML(workstream.id) + '">'
-            + '<div class="project-action-group">'
-            + renderActionButtons(actions, 'data-update-workstream', workstream.id, updating)
-            + (updating ? '<span class="project-inline-meta">' + escapeHTML(tr('project.saving', 'Saving…')) + '</span>' : '')
-            + '</div>'
-            + '</div>';
-    }
-
     function renderTaskInlineControls(task) {
         var updating = state.updatingTaskId === task.id;
         var actions = recommendedTaskActions(task);
@@ -1865,160 +969,6 @@
             + renderActionButtons(actions, 'data-update-task', task.id, updating)
             + (updating ? '<span class="project-inline-meta">' + escapeHTML(tr('project.saving', 'Saving…')) + '</span>' : '')
             + '</div>'
-            + '</div>';
-    }
-
-    function eventLaneForAction(action) {
-        action = String(action || '').trim();
-        if (action.indexOf('final_acceptance_') === 0 || action.indexOf('archive_override_') === 0 || action === 'decision_made') {
-            return 'decision';
-        }
-        if (action === 'checkpoint_raised' || action === 'checkpoint_resolved' || action === 'checkpoint_expired' || action.indexOf('checkpoint_') === 0) {
-            return 'checkpoint';
-        }
-        if (action.indexOf('acceptance_') === 0 || action.indexOf('ready_for_acceptance') !== -1) {
-            return 'acceptance';
-        }
-        return 'execution';
-    }
-
-    function laneLabel(lane) {
-        switch (lane) {
-        case 'decision':
-            return tr('project.laneDecision', 'Decision lane');
-        case 'checkpoint':
-            return tr('project.laneCheckpoint', 'Checkpoint lane');
-        case 'acceptance':
-            return tr('project.laneAcceptance', 'Acceptance lane');
-        default:
-            return tr('project.laneExecution', 'Execution lane');
-        }
-    }
-
-    function renderLanePill(lane) {
-        return '<span class="project-pill lane-' + escapeHTML(lane) + '">' + escapeHTML(laneLabel(lane)) + '</span>';
-    }
-
-    function groupEventsByLane(events) {
-        var groups = [];
-        (events || []).forEach(function(event) {
-            var lane = eventLaneForAction(event.action);
-            var last = groups.length ? groups[groups.length - 1] : null;
-            if (!last || last.lane !== lane) {
-                last = { lane: lane, items: [] };
-                groups.push(last);
-            }
-            last.items.push(event);
-        });
-        return groups;
-    }
-
-    function laneOptions() {
-        return [
-            { value: 'all', label: tr('project.filterAllLanes', 'All lanes') },
-            { value: 'execution', label: laneLabel('execution') },
-            { value: 'acceptance', label: laneLabel('acceptance') },
-            { value: 'checkpoint', label: laneLabel('checkpoint') },
-            { value: 'decision', label: laneLabel('decision') }
-        ];
-    }
-
-    function filterEventsByLane(events, selectedLane) {
-        if (!selectedLane || selectedLane === 'all') {
-            return events || [];
-        }
-        return (events || []).filter(function(event) {
-            return eventLaneForAction(event.action) === selectedLane;
-        });
-    }
-
-    function filterEventsByQuery(events, query) {
-        query = String(query || '').trim().toLowerCase();
-        if (!query) {
-            return events || [];
-        }
-        return (events || []).filter(function(event) {
-            var haystack = [event.action, event.detail, event.actor].join(' ').toLowerCase();
-            return haystack.indexOf(query) !== -1;
-        });
-    }
-
-    function filterTransitionsByLane(transitions, selectedLane) {
-        if (!selectedLane || selectedLane === 'all') {
-            return transitions || [];
-        }
-        return (transitions || []).filter(function(item) {
-            var lane = item.type === 'decision' || item.type === 'decision_recorded'
-                ? 'decision'
-                : (item.type === 'acceptance_state' ? 'acceptance' : (item.type === 'checkpoint_resolution' ? 'checkpoint' : 'execution'));
-            return lane === selectedLane;
-        });
-    }
-
-    function filterTransitionsByQuery(transitions, query) {
-        query = String(query || '').trim().toLowerCase();
-        if (!query) {
-            return transitions || [];
-        }
-        return (transitions || []).filter(function(item) {
-            var haystack = [item.type, item.from, item.to, item.reason].join(' ').toLowerCase();
-            return haystack.indexOf(query) !== -1;
-        });
-    }
-
-    function renderLaneFilterControls(kind, selectedLane) {
-        return '<div class="project-lane-filters">'
-            + laneOptions().map(function(option) {
-                var active = option.value === selectedLane ? ' active' : '';
-                return '<button type="button" class="project-inline-btn project-filter-btn' + active + '" data-lane-filter-kind="' + escapeHTML(kind) + '" data-lane-filter="' + escapeHTML(option.value) + '">' + escapeHTML(option.label) + '</button>';
-            }).join('')
-            + '</div>';
-    }
-
-    function renderTextFilterControl(kind, value) {
-        var placeholder = kind === 'events' ? tr('project.searchHistory', 'Search history…') : tr('project.searchReplay', 'Search replay…');
-        return '<div class="project-text-filter">'
-            + '<input type="search" class="project-filter-input" data-filter-input-kind="' + escapeHTML(kind) + '" value="' + escapeHTML(value || '') + '" placeholder="' + escapeHTML(placeholder) + '">'
-            + '</div>';
-    }
-
-    function renderLaneEventCard(event, index, query) {
-        var lane = eventLaneForAction(event.action);
-        return '<div class="project-lane-event lane-' + escapeHTML(lane) + '">'
-            + '<div class="project-lane-event-header">'
-            + renderLanePill(lane)
-            + '<span class="project-list-title">' + highlightHTML(String(index + 1) + '. ' + event.action, query) + '</span>'
-            + '</div>'
-            + '<div>' + highlightHTML(event.detail, query) + '</div>'
-            + '<div class="project-list-meta">' + highlightHTML(event.actor + ' • ' + formatTime(event.timestamp), query) + '</div>'
-            + '</div>';
-    }
-
-    function renderLaneGroups(events, query) {
-        return groupEventsByLane(events).map(function(group) {
-            return '<div class="project-lane-section lane-' + escapeHTML(group.lane) + '">'
-                + '<div class="project-lane-header">'
-                + renderLanePill(group.lane)
-                + '<span class="project-list-meta">' + escapeHTML(eventCountText(group.items.length)) + '</span>'
-                + '</div>'
-                + group.items.map(function(event, index) {
-                    return renderLaneEventCard(event, index, query);
-                }).join('')
-                + '</div>';
-        }).join('');
-    }
-
-    function renderTransitionCard(item, query) {
-        var lane = item.type === 'decision' || item.type === 'decision_recorded'
-            ? 'decision'
-            : (item.type === 'acceptance_state' ? 'acceptance' : (item.type === 'checkpoint_resolution' ? 'checkpoint' : 'execution'));
-        return '<div class="project-lane-event lane-' + escapeHTML(lane) + '">'
-            + '<div class="project-lane-event-header">'
-            + renderLanePill(lane)
-            + '<span class="project-list-title">' + highlightHTML(item.type, query) + '</span>'
-            + '</div>'
-            + '<div>' + highlightHTML(item.from + ' → ' + item.to, query) + '</div>'
-            + '<div class="project-list-meta">' + highlightHTML(item.reason, query) + '</div>'
             + '</div>';
     }
 
@@ -2203,188 +1153,8 @@
             + '</div>';
     }
 
-    // Dispatch pipeline (K4/C7): the task's dispatch state, who currently
-    // holds the lease, and how long that lease has left. Lease expiry is
-    // derived from the latest claim timeline event carrying an ISO timestamp
-    // in its detail text; when no such event exists the row falls back to
-    // dispatchState + claimedBy only.
-    function taskLeaseRemainingSeconds(task) {
-        if (!task || String(task.dispatchState || '') !== 'claimed') {
-            return null;
-        }
-        var detail = '';
-        var timeline = Array.isArray(task.timeline) ? task.timeline : [];
-        for (var i = timeline.length - 1; i >= 0; i--) {
-            var action = String(timeline[i].action || '');
-            if (action === 'checkpoint_task_claimed' || action === 'checkpoint_task_lease_heartbeat') {
-                detail = String(timeline[i].detail || '');
-                break;
-            }
-        }
-        var match = detail.match(/\b(\d{4}-\d{2}-\d{2}T[0-9:.]+Z)\b/);
-        if (!match) {
-            return null;
-        }
-        var expires = new Date(match[1]);
-        if (isNaN(expires.getTime())) {
-            return null;
-        }
-        return Math.max(0, Math.round((expires.getTime() - Date.now()) / 1000));
-    }
-
-    function dispatchStateLabel(value) {
-        switch (String(value || '').trim()) {
-        case 'none':
-            return tr('project.dispatchStateNone', 'Not dispatchable');
-        case 'awaiting_approval':
-            return tr('project.dispatchStateAwaiting', 'Awaiting approval');
-        case 'ready':
-            return tr('project.dispatchStateReady', 'Ready to pick up');
-        case 'claimed':
-            return tr('project.dispatchStateClaimed', 'Picked up by agent');
-        case 'released':
-            return tr('project.dispatchStateReleased', 'Released');
-        case 'done':
-            return tr('project.dispatchStateDone', 'Done');
-        default:
-            return humanizeToken(value);
-        }
-    }
-
-    function renderTaskDispatchCard(task) {
-        if (!task) {
-            return '';
-        }
-        var dispatchState = String(task.dispatchState || '').trim();
-        if (!dispatchState) {
-            return '';
-        }
-        var claimedBy = String(task.claimedByRuntimeId || '').trim();
-        var leaseSeconds = taskLeaseRemainingSeconds(task);
-        var tone = 'neutral';
-        if (dispatchState === 'ready') {
-            tone = 'success';
-        } else if (dispatchState === 'claimed') {
-            tone = 'info';
-        } else if (dispatchState === 'awaiting_approval') {
-            tone = 'warning';
-        }
-        var rows = '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.dispatchState', 'Dispatch state')) + '</div>'
-            + '<div class="project-fact-value">' + escapeHTML(dispatchStateLabel(dispatchState)) + '</div></div>';
-        if (claimedBy) {
-            rows += '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.claimedBy', 'Picked up by')) + '</div>'
-                + '<div class="project-fact-value">' + escapeHTML(claimedBy) + '</div></div>';
-        }
-        if (leaseSeconds !== null) {
-            rows += '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(tr('project.leaseRemaining', 'Pickup validity remaining')) + '</div>'
-                + '<div class="project-fact-value">' + escapeHTML(tr('project.leaseSeconds', '{count} s', { count: leaseSeconds })) + '</div></div>';
-        }
-        return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.dispatchTitle', 'Agent dispatch')) + '</h3>'
-            + '<div class="project-approval-status-row tone-' + escapeHTML(tone) + '">'
-            + '<span class="project-pill tone-' + escapeHTML(tone) + '">' + escapeHTML(dispatchStateLabel(dispatchState)) + '</span></div>'
-            + '<div class="project-fact-list compact">' + rows + '</div>'
-            + '</div>';
-    }
-
-    function taskApprovalBadges(task) {
-        var badges = [];
-        var dispatch = currentTaskApprovalState(task, 'dispatch');
-        var finalAcceptance = currentTaskApprovalState(task, 'final_acceptance');
-        var archiveOverride = currentTaskApprovalState(task, 'archive_override');
-
-        if (dispatch) {
-            if (dispatch.actions && dispatch.actions.length) {
-                badges.push({ className: 'approval-pending', label: tr('project.dispatchCheckpointPending', 'Dispatch pending') });
-            } else if (task && task.dispatchState === 'ready') {
-                badges.push({ className: 'approval-approved', label: tr('project.dispatchReady', 'Dispatch ready') });
-            }
-        }
-
-        if (finalAcceptance) {
-            if (finalAcceptance.actions && finalAcceptance.actions.length) {
-                badges.push({ className: 'approval-pending', label: tr('project.finalAcceptancePending', 'Final acceptance pending') });
-            } else if (task && task.acceptanceStatus === 'accepted') {
-                badges.push({ className: 'approval-approved', label: tr('project.acceptanceAccepted', 'Accepted') });
-            } else if (task && task.acceptanceStatus === 'rejected') {
-                badges.push({ className: 'approval-rejected', label: tr('project.finalAcceptanceRejected', 'Final acceptance rejected') });
-            }
-        }
-
-        if (archiveOverride) {
-            if (archiveOverride.actions && archiveOverride.actions.length) {
-                badges.push({ className: 'approval-pending', label: tr('project.archiveOverridePending', 'Archive override pending') });
-            } else if (task && task.archiveDecisionId) {
-                badges.push({
-                    className: archiveOverride.statusLabel === tr('project.approved', 'Approved') ? 'approval-approved' : 'approval-rejected',
-                    label: tr('project.archiveOverrideStatus', 'Archive override {status}', { status: String(archiveOverride.statusLabel || '').toLowerCase() })
-                });
-            }
-        }
-
-        return badges;
-    }
-
-    function renderTaskApprovalBadges(task) {
-        var badges = taskApprovalBadges(task);
-        if (!badges.length) {
-            return '';
-        }
-        return badges.map(function(item) {
-            return '<span class="project-pill ' + escapeHTML(item.className) + '">' + escapeHTML(item.label) + '</span>';
-        }).join('');
-    }
-
     function decisions() {
         return state.snapshot && Array.isArray(state.snapshot.decisions) ? state.snapshot.decisions : [];
-    }
-
-    function decisionProjectId(item) {
-        var taskId = item && (item.taskId || item.taskID);
-        var task = taskId ? findById(tasks(), taskId) : null;
-        return item && item.projectId ? item.projectId : (task ? task.projectId : '');
-    }
-
-    function pendingApprovalCountByKind(kind) {
-        return checkpoints().filter(function(item) {
-            return item.kind === kind && item.status === 'pending';
-        }).length;
-    }
-
-    function recentDecisionSummaries(limit, projectId) {
-        var items = decisions().filter(function(item) {
-            return !projectId || decisionProjectId(item) === projectId;
-        }).slice();
-        items.sort(function(a, b) {
-            var at = String(a.timestamp || '');
-            var bt = String(b.timestamp || '');
-            if (at === bt) {
-                return String(b.id || '').localeCompare(String(a.id || ''));
-            }
-            return bt.localeCompare(at);
-        });
-        return items.slice(0, limit || 3);
-    }
-
-    function renderApprovalOverviewCard(projectId) {
-        var pending = checkpoints().filter(function(item) {
-            return item.status === 'pending' && (!projectId || checkpointProjectId(item) === projectId);
-        });
-        var resolved = checkpoints().filter(function(item) {
-            return item.status !== 'pending' && (!projectId || checkpointProjectId(item) === projectId);
-        });
-        var recent = recentDecisionSummaries(3, projectId);
-        return '<div class="project-card-list project-card-visual project-approval-snapshot"><h3>' + escapeHTML(tr('project.approvalOverview', 'Approvals')) + '</h3>'
-            + '<div class="project-snapshot-count tone-' + escapeHTML(pending.length ? 'warning' : 'success') + '"><strong>' + escapeHTML(String(pending.length)) + '</strong><span>' + escapeHTML(pending.length ? tr('project.statusReview', 'Review') : tr('project.statusClear', 'Clear')) + '</span></div>'
-            + '<div class="project-fact-list compact">'
-            + (recent.length
-                ? recent.map(function(item) {
-                    return '<div class="project-fact-row"><div class="project-fact-label">' + escapeHTML(humanizeToken(item.decisionType || 'decision')) + '</div>'
-                        + '<div class="project-fact-value">' + escapeHTML(compactText(item.summary || '—', '', 78)) + '</div></div>';
-                }).join('')
-                : '<div class="project-list-item muted">' + escapeHTML(tr('project.noRecentDecisions', 'No decisions recorded yet.')) + '</div>')
-            + '</div>'
-            + '<div class="project-action-group"><button type="button" class="project-inline-btn" data-open-approvals="1">' + escapeHTML(tr('project.openApprovals', 'Open')) + '</button></div>'
-            + '</div>';
     }
 
     function toneFromText(text) {
@@ -2402,224 +1172,6 @@
             return 'success';
         }
         return 'info';
-    }
-
-    function renderRuntimeSignals(lines) {
-        var items = Array.isArray(lines) ? lines.slice(0, 3) : [];
-        if (!items.length) {
-            return '<div class="project-list-item muted">' + escapeHTML(tr('project.noRuntimeSignals', 'No runtime signals yet.')) + '</div>';
-        }
-        return '<div class="project-signal-list">'
-            + items.map(function(line, index) {
-                var tone = toneFromText(line);
-                return '<div class="project-signal-row tone-' + escapeHTML(tone) + '">'
-                    + '<span class="project-sidebar-signal tone-' + escapeHTML(tone) + '"></span>'
-                    + '<span class="project-signal-copy">' + escapeHTML(compactText(line, '', 76)) + '</span>'
-                    + '<span class="project-signal-index">' + escapeHTML(String(index + 1)) + '</span>'
-                    + '</div>';
-            }).join('')
-            + '</div>';
-    }
-
-    function renderTimelineStream(lines) {
-        var items = Array.isArray(lines) ? lines.slice(0, 3) : [];
-        if (!items.length) {
-            return '<div class="project-list-item muted">' + escapeHTML(tr('project.noTimeline', 'No timeline entries yet.')) + '</div>';
-        }
-        return '<div class="project-timeline-stream">'
-            + items.map(function(line, index) {
-                var tone = toneFromText(line);
-                return '<div class="project-timeline-item tone-' + escapeHTML(tone) + '">'
-                    + '<div class="project-timeline-marker"><span class="project-timeline-dot tone-' + escapeHTML(tone) + '"></span></div>'
-                    + '<div class="project-timeline-body"><div class="project-timeline-label">' + escapeHTML(index === 0 ? tr('project.timelineLatest', 'Latest') : tr('project.timelineEarlier', 'Earlier')) + '</div>'
-                    + '<div class="project-timeline-copy">' + escapeHTML(compactText(line, '', 78)) + '</div></div>'
-                    + '</div>';
-            }).join('')
-            + '</div>';
-    }
-
-    function acceptanceTone(status) {
-        var value = String(status || '').trim().toLowerCase();
-        if (value === 'accepted' || value === 'approved' || value === 'complete') {
-            return 'success';
-        }
-        if (value === 'rejected' || value === 'declined') {
-            return 'danger';
-        }
-        if (value === 'pending' || value === 'review' || value === 'needs_review' || value === 'under_human_review') {
-            return 'warning';
-        }
-        return 'neutral';
-    }
-
-    function riskTone(level) {
-        var value = String(level || '').trim().toLowerCase();
-        if (value === 'high' || value === 'critical') {
-            return 'danger';
-        }
-        if (value === 'medium') {
-            return 'warning';
-        }
-        if (value === 'low') {
-            return 'success';
-        }
-        return 'neutral';
-    }
-
-    function renderSummaryStat(label, value, tone, extraClass) {
-        var displayValue = (value === 0 || value === '0') ? '0' : (value || '—');
-        return '<div class="project-summary-stat ' + (tone ? 'tone-' + tone : 'tone-neutral') + (extraClass ? ' ' + extraClass : '') + '">'
-            + '<div class="project-summary-stat-label">' + escapeHTML(label) + '</div>'
-            + '<div class="project-summary-stat-value">' + escapeHTML(displayValue) + '</div>'
-            + '</div>';
-    }
-
-    function renderTaskSummaryGrid(task) {
-        return '<div class="project-task-summary-grid">'
-            + renderSummaryStat(tr('project.state', 'State'), humanizeTaskState(task.state), statusTone(task.state))
-            + renderSummaryStat(tr('project.acceptance', 'Acceptance'), humanizeAcceptanceStatus(task.acceptanceStatus), acceptanceTone(task.acceptanceStatus))
-            + renderSummaryStat(tr('project.risk', 'Risk'), humanizeRisk(task.riskLevel), riskTone(task.riskLevel))
-            + renderSummaryStat(tr('project.nextStep', 'Next step'), taskActionSummary(task), 'info', 'wide')
-            + '</div>';
-    }
-
-    function renderWorkstreamSummaryGrid(workstream, taskList) {
-        var waiting = taskList.filter(function(item) {
-            return item.state === 'waiting_human' || item.state === 'waiting_review';
-        }).length;
-        var blocked = taskList.filter(function(item) {
-            return item.state === 'blocked' || item.state === 'failed';
-        }).length;
-        var nextTask = pickPreferredTask(taskList);
-        return '<div class="project-task-summary-grid">'
-            + renderSummaryStat(tr('project.state', 'State'), humanizeWorkstreamStatus(workstream.status), statusTone(workstream.status))
-            + renderSummaryStat(tr('project.tasks', 'Tasks'), String(taskList.length), taskList.length ? 'info' : 'neutral')
-            + renderSummaryStat(tr('project.attention', 'Attention'), String(waiting + blocked), waiting + blocked ? 'warning' : 'success')
-            + renderSummaryStat(tr('project.nextStep', 'Next step'), nextTask ? nextTask.title : tr('project.addFirstTask', 'Add the first task'), nextTask ? 'info' : 'neutral', 'wide')
-            + '</div>';
-    }
-
-    function renderGuideStep(number, title, copy, actionHTML) {
-        return '<div class="project-guide-step">'
-            + '<div class="project-guide-step-number">' + escapeHTML(String(number)) + '</div>'
-            + '<div class="project-guide-step-body"><div class="project-card-title">' + escapeHTML(title) + '</div>'
-            + '<div class="project-card-copy">' + escapeHTML(copy) + '</div>'
-            + (actionHTML ? '<div class="project-guide-step-actions">' + actionHTML + '</div>' : '')
-            + '</div></div>';
-    }
-
-    function renderWorkstreamWizard(project) {
-        var projectId = project && project.id ? project.id : '';
-        var disabled = state.creatingWorkstreamSaving ? ' disabled' : '';
-        return '<form class="project-card-list project-workstream-wizard" data-workstream-wizard="' + escapeHTML(projectId) + '">'
-            + '<h3>' + escapeHTML(tr('project.newWorkstream', 'New workstream')) + '</h3>'
-            + '<div class="project-wizard-fields">'
-            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.workstreamName', 'Name')) + '</span>'
-            + '<input type="text" name="title" maxlength="120" data-workstream-title-input value="' + escapeHTML(state.creatingWorkstreamTitle || '') + '" placeholder="' + escapeHTML(tr('project.workstreamNamePlaceholder', 'Name')) + '"' + disabled + '></label>'
-            + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.workstreamScope', 'Scope')) + '</span>'
-            + '<input type="text" name="scopeSummary" maxlength="220" data-workstream-scope-input value="' + escapeHTML(state.creatingWorkstreamScope || '') + '" placeholder="' + escapeHTML(tr('project.workstreamScopePlaceholder', 'Scope (optional)')) + '"' + disabled + '></label>'
-            + '</div>'
-            + '<div class="project-action-group">'
-            + '<button type="button" class="project-inline-btn" data-cancel-workstream-wizard="1"' + disabled + '>' + escapeHTML(tr('project.cancel', 'Cancel')) + '</button>'
-            + '<button type="submit" class="project-inline-btn primary"' + disabled + '>' + escapeHTML(state.creatingWorkstreamSaving ? tr('project.saving', 'Saving...') : tr('project.create', 'Create')) + '</button>'
-            + '</div>'
-            + '</form>';
-    }
-
-    function renderTaskWizard(workstream) {
-        var workstreamId = workstream && workstream.id ? workstream.id : '';
-        var selectedSkillId = state.creatingTaskSelectedSkill || (defaultSkill().id || 'code_change');
-        var selectedSkill = skillForId(selectedSkillId);
-        var selectedRunbook = runbookForSkill(selectedSkill.id, state.creatingTaskRunbookId);
-        var disabled = state.creatingTaskSaving ? ' disabled' : '';
-        var skillOptions = skills().length ? skills() : [defaultSkill()];
-        var currentStep = currentTaskWizardStep();
-        var stepModels = [
-            {
-                title: tr('project.taskWizardStep1', 'Define task'),
-                copy: tr('project.taskWizardStep1Copy', 'Name the task and describe the outcome.')
-            },
-            {
-                title: tr('project.taskWizardStep2', 'Execution setup'),
-                copy: tr('project.taskWizardStep2Copy', 'Choose the skill and runbook.')
-            },
-            {
-                title: tr('project.taskWizardStep3', 'Review'),
-                copy: tr('project.taskWizardStep3Copy', 'Confirm the summary before creating.')
-            }
-        ];
-        var contentHTML = '';
-
-        if (currentStep === 1) {
-            contentHTML = '<div class="project-task-wizard-stage">'
-                + '<div class="project-card-title">' + escapeHTML(stepModels[0].title) + '</div>'
-                + '<div class="project-card-copy">' + escapeHTML(stepModels[0].copy) + '</div>'
-                + '<div class="project-wizard-fields">'
-                + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.taskTitle', 'Title')) + '</span>'
-                + '<input type="text" name="title" maxlength="140" data-task-title-input value="' + escapeHTML(state.creatingTaskTitle || '') + '" placeholder="' + escapeHTML(tr('project.taskTitlePlaceholder', 'Task title')) + '"' + disabled + '></label>'
-                + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.taskGoal', 'Goal')) + '</span>'
-                + '<input type="text" name="goal" maxlength="260" data-task-goal-input value="' + escapeHTML(state.creatingTaskGoal || '') + '" placeholder="' + escapeHTML(tr('project.taskGoalPlaceholder', 'Goal (optional)')) + '"' + disabled + '></label>'
-                + '</div>'
-                + '</div>';
-        } else if (currentStep === 2) {
-            contentHTML = '<div class="project-task-wizard-stage">'
-                + '<div class="project-card-title">' + escapeHTML(stepModels[1].title) + '</div>'
-                + '<div class="project-card-copy">' + escapeHTML(stepModels[1].copy) + '</div>'
-                + '<div class="project-wizard-fields">'
-                + '<label class="project-wizard-field"><span>' + escapeHTML(tr('project.skill', 'Skill')) + '</span>'
-                + '<select name="selectedSkill" data-task-skill-select' + disabled + '>'
-                + skillOptions.map(function(skill) {
-                    var selected = skill.id === selectedSkill.id ? ' selected' : '';
-                    return '<option value="' + escapeHTML(skill.id) + '"' + selected + '>' + escapeHTML(humanizeSkill(skill)) + '</option>';
-                }).join('')
-                + '</select></label>'
-                + '<div class="project-wizard-meta"><span>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</span><strong>' + escapeHTML(selectedRunbook.id || tr('project.none', 'None')) + '</strong></div>'
-                + '</div>'
-                + '</div>';
-        } else {
-            contentHTML = '<div class="project-task-wizard-stage">'
-                + '<div class="project-card-title">' + escapeHTML(tr('project.taskWizardReviewTitle', 'Ready to create')) + '</div>'
-                + '<div class="project-card-copy">' + escapeHTML(tr('project.taskWizardReviewCopy', 'Review the summary below, then create the task.')) + '</div>'
-                + '<div class="project-task-review-grid">'
-                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.taskWizardWorkstream', 'Workstream')) + '</span><strong>' + escapeHTML(workstream && workstream.title ? workstream.title : tr('project.none', 'None')) + '</strong></div>'
-                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.taskTitle', 'Title')) + '</span><strong>' + escapeHTML(state.creatingTaskTitle || tr('project.none', 'None')) + '</strong></div>'
-                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.taskGoal', 'Goal')) + '</span><strong>' + escapeHTML(state.creatingTaskGoal || tr('project.none', 'None')) + '</strong></div>'
-                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.skill', 'Skill')) + '</span><strong>' + escapeHTML(humanizeSkill(selectedSkill)) + '</strong></div>'
-                + '<div class="project-task-review-item"><span>' + escapeHTML(tr('project.runbook', 'Runbook')) + '</span><strong>' + escapeHTML(selectedRunbook.id || tr('project.none', 'None')) + '</strong></div>'
-                + '</div>'
-                + '<div class="project-wizard-agent-recommendations"><div class="project-card-title">' + escapeHTML(tr('project.agentRecommendations', 'Recommended agents')) + '</div>'
-                + '<div class="project-card-copy">' + escapeHTML(tr('project.agentRecommendationsCopy', 'Agent tiers detected on this machine; the highlighted tier fits the task risk level.')) + '</div>'
-                + '<div class="project-fact-list compact">' + renderAgentRecommendationRows('medium') + '</div>'
-                + '</div>'
-                + '</div>';
-        }
-
-        return '<form class="project-card-list project-workstream-wizard project-task-wizard project-task-wizard-card" data-task-wizard="' + escapeHTML(workstreamId) + '">'
-            + '<div class="project-task-wizard-header">'
-            + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.taskWizardKicker', 'Task wizard')) + '</div>'
-            + '<h3>' + escapeHTML(tr('project.newTask', 'New task')) + '</h3>'
-            + '<div class="project-card-copy">' + escapeHTML(tr('project.taskWizardIntro', 'Set up one clear next step for this workstream.')) + '</div></div>'
-            + '<div class="project-task-wizard-context"><span>' + escapeHTML(tr('project.taskWizardWorkstream', 'Workstream')) + '</span><strong>' + escapeHTML(workstream && workstream.title ? workstream.title : '') + '</strong></div>'
-            + '</div>'
-            + '<div class="project-task-wizard-steps">'
-            + stepModels.map(function(step, index) {
-                var stepNumber = index + 1;
-                var stepClass = stepNumber === currentStep ? ' is-active' : (stepNumber < currentStep ? ' is-complete' : '');
-                return '<div class="project-task-wizard-step' + stepClass + '">'
-                    + '<div class="project-task-wizard-step-index">' + escapeHTML(String(stepNumber)) + '</div>'
-                    + '<div class="project-task-wizard-step-body"><div class="project-card-title">' + escapeHTML(step.title) + '</div><div class="project-card-copy">' + escapeHTML(step.copy) + '</div></div>'
-                    + '</div>';
-            }).join('')
-            + '</div>'
-            + '<div class="project-task-wizard-panel">' + contentHTML + '</div>'
-            + '<div class="project-action-group project-task-wizard-actions">'
-            + '<button type="button" class="project-inline-btn" data-cancel-task-wizard="1"' + disabled + '>' + escapeHTML(tr('project.cancel', 'Cancel')) + '</button>'
-            + (currentStep > 1 ? '<button type="button" class="project-inline-btn" data-task-wizard-prev="1"' + disabled + '>' + escapeHTML(tr('project.taskWizardBack', 'Back')) + '</button>' : '')
-            + (currentStep < TASK_WIZARD_TOTAL_STEPS
-                ? '<button type="button" class="project-inline-btn primary" data-task-wizard-next="1"' + disabled + '>' + escapeHTML(tr('project.taskWizardNext', 'Next')) + '</button>'
-                : '<button type="submit" class="project-inline-btn primary" data-task-wizard-submit="1"' + disabled + '>' + escapeHTML(state.creatingTaskSaving ? tr('project.saving', 'Saving...') : tr('project.taskWizardCreate', 'Create task')) + '</button>')
-            + '</div>'
-            + '</form>';
     }
 
     function taskActionSummary(task) {
@@ -2648,311 +1200,6 @@
         return '<span class="project-pill' + (tone ? ' tone-' + tone : '') + (extraClass ? ' ' + extraClass : '') + '">' + escapeHTML(label) + '</span>';
     }
 
-    function renderFocusCard(options) {
-        var tone = options && options.tone ? options.tone : 'neutral';
-        var kicker = options && options.kicker ? options.kicker : tr('project.focusKicker', 'Focus');
-        var title = options && options.title ? options.title : tr('project.focusDefaultTitle', 'Review this first');
-        var copy = options && options.copy ? options.copy : '';
-        var note = options && options.note ? options.note : '';
-        var actionsHTML = options && options.actionsHTML ? options.actionsHTML : '';
-        var badgesHTML = ((options && options.badges) || []).filter(Boolean).join('');
-
-        return '<div class="project-card-list project-card-visual project-focus-card tone-' + escapeHTML(tone) + '">'
-            + '<div class="project-focus-topline">'
-            + '<div class="project-focus-indicator tone-' + escapeHTML(tone) + '" aria-hidden="true"></div>'
-            + '<div class="project-focus-copy"><div class="project-section-kicker">' + escapeHTML(kicker) + '</div>'
-            + '<h3>' + escapeHTML(title) + '</h3>'
-            + (copy ? '<div class="project-detail-copy">' + escapeHTML(compactText(copy, '', 110)) + '</div>' : '')
-            + '</div>'
-            + (badgesHTML ? '<div class="project-task-badges project-focus-badges">' + badgesHTML + '</div>' : '')
-            + '</div>'
-            + (note ? '<div class="project-focus-note">' + escapeHTML(compactText(note, '', 120)) + '</div>' : '')
-            + (actionsHTML ? '<div class="project-action-group">' + actionsHTML + '</div>' : '')
-            + '</div>';
-    }
-
-    function renderProjectFocusCard(project, projectSnapshot) {
-        var pendingItem = projectSnapshot.pendingApprovals[0] || null;
-        var blockedTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'blocked' || task.state === 'failed';
-        }));
-        var waitingTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'waiting_human' || task.state === 'waiting_review';
-        }));
-        var runningTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'running';
-        }));
-        var readyTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'execution_complete' && task.acceptanceStatus !== 'accepted';
-        }));
-        var nextTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'planned' || task.state === 'queued';
-        }));
-        var focusWorkstream = projectSnapshot.focusWorkstream;
-        var context = null;
-        var focusWorkstreamForTask = null;
-        var tone = 'neutral';
-        var title = '';
-        var copy = '';
-        var note = '';
-        var actionsHTML = '';
-        var badges = [
-            renderProjectPill(tr('project.countLive', '{count} live', { count: projectSnapshot.runningWorkstreams }), projectSnapshot.runningWorkstreams ? 'info' : ''),
-            renderProjectPill(tr('project.countWaitingShort', '{count} wait', { count: projectSnapshot.waitingTasks }), projectSnapshot.waitingTasks ? 'warning' : ''),
-            renderProjectPill(tr('project.countBlockedShort', '{count} block', { count: projectSnapshot.blockedTasks }), projectSnapshot.blockedTasks ? 'danger' : ''),
-            renderProjectPill(tr('project.countReview', '{count} review', { count: projectSnapshot.pendingApprovals.length }), projectSnapshot.pendingApprovals.length ? 'warning' : '')
-        ];
-
-        if (!projectSnapshot.workstreams.length && !projectSnapshot.tasks.length && !projectSnapshot.pendingApprovals.length) {
-            return '';
-        }
-
-        if (pendingItem) {
-            context = approvalContext(pendingItem);
-            tone = 'warning';
-            title = projectSnapshot.pendingApprovals.length === 1
-                ? tr('project.focusDecisionWaitingSingular', 'Decision waiting')
-                : tr('project.focusDecisionWaitingPlural', '{count} decisions waiting', { count: projectSnapshot.pendingApprovals.length });
-            copy = context.task ? context.task.title : approvalKindSummary(pendingItem);
-            note = tr('project.focusHumanSignOffRequired', 'Human sign-off required.');
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-open-approvals="1">' + escapeHTML(tr('project.statusReview', 'Review')) + '</button>'
-                + (context.task ? '<button type="button" class="project-inline-btn" data-task-id="' + escapeHTML(context.task.id) + '">' + escapeHTML(tr('project.taskSingular', 'Task')) + '</button>' : '');
-        } else if (blockedTask) {
-            focusWorkstreamForTask = findById(workstreams(), blockedTask.workstreamId);
-            tone = 'danger';
-            title = tr('project.statusBlocked', 'Blocked');
-            copy = blockedTask.title;
-            note = taskActionSummary(blockedTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(blockedTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-                + (focusWorkstreamForTask ? '<button type="button" class="project-inline-btn" data-workstream-id="' + escapeHTML(focusWorkstreamForTask.id) + '">' + escapeHTML(workstreamLabel(false)) + '</button>' : '');
-        } else if (waitingTask) {
-            tone = 'warning';
-            title = tr('project.statusWaiting', 'Waiting');
-            copy = waitingTask.title;
-            note = taskActionSummary(waitingTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(waitingTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-                + ((waitingTask.acceptanceStatus === 'ready_for_acceptance' || waitingTask.acceptanceStatus === 'under_human_review')
-                    ? '<button type="button" class="project-inline-btn" data-open-approvals="1">' + escapeHTML(tr('project.statusReview', 'Review')) + '</button>'
-                    : '');
-        } else if (runningTask) {
-            tone = 'info';
-            title = tr('project.focusLiveTask', 'Live task');
-            copy = runningTask.title;
-            note = taskActionSummary(runningTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(runningTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-open-terminal-mode="1">' + escapeHTML(tr('header.terminal', 'Terminal')) + '</button>';
-        } else if (readyTask) {
-            tone = 'success';
-            title = tr('project.statusReady', 'Ready');
-            copy = readyTask.title;
-            note = taskActionSummary(readyTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(readyTask.id) + '">' + escapeHTML(tr('project.statusReview', 'Review')) + '</button>';
-        } else if (nextTask) {
-            tone = 'info';
-            title = tr('project.focusNextTask', 'Next task');
-            copy = nextTask.title;
-            note = taskActionSummary(nextTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(nextTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>';
-        } else if (focusWorkstream) {
-            tone = statusTone(focusWorkstream.status);
-            title = tr('project.focusNextWorkstream', 'Next workstream');
-            copy = focusWorkstream.title;
-            note = focusWorkstream.scopeSummary || focusWorkstream.description || workstreamFlowSummary(focusWorkstream);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-workstream-id="' + escapeHTML(focusWorkstream.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(focusWorkstream.id) + '">' + escapeHTML(tr('project.add', 'Add')) + '</button>';
-        }
-
-        return renderFocusCard({
-            kicker: tr('project.focusKicker', 'Focus'),
-            title: title,
-            copy: copy,
-            note: note,
-            tone: tone,
-            badges: badges,
-            actionsHTML: actionsHTML
-        });
-    }
-
-    function renderApprovalFocusCard(pending, resolved) {
-        var ordered = (pending || []).slice().sort(function(a, b) {
-            var aPriority = a.kind === 'final_acceptance' ? 0 : 1;
-            var bPriority = b.kind === 'final_acceptance' ? 0 : 1;
-            if (aPriority !== bPriority) {
-                return aPriority - bPriority;
-            }
-            return String(b.requestedAt || '').localeCompare(String(a.requestedAt || ''));
-        });
-        var item = ordered[0] || null;
-        var context = item ? approvalContext(item) : null;
-        var badges = [
-            renderProjectPill(tr('project.countPending', '{count} pending', { count: (pending || []).length }), (pending || []).length ? 'warning' : 'success'),
-            renderProjectPill(tr('project.countResolved', '{count} resolved', { count: (resolved || []).length }), (resolved || []).length ? 'success' : ''),
-            item ? renderProjectPill(approvalKindLabel(item.kind), approvalTone(item)) : ''
-        ];
-        var actionsHTML = '';
-
-        if (!item) {
-            return renderFocusCard({
-                kicker: tr('project.approvalQueue', 'Approval queue'),
-                title: tr('project.noApprovalsWaiting', 'No approvals are waiting'),
-                copy: tr('project.noApprovalsWaitingCopy', 'Nothing is blocked on a human decision right now.'),
-                tone: 'success',
-                badges: badges
-            });
-        }
-
-        if (context && context.project) {
-            badges.unshift(renderProjectPill(context.project.name, '', 'outline'));
-        }
-        if (context && context.workstream) {
-            badges.unshift(renderProjectPill(context.workstream.title, '', 'outline'));
-        }
-        actionsHTML = context && context.task
-            ? '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(context.task.id) + '">' + escapeHTML(tr('project.openTask', 'Open task')) + '</button>'
-            : '';
-
-        return renderFocusCard({
-            kicker: tr('project.startHere', 'Start here'),
-            title: (pending || []).length === 1 ? tr('project.reviewApprovalNext', 'Review this approval next') : tr('project.approvalsNeedDecisions', '{count} approvals need decisions', { count: (pending || []).length }),
-            copy: context && context.task
-                ? tr('project.taskWaitingOnApproval', '{title} is waiting on {kind}.', { title: context.task.title, kind: approvalKindLabel(item.kind).toLowerCase() })
-                : approvalKindSummary(item),
-            note: item.reason || approvalKindSummary(item),
-            tone: approvalTone(item),
-            badges: badges,
-            actionsHTML: actionsHTML
-        });
-    }
-
-    function renderWorkstreamGuide(workstream, taskList) {
-        var waitingCount = taskList.filter(function(item) { return item.state === 'waiting_human' || item.state === 'waiting_review'; }).length;
-        var blockedTask = pickPreferredTask(taskList.filter(function(item) {
-            return item.state === 'blocked' || item.state === 'failed';
-        }));
-        var waitingTask = pickPreferredTask(taskList.filter(function(item) {
-            return item.state === 'waiting_human' || item.state === 'waiting_review';
-        }));
-        var runningTask = pickPreferredTask(taskList.filter(function(item) {
-            return item.state === 'running';
-        }));
-        var nextTask = pickPreferredTask(taskList.filter(function(item) {
-            return item.state === 'planned' || item.state === 'queued';
-        }));
-        var doneTask = pickPreferredTask(taskList.filter(function(item) {
-            return item.state === 'execution_complete' && item.acceptanceStatus !== 'accepted';
-        }));
-        var tone = statusTone(workstream.status);
-        var title = tr('project.guideWorkstreamMovingTitle', 'Keep this workstream moving');
-        var copy = tr('project.guideWorkstreamMovingCopy', 'Add the next task, open it, then come back only when the workstream needs a decision.');
-        var note = workstream.scopeSummary || workstream.description || workstreamFlowSummary(workstream);
-        var actionsHTML = '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
-
-        if (blockedTask) {
-            tone = 'danger';
-            title = tr('project.guideResolveBlockerTitle', 'Resolve the blocker first');
-            copy = tr('project.guideBlockedCopy', '{title} is stopping this workstream.', { title: blockedTask.title });
-            note = taskActionSummary(blockedTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(blockedTask.id) + '">' + escapeHTML(tr('project.openBlockedTask', 'Open blocked task')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
-        } else if (waitingTask) {
-            tone = 'warning';
-            title = tr('project.guideDecisionWaitingTitle', 'A decision is waiting');
-            copy = tr('project.guideWaitingCopy', '{title} needs review or explicit input before this workstream can move cleanly.', { title: waitingTask.title });
-            note = taskActionSummary(waitingTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(waitingTask.id) + '">' + escapeHTML(tr('project.openWaitingTask', 'Open waiting task')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
-        } else if (runningTask) {
-            tone = 'info';
-            title = tr('project.guideContinueLiveTitle', 'Continue the live task');
-            copy = tr('project.guideRunningCopy', '{title} is already active inside this workstream.', { title: runningTask.title });
-            note = taskActionSummary(runningTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(runningTask.id) + '">' + escapeHTML(tr('project.openLiveTask', 'Open live task')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
-        } else if (doneTask) {
-            tone = 'success';
-            title = tr('project.guideCloseFinishedTitle', 'Close out finished work');
-            copy = tr('project.guideDoneCopy', '{title} is done executing and needs follow-through.', { title: doneTask.title });
-            note = taskActionSummary(doneTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(doneTask.id) + '">' + escapeHTML(tr('project.reviewFinishedTask', 'Review finished task')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
-        } else if (nextTask) {
-            tone = 'info';
-            title = tr('project.guideStartNextTitle', 'Start the next task');
-            copy = tr('project.guideNextCopy', '{title} is ready to be picked up next.', { title: nextTask.title });
-            note = taskActionSummary(nextTask);
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(nextTask.id) + '">' + escapeHTML(tr('project.openNextTask', 'Open next task')) + '</button>'
-                + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button>';
-        } else if (!taskList.length) {
-            tone = 'neutral';
-            title = tr('project.addFirstTask', 'Add the first task');
-            copy = tr('project.guideEmptyWorkstreamCopy', 'This workstream exists, but nothing concrete is queued yet.');
-            note = tr('project.guideEmptyWorkstreamNote', 'Start with the next smallest executable step.');
-            actionsHTML = '<button type="button" class="project-inline-btn primary" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addFirstTask', 'Add first task')) + '</button>';
-        }
-
-        return renderFocusCard({
-            kicker: tr('project.workstreamFocus', '{workstream} focus', { workstream: workstreamLabel(false) }),
-            title: title,
-            copy: copy,
-            note: note,
-            tone: tone,
-            badges: [
-                renderProjectPill(humanizeWorkstreamStatus(workstream.status), statusTone(workstream.status)),
-                renderProjectPill(taskCountText(taskList.length)),
-                renderProjectPill(tr('project.countWaiting', '{count} waiting', { count: waitingCount }), waitingCount ? 'warning' : ''),
-                renderProjectPill(tr('project.priorityLabel', '{priority} priority', { priority: humanizePriority(workstream.priority) }))
-            ],
-            actionsHTML: actionsHTML
-        });
-    }
-
-    function renderTaskExecutionGuide(task, taskSessions) {
-        var workstream = findById(workstreams(), task.workstreamId);
-        var session = primaryExecutionSession(taskSessions);
-        var header = tr('project.runThisTask', 'Run this task');
-        var copy = '';
-        var note = task.nextStep || '';
-        var actions = '';
-        var tone = 'info';
-
-        if (task.state === 'execution_complete') {
-            header = tr('project.executionIsDone', 'Execution is done');
-            copy = task.acceptanceStatus === 'accepted'
-                ? tr('project.executionAcceptedCopy', 'Accepted. Archive when ready.')
-                : tr('project.executionReviewCopy', 'Review or reopen.');
-            tone = task.acceptanceStatus === 'accepted' ? 'success' : 'warning';
-        } else if (session && session.supportsAttach && session.terminalId) {
-            header = tr('project.liveTerminalReady', 'Live terminal is ready');
-            copy = tr('project.sessionsAttachCopy', 'Open Sessions to inspect this run and attach the terminal.');
-            actions = '<button type="button" class="project-inline-btn primary" data-task-detail-tab="sessions">' + escapeHTML(tr('project.openSessions', 'Open sessions')) + '</button>';
-            tone = 'info';
-        } else if (session) {
-            header = tr('project.sessionHistoryAttached', 'Session history is attached');
-            copy = tr('project.sessionsTabCopy', 'Open Sessions to inspect this run and continue if needed.');
-            actions = '<button type="button" class="project-inline-btn" data-task-detail-tab="sessions">' + escapeHTML(tr('project.openSessions', 'Open sessions')) + '</button>';
-            tone = 'neutral';
-        } else {
-            copy = task.state === 'running'
-                ? tr('project.runningNoSessionCopy', 'Running, but no session is ready to attach yet.')
-                : tr('project.startPhaseCopy', 'Start the current phase below when you are ready.');
-            tone = task.state === 'running' ? 'warning' : 'info';
-        }
-
-        return renderFocusCard({
-            kicker: tr('project.execution', 'Execution'),
-            title: header,
-            copy: copy,
-            note: note ? tr('project.nextPrefix', 'Next: {text}', { text: compactText(note, '', 70) }) : '',
-            tone: tone,
-            badges: [
-                renderProjectPill(humanizeTaskState(task.state), statusTone(task.state)),
-                renderProjectPill((workstream ? workstream.title : workstreamLabel(false)) || workstreamLabel(false), '', 'outline'),
-                renderProjectPill(sessionCountText(taskSessions.length))
-            ],
-            actionsHTML: actions
-        });
-    }
-
     function renderStructuredEventStream(items, emptyCopy) {
         var list = Array.isArray(items) ? items : [];
         if (!list.length) {
@@ -2963,7 +1210,7 @@
                 var tone = toneFromText((item && item.action || '') + ' ' + (item && item.detail || ''));
                 var actor = item && item.actor ? item.actor : tr('project.systemActor', 'system');
                 return '<div class="project-activity-item tone-' + escapeHTML(tone) + '">'
-                    + '<div class="project-activity-marker"><span class="project-timeline-dot tone-' + escapeHTML(tone) + '"></span></div>'
+                    + '<div class="project-activity-marker"><span class="project-audit-dot tone-' + escapeHTML(tone) + '"></span></div>'
                     + '<div class="project-activity-body"><div class="project-list-title">' + escapeHTML(item && item.action || tr('project.update', 'Update')) + '</div>'
                     + '<div class="project-activity-copy">' + escapeHTML(item && item.detail || '—') + '</div>'
                     + '<div class="project-list-meta">' + escapeHTML(actor + ' • ' + formatTime(item && item.timestamp)) + '</div></div>'
@@ -2993,31 +1240,6 @@
             }).join('') + '</div>'
             : '<div class="project-list-item muted">' + escapeHTML(tr('project.noFilesChanged', 'No files recorded.')) + '</div>')
             + '<div class="project-diff-summary">' + escapeHTML(diffSummary || tr('project.noDiffSummary', 'No diff summary available.')) + '</div>';
-    }
-
-    function renderApprovalQueueSummary(pending, resolved) {
-        var pendingFinal = pending.filter(function(item) { return item.kind === 'final_acceptance'; }).length;
-        var pendingArchive = pending.filter(function(item) { return item.kind === 'archive_override'; }).length;
-        return '<div class="project-queue-summary-grid">'
-            + renderSummaryStat(tr('project.pending', 'Pending'), String(pending.length), pending.length ? 'warning' : 'success')
-            + renderSummaryStat(tr('project.resolved', 'Resolved'), String(resolved.length), resolved.length ? 'success' : 'neutral')
-            + renderSummaryStat(tr('project.finalAcceptance', 'Final acceptance'), String(pendingFinal), pendingFinal ? 'warning' : 'neutral')
-            + renderSummaryStat(tr('project.archiveOverride', 'Archive override'), String(pendingArchive), pendingArchive ? 'info' : 'neutral')
-            + '</div>';
-    }
-
-    function formatCompactPriority(priority) {
-        var value = String(priority || '').trim().toLowerCase();
-        if (!value) {
-            return 'M';
-        }
-        if (value === 'high') {
-            return 'H';
-        }
-        if (value === 'low') {
-            return 'L';
-        }
-        return 'M';
     }
 
     function statusTone(status) {
@@ -3051,842 +1273,9 @@
         return statusTone(value);
     }
 
-    function countTasks(workstreamId, stateName) {
-        return tasksForWorkstream(workstreamId).filter(function(task) {
-            return !stateName || task.state === stateName;
-        }).length;
-    }
-
-    function countTasksByStates(workstreamId, stateNames) {
-        var states = Array.isArray(stateNames) ? stateNames : [stateNames];
-        return tasksForWorkstream(workstreamId).filter(function(task) {
-            return states.indexOf(task.state) !== -1;
-        }).length;
-    }
-
-    function prioritySortValue(priority) {
-        switch (String(priority || '').trim().toLowerCase()) {
-        case 'critical':
-            return 0;
-        case 'high':
-            return 1;
-        case 'low':
-            return 3;
-        default:
-            return 2;
-        }
-    }
-
-    function workstreamAttentionRank(item) {
-        var blocked = countTasksByStates(item.id, ['blocked', 'failed']);
-        var waiting = countTasksByStates(item.id, ['waiting_human', 'waiting_review']);
-        var running = countTasksByStates(item.id, ['running']);
-        if (blocked || item.status === 'blocked') {
-            return 0;
-        }
-        if (waiting || item.status === 'waiting_human') {
-            return 1;
-        }
-        if (running || item.status === 'running') {
-            return 2;
-        }
-        if (item.status === 'planned') {
-            return 3;
-        }
-        if (item.status === 'completed' || item.status === 'execution_complete') {
-            return 4;
-        }
-        if (item.status === 'archived') {
-            return 6;
-        }
-        return 5;
-    }
-
-    function sortWorkstreamsByAttention(items) {
-        return (items || []).slice().sort(function(a, b) {
-            var byAttention = workstreamAttentionRank(a) - workstreamAttentionRank(b);
-            var byPriority;
-            if (byAttention !== 0) {
-                return byAttention;
-            }
-            byPriority = prioritySortValue(a.priority) - prioritySortValue(b.priority);
-            if (byPriority !== 0) {
-                return byPriority;
-            }
-            return String(a.title || '').localeCompare(String(b.title || ''));
-        });
-    }
-
-    function workstreamFlowSummary(item) {
-        var running = countTasksByStates(item.id, ['running']);
-        var waiting = countTasksByStates(item.id, ['waiting_human', 'waiting_review']);
-        var blocked = countTasksByStates(item.id, ['blocked', 'failed']);
-        var total = countTasks(item.id);
-        var parts = [];
-        if (running) {
-            parts.push(tr('project.countLive', '{count} live', { count: running }));
-        }
-        if (waiting) {
-            parts.push(tr('project.countWaiting', '{count} waiting', { count: waiting }));
-        }
-        if (blocked) {
-            parts.push(tr('project.countBlocked', '{count} blocked', { count: blocked }));
-        }
-        if (!parts.length) {
-            parts.push(total ? tr('project.countTracked', '{count} tracked', { count: total }) : tr('project.noTasksYet', 'No tasks yet'));
-        }
-        return parts.join(' • ');
-    }
-
-    function renderStatusMeter(segments) {
-        var total = (segments || []).reduce(function(sum, item) {
-            return sum + (Number(item.count) || 0);
-        }, 0);
-        if (!total) {
-            return '<div class="project-workstream-meter empty"></div>';
-        }
-        return '<div class="project-workstream-meter">'
-            + segments.map(function(item) {
-                var count = Number(item.count) || 0;
-                if (!count) {
-                    return '';
-                }
-                return '<span class="tone-' + escapeHTML(item.tone || 'neutral') + '" style="flex:' + escapeHTML(String(count)) + ' 1 0" title="' + escapeHTML(String(count) + ' ' + (item.label || 'items')) + '"></span>';
-            }).join('')
-            + '</div>';
-    }
-
-    function renderMiniCount(value, label, tone) {
-        return '<span class="project-workstream-stat tone-' + escapeHTML(tone || 'neutral') + '">'
-            + '<strong>' + escapeHTML(String(value)) + '</strong><span>' + escapeHTML(label) + '</span>'
-            + '</span>';
-    }
-
-    function countProjectTasksByStates(taskList, stateNames) {
-        var states = Array.isArray(stateNames) ? stateNames : [stateNames];
-        return (taskList || []).filter(function(task) {
-            return states.indexOf(task.state) !== -1;
-        }).length;
-    }
-
-    function shortRiskLabel(risk) {
-        switch (String(risk || '').trim().toLowerCase()) {
-        case 'critical':
-            return 'C';
-        case 'high':
-            return 'H';
-        case 'low':
-            return 'L';
-        default:
-            return 'M';
-        }
-    }
-
-    function taskNextActionLabel(task) {
-        if (!task) {
-            return tr('project.statusOpen', 'Open');
-        }
-        if (task.acceptanceStatus === 'ready_for_acceptance' || task.acceptanceStatus === 'under_human_review') {
-            return tr('project.statusReview', 'Review');
-        }
-        if (task.acceptanceStatus === 'rejected') {
-            return tr('project.statusFix', 'Fix');
-        }
-        switch (task.state) {
-        case 'planned':
-        case 'queued':
-            return tr('project.statusStart', 'Start');
-        case 'running':
-            return tr('project.statusContinue', 'Continue');
-        case 'waiting_review':
-            return tr('project.statusReview', 'Review');
-        case 'waiting_human':
-            return tr('project.statusInput', 'Input');
-        case 'blocked':
-        case 'failed':
-            return tr('project.statusUnblock', 'Unblock');
-        case 'execution_complete':
-            return task.acceptanceStatus === 'accepted' ? tr('project.statusArchive', 'Archive') : tr('project.statusClose', 'Close');
-        case 'archived':
-            return tr('project.statusArchived', 'Archived');
-        default:
-            return tr('project.statusOpen', 'Open');
-        }
-    }
-
-    function taskWorkstreamName(task) {
-        var workstream = task && task.workstreamId ? findById(workstreams(), task.workstreamId) : null;
-        return workstream ? workstream.title : workstreamLabel(false);
-    }
-
-    function taskAgentName(task) {
-        if (task && task.agentLabel) {
-            return humanizeAgentLabel(task.agentLabel);
-        }
-        return compactText(taskWorkstreamName(task), tr('project.agentFallback', 'Agent'), 28);
-    }
-
-    function sortTasksForManager(taskList) {
-        return (taskList || []).slice().sort(function(a, b) {
-            var byState = taskSortPriority(a) - taskSortPriority(b);
-            var byPriority;
-            if (byState !== 0) {
-                return byState;
-            }
-            byPriority = prioritySortValue(a.priority) - prioritySortValue(b.priority);
-            if (byPriority !== 0) {
-                return byPriority;
-            }
-            return String(a.title || '').localeCompare(String(b.title || ''));
-        });
-    }
-
-    function renderManagerStat(label, value, tone) {
-        return '<div class="project-manager-stat tone-' + escapeHTML(tone || 'neutral') + '">'
-            + '<span class="project-manager-stat-value">' + escapeHTML(String(value)) + '</span>'
-            + '<span class="project-manager-stat-label">' + escapeHTML(label) + '</span>'
-            + '</div>';
-    }
-
-    function renderManagerStats(items) {
-        return '<div class="project-manager-stats">'
-            + (items || []).map(function(item) {
-                return renderManagerStat(item.label, item.value, item.tone);
-            }).join('')
-            + '</div>';
-    }
-
-    function renderCommandStat(label, value, tone) {
-        return '<div class="project-command-stat tone-' + escapeHTML(tone || 'neutral') + '">'
-            + '<span class="project-command-stat-value">' + escapeHTML(String(value)) + '</span>'
-            + '<span class="project-command-stat-label">' + escapeHTML(label) + '</span>'
-            + '</div>';
-    }
-
-    function renderCommandStats(items) {
-        return '<div class="project-command-stats">'
-            + (items || []).map(function(item) {
-                return renderCommandStat(item.label, item.value, item.tone);
-            }).join('')
-            + '</div>';
-    }
-
-    function laneAttentionCounts(workstreamId) {
-        return {
-            running: countTasksByStates(workstreamId, ['running']),
-            waiting: countTasksByStates(workstreamId, ['waiting_human', 'waiting_review']),
-            blocked: countTasksByStates(workstreamId, ['blocked', 'failed']),
-            next: countTasksByStates(workstreamId, ['planned', 'queued']),
-            done: countTasksByStates(workstreamId, ['execution_complete'])
-        };
-    }
-
-    function renderCommandCountChip(value, label, tone) {
-        if (!value) {
-            return '';
-        }
-        return '<span class="project-command-chip tone-' + escapeHTML(tone || 'neutral') + '">'
-            + '<strong>' + escapeHTML(String(value)) + '</strong>'
-            + '<span>' + escapeHTML(label) + '</span>'
-            + '</span>';
-    }
-
-    function renderCommandHero(project, projectSnapshot) {
-        var focus = resolveProjectFocus(projectSnapshot);
-        var context = taskCountText(projectSnapshot.tasks.length) + ' / ' + workstreamCountText(projectSnapshot.workstreams.length);
-        return '<div class="project-command-hero tone-' + escapeHTML(focus.tone) + '">'
-            + '<div class="project-command-hero-main">'
-            + '<div class="project-command-hero-mark">' + renderSidebarSignal(focus.tone) + '</div>'
-            + '<div class="project-command-hero-copy">'
-            + '<div class="project-section-kicker">' + escapeHTML(tr('project.nextAction', 'Next action')) + '</div>'
-            + '<h3>' + escapeHTML(compactText(focus.title, project.name, 78)) + '</h3>'
-            + '<p>' + escapeHTML(compactText(focus.meta || context, context, 96)) + '</p>'
-            + '</div>'
-            + '</div>'
-            + '<div class="project-command-hero-side">'
-            + '<span class="project-command-focus-label tone-' + escapeHTML(focus.tone) + '">' + escapeHTML(focus.label) + '</span>'
-            + '<span class="project-command-context">' + escapeHTML(context) + '</span>'
-            + (focus.actionHTML ? '<div class="project-action-group">' + focus.actionHTML + '</div>' : '')
-            + '</div>'
-            + '</div>';
-    }
-
-    function renderCommandLaneRow(workstream, index) {
-        var counts = laneAttentionCounts(workstream.id);
-        var taskList = tasksForWorkstream(workstream.id);
-        var currentTask = pickPreferredTask(taskList);
-        var tone = counts.blocked ? 'danger' : (counts.waiting ? 'warning' : (counts.running ? 'info' : statusTone(workstream.status)));
-        var chips = [
-            renderCommandCountChip(counts.blocked, tr('project.blockShort', 'block'), 'danger'),
-            renderCommandCountChip(counts.waiting, tr('project.waitShort', 'wait'), 'warning'),
-            renderCommandCountChip(counts.running, tr('project.runShort', 'run'), 'info')
-        ].join('');
-        if (!chips) {
-            chips = '<span class="project-command-chip tone-success"><strong>' + escapeHTML(String(taskList.length)) + '</strong><span>' + escapeHTML(taskList.length === 1 ? tr('project.taskSingular', 'task') : tr('project.taskPlural', 'tasks')) + '</span></span>';
-        }
-        return '<button type="button" class="project-command-lane-row tone-' + escapeHTML(tone) + '" data-workstream-id="' + escapeHTML(workstream.id) + '">'
-            + '<span class="project-command-lane-index">' + escapeHTML(index < 9 ? '0' + String(index + 1) : String(index + 1)) + '</span>'
-            + '<span class="project-command-lane-main">'
-            + '<span class="project-command-lane-title">' + escapeHTML(compactText(workstream.title, workstreamLabel(false), 42)) + '</span>'
-            + '<span class="project-command-lane-task">' + escapeHTML(currentTask ? compactText(currentTask.title, '', 64) : tr('project.noActiveTask', 'No active task')) + '</span>'
-            + '</span>'
-            + '<span class="project-command-lane-chips">' + chips + '</span>'
-            + '</button>';
-    }
-
-    function renderCommandLanes(projectSnapshot) {
-        var lanes = projectSnapshot.workstreams || [];
-        var attentionLanes = lanes.filter(function(workstream) {
-            var counts = laneAttentionCounts(workstream.id);
-            return counts.blocked || counts.waiting || counts.running;
-        });
-        var visibleLanes = (attentionLanes.length ? attentionLanes : lanes).slice(0, 4);
-        var hiddenLanes = lanes.filter(function(workstream) {
-            return visibleLanes.indexOf(workstream) === -1;
-        });
-        var title = attentionLanes.length ? tr('project.needsAttention', 'Needs attention') : tr('project.workstreamLanes', 'Workstreams');
-
-        if (!lanes.length) {
-            return '';
-        }
-        return '<div class="project-command-lanes">'
-            + '<div class="project-manager-block-head"><h3>' + escapeHTML(title) + '</h3><span>' + escapeHTML(tr('project.countTotal', '{count} total', { count: lanes.length })) + '</span></div>'
-            + '<div class="project-command-lane-list">'
-            + visibleLanes.map(function(workstream, index) {
-                return renderCommandLaneRow(workstream, index);
-            }).join('')
-            + '</div>'
-            + (hiddenLanes.length
-                ? '<details class="project-disclosure project-disclosure-compact"><summary><span>' + escapeHTML(tr('project.showCalmerLanes', 'Show calmer lanes')) + '</span><small>' + escapeHTML(tr('project.countHidden', '{count} hidden', { count: hiddenLanes.length })) + '</small></summary>'
-                    + '<div class="project-command-lane-list">'
-                    + hiddenLanes.map(function(workstream, index) {
-                        return renderCommandLaneRow(workstream, visibleLanes.length + index);
-                    }).join('')
-                    + '</div></details>'
-                : '')
-            + '</div>';
-    }
-
-    function renderCollapsedLaneStates(columns) {
-        if (!columns.length) {
-            return '';
-        }
-        return '<div class="project-lane-collapsed-states">'
-            + columns.map(function(column) {
-                return '<span class="project-lane-state-chip tone-' + escapeHTML(column.tone) + '">'
-                    + escapeHTML(column.label) + '<strong>0</strong></span>';
-            }).join('')
-            + '</div>';
-    }
-
-    function resolveProjectFocus(projectSnapshot) {
-        var pendingItem = projectSnapshot.pendingApprovals[0] || null;
-        var blockedTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'blocked' || task.state === 'failed';
-        }));
-        var waitingTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'waiting_human' || task.state === 'waiting_review';
-        }));
-        var runningTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'running';
-        }));
-        var readyTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'execution_complete' && task.acceptanceStatus !== 'accepted';
-        }));
-        var nextTask = pickPreferredTask(projectSnapshot.tasks.filter(function(task) {
-            return task.state === 'planned' || task.state === 'queued';
-        }));
-        var context;
-
-        if (pendingItem) {
-            context = approvalContext(pendingItem);
-            return {
-                tone: 'warning',
-                label: tr('project.statusReview', 'Review'),
-                title: context.task ? context.task.title : approvalKindLabel(pendingItem.kind),
-                meta: approvalKindLabel(pendingItem.kind),
-                actionHTML: '<button type="button" class="project-inline-btn primary" data-open-approvals="1">' + escapeHTML(tr('project.statusReview', 'Review')) + '</button>'
-            };
-        }
-        if (blockedTask) {
-            return {
-                tone: 'danger',
-                label: tr('project.statusBlocked', 'Blocked'),
-                title: blockedTask.title,
-                meta: taskWorkstreamName(blockedTask),
-                actionHTML: '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(blockedTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-            };
-        }
-        if (waitingTask) {
-            return {
-                tone: 'warning',
-                label: tr('project.statusWaiting', 'Waiting'),
-                title: waitingTask.title,
-                meta: taskWorkstreamName(waitingTask),
-                actionHTML: '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(waitingTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-            };
-        }
-        if (runningTask) {
-            return {
-                tone: 'info',
-                label: tr('project.statusLive', 'Live'),
-                title: runningTask.title,
-                meta: taskWorkstreamName(runningTask),
-                actionHTML: '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(runningTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-                    + '<button type="button" class="project-inline-btn" data-open-terminal-mode="1">' + escapeHTML(tr('header.terminal', 'Terminal')) + '</button>'
-            };
-        }
-        if (readyTask) {
-            return {
-                tone: 'success',
-                label: tr('project.statusClose', 'Close'),
-                title: readyTask.title,
-                meta: taskWorkstreamName(readyTask),
-                actionHTML: '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(readyTask.id) + '">' + escapeHTML(tr('project.statusReview', 'Review')) + '</button>'
-            };
-        }
-        if (nextTask) {
-            return {
-                tone: 'info',
-                label: tr('project.statusNext', 'Next'),
-                title: nextTask.title,
-                meta: taskWorkstreamName(nextTask),
-                actionHTML: '<button type="button" class="project-inline-btn primary" data-task-id="' + escapeHTML(nextTask.id) + '">' + escapeHTML(tr('project.statusOpen', 'Open')) + '</button>'
-            };
-        }
-        return {
-            tone: 'success',
-            label: tr('project.statusClear', 'Clear'),
-            title: projectSnapshot.tasks.length ? tr('project.noUrgentTask', 'No urgent task') : tr('project.noTasksYet', 'No tasks yet'),
-            meta: projectSnapshot.tasks.length ? tr('project.allTrackedCalm', 'All tracked work is calm') : tr('project.createWorkstreamStart', 'Add a task to start'),
-            actionHTML: ''
-        };
-    }
-
-    function renderManagerFocusStrip(projectSnapshot) {
-        var focus = resolveProjectFocus(projectSnapshot);
-        return '<div class="project-manager-focus tone-' + escapeHTML(focus.tone) + '">'
-            + '<div class="project-manager-focus-main">'
-            + renderSidebarSignal(focus.tone)
-            + '<span class="project-manager-focus-label">' + escapeHTML(focus.label) + '</span>'
-            + '<strong>' + escapeHTML(compactText(focus.title, '', 54)) + '</strong>'
-            + '<span>' + escapeHTML(compactText(focus.meta, '', 38)) + '</span>'
-            + '</div>'
-            + (focus.actionHTML ? '<div class="project-action-group">' + focus.actionHTML + '</div>' : '')
-            + '</div>';
-    }
-
-    function renderWorkstreamTile(workstream, index) {
-        var taskList = tasksForWorkstream(workstream.id);
-        var currentTask = pickPreferredTask(taskList);
-        var runningCount = countTasksByStates(workstream.id, ['running']);
-        var waitingCount = countTasksByStates(workstream.id, ['waiting_human', 'waiting_review']);
-        var blockedCount = countTasksByStates(workstream.id, ['blocked', 'failed']);
-        var doneCount = countTasksByStates(workstream.id, ['execution_complete']);
-        var tone = blockedCount ? 'danger' : (waitingCount ? 'warning' : (runningCount ? 'info' : statusTone(workstream.status)));
-        var workstreamNumber = index + 1;
-        var workstreamCode = workstreamNumber < 10 ? 'W0' + workstreamNumber : 'W' + workstreamNumber;
-        return '<button type="button" class="project-workstream-tile tone-' + escapeHTML(tone) + '" data-workstream-id="' + escapeHTML(workstream.id) + '">'
-            + '<span class="project-workstream-tile-avatar tone-' + escapeHTML(tone) + '">' + escapeHTML(workstreamCode) + '</span>'
-            + '<span class="project-workstream-tile-body">'
-            + '<span class="project-workstream-tile-name">' + escapeHTML(compactText(workstream.title, workstreamLabel(false), 34)) + '</span>'
-            + '<span class="project-workstream-tile-task">' + escapeHTML(currentTask ? compactText(currentTask.title, '', 42) : tr('project.idle', 'Idle')) + '</span>'
-            + renderStatusMeter([
-                { count: runningCount, tone: 'info', label: tr('project.statusRunning', 'running') },
-                { count: waitingCount, tone: 'warning', label: tr('project.statusWaiting', 'waiting') },
-                { count: blockedCount, tone: 'danger', label: tr('project.statusBlocked', 'blocked') },
-                { count: doneCount, tone: 'success', label: tr('project.statusDone', 'done') }
-            ])
-            + '</span>'
-            + '<span class="project-workstream-tile-counts">'
-            + '<span><strong>' + escapeHTML(String(runningCount)) + '</strong> ' + escapeHTML(tr('project.runShortTitle', 'Run')) + '</span>'
-            + '<span><strong>' + escapeHTML(String(waitingCount)) + '</strong> ' + escapeHTML(tr('project.waitShortTitle', 'Wait')) + '</span>'
-            + '<span><strong>' + escapeHTML(String(blockedCount)) + '</strong> ' + escapeHTML(tr('project.blockShortTitle', 'Block')) + '</span>'
-            + '</span>'
-            + '</button>';
-    }
-
-    function renderWorkstreamOverview(projectSnapshot) {
-        var workstreamList = projectSnapshot.workstreams || [];
-        if (!workstreamList.length) {
-            return '';
-        }
-        return '<div class="project-manager-block">'
-            + '<div class="project-manager-block-head"><h3>' + escapeHTML(tr('project.workstreams', 'Workstreams')) + '</h3><span>' + escapeHTML(workstreamCountText(workstreamList.length)) + '</span></div>'
-            + '<div class="project-workstream-tile-grid">'
-            + workstreamList.map(function(workstream, index) {
-                return renderWorkstreamTile(workstream, index);
-            }).join('')
-            + '</div>'
-            + '</div>';
-    }
-
-    function renderTaskManagerRow(task) {
-        var tone = statusTone(task.state);
-        return '<button type="button" class="project-task-row tone-' + escapeHTML(tone) + '" data-task-id="' + escapeHTML(task.id) + '">'
-            + '<span class="project-task-cell project-task-cell-status">' + renderSidebarSignal(tone) + '<span>' + escapeHTML(shortStatusLabel(task.state)) + '</span></span>'
-            + '<span class="project-task-cell project-task-cell-title"><strong>' + escapeHTML(compactText(task.title, '', 74)) + '</strong></span>'
-            + '<span class="project-task-cell project-task-cell-agent">' + escapeHTML(taskAgentName(task)) + '</span>'
-            + '<span class="project-task-cell project-task-cell-priority">' + escapeHTML(shortPriorityLabel(task.priority)) + '</span>'
-            + '<span class="project-task-cell project-task-cell-risk">' + escapeHTML(shortRiskLabel(task.riskLevel)) + '</span>'
-            + '<span class="project-task-cell project-task-cell-action"><span class="project-task-action-chip tone-' + escapeHTML(tone) + '">' + escapeHTML(taskNextActionLabel(task)) + '</span></span>'
-            + '</button>';
-    }
-
-    function renderTaskManagerTable(taskList, emptyCopy) {
-        var sortedTasks = sortTasksForManager(taskList);
-        if (!sortedTasks.length) {
-            return '<div class="project-list-item muted">' + escapeHTML(emptyCopy || tr('project.noTasksYetSentence', 'No tasks yet.')) + '</div>';
-        }
-        return '<div class="project-task-table">'
-            + '<div class="project-task-row project-task-row-head">'
-            + '<span>' + escapeHTML(tr('project.state', 'Status')) + '</span><span>' + escapeHTML(tr('project.taskSingular', 'Task')) + '</span><span>' + escapeHTML(tr('project.agentFallback', 'Agent')) + '</span><span>' + escapeHTML(tr('project.priorityShort', 'Pri')) + '</span><span>' + escapeHTML(tr('project.risk', 'Risk')) + '</span><span>' + escapeHTML(tr('project.statusNext', 'Next')) + '</span>'
-            + '</div>'
-            + sortedTasks.map(renderTaskManagerRow).join('')
-            + '</div>';
-    }
-
-    function renderBoardTaskCard(task) {
-        var tone = statusTone(task.state);
-        return '<button type="button" class="project-task-card project-task-card-compact task-state-' + escapeHTML(task.state) + '" data-task-id="' + escapeHTML(task.id) + '">'
-            + '<div class="project-task-head"><div class="project-task-title">' + escapeHTML(compactText(task.title, '', 62)) + '</div><span class="project-task-action-chip tone-' + escapeHTML(tone) + '">' + escapeHTML(taskNextActionLabel(task)) + '</span></div>'
-            + '<div class="project-task-meta-row"><span class="project-task-meta">' + escapeHTML(taskAgentName(task)) + '</span><span class="project-task-meta">' + escapeHTML(shortPriorityLabel(task.priority) + ' / R' + shortRiskLabel(task.riskLevel)) + '</span></div>'
-            + '</button>';
-    }
-
-    function checkpointProjectId(item) {
-        var task = item && item.taskId ? findById(tasks(), item.taskId) : null;
-        return item && item.projectId ? item.projectId : (task ? task.projectId : '');
-    }
-
-    function pluralSuffix(count) {
-        return count === 1 ? '' : 's';
-    }
-
-    function buildProjectSnapshot(projectId) {
-        var projectWorkstreams = sortWorkstreamsByAttention(workstreamsForProject(projectId));
-        var projectTasks = tasksForProject(projectId);
-        var pendingApprovals = checkpoints().filter(function(item) {
-            return item.status === 'pending' && checkpointProjectId(item) === projectId;
-        });
-        var blockedTasks = projectTasks.filter(function(task) {
-            return task.state === 'blocked' || task.state === 'failed';
-        }).length;
-        var waitingTasks = projectTasks.filter(function(task) {
-            return task.state === 'waiting_human' || task.state === 'waiting_review';
-        }).length;
-        var runningTasks = projectTasks.filter(function(task) {
-            return task.state === 'running';
-        }).length;
-        var runningWorkstreams = projectWorkstreams.filter(function(item) {
-            return item.status === 'running';
-        }).length;
-        return {
-            workstreams: projectWorkstreams,
-            tasks: projectTasks,
-            pendingApprovals: pendingApprovals,
-            blockedTasks: blockedTasks,
-            waitingTasks: waitingTasks,
-            runningTasks: runningTasks,
-            runningWorkstreams: runningWorkstreams,
-            focusWorkstream: projectWorkstreams[0] || null
-        };
-    }
-
-    function renderSidebarSignal(tone) {
-        return '<span class="project-sidebar-signal tone-' + escapeHTML(tone || 'neutral') + '"></span>';
-    }
-
-    function renderSidebarBadge(value, tone, label) {
-        return '<span class="project-sidebar-badge tone-' + escapeHTML(tone || 'neutral') + '">'
-            + '<span class="project-sidebar-badge-value">' + escapeHTML(String(value)) + '</span>'
-            + (label ? '<span class="project-sidebar-badge-label">' + escapeHTML(label) + '</span>' : '')
-            + '</span>';
-    }
-
-    function renderSidebar() {
-        var projectList = (state.snapshot && state.snapshot.projects) || [];
-        var workstreamList = workstreams();
-        var runtimeList = runtimes();
-        var approvalsPending = checkpoints().filter(function(item) { return item.status === 'pending'; });
-
-        return '<aside class="project-panel-sidebar">'
-            + '<div class="project-sidebar-section">'
-            + '<div class="project-sidebar-kicker">' + escapeHTML(tr('project.sidebarProjects', 'Projects')) + '</div>'
-            + projectList.map(function(project) {
-                var projectWorkstreamCount = workstreamList.filter(function(item) { return item.projectId === project.id; }).length;
-                return '<button type="button" class="project-nav-btn project-nav-compact' + (project.id === state.selectedProjectId && state.currentView === 'dashboard' ? ' active' : '') + '" data-project-id="' + escapeHTML(project.id) + '">'
-                    + '<span class="project-nav-row">'
-                    + '<span class="project-nav-main">' + renderSidebarSignal(statusTone(project.status)) + '<span class="project-nav-title">' + escapeHTML(project.name) + '</span></span>'
-                    + renderSidebarBadge(projectWorkstreamCount, 'neutral', workstreamLabel(projectWorkstreamCount !== 1).toLowerCase())
-                    + '</span>'
-                    + '<span class="project-nav-meta-row"><span class="project-nav-meta">' + escapeHTML(shortStatusLabel(project.status || 'active')) + '</span></span>'
-                    + '</button>';
-            }).join('')
-            + '</div>'
-            + '<div class="project-sidebar-section">'
-            + '<div class="project-sidebar-kicker">' + escapeHTML(tr('project.sidebarWorkstreams', workstreamLabel(true))) + '</div>'
-            + workstreamList.map(function(item) {
-                return '<button type="button" class="project-nav-btn project-nav-compact' + (item.id === state.selectedWorkstreamId && state.currentView === 'workstream' ? ' active' : '') + '" data-workstream-id="' + escapeHTML(item.id) + '">'
-                    + '<span class="project-nav-row">'
-                    + '<span class="project-nav-main">' + renderSidebarSignal(statusTone(item.status)) + '<span class="project-nav-title">' + escapeHTML(item.title) + '</span></span>'
-                    + renderSidebarBadge(countTasks(item.id), statusTone(item.status), tr('project.taskPlural', 'tasks'))
-                    + '</span>'
-                    + '<span class="project-nav-meta-row"><span class="project-nav-meta">' + escapeHTML(shortStatusLabel(item.status) + ' • ' + shortPriorityLabel(item.priority)) + '</span></span>'
-                    + '</button>';
-            }).join('')
-            + '</div>'
-            + '<div class="project-sidebar-section">'
-            + '<div class="project-sidebar-kicker">' + escapeHTML(tr('project.sidebarActions', 'Actions')) + '</div>'
-            + '<button type="button" class="project-nav-btn project-nav-compact project-nav-action' + (state.currentView === 'board' ? ' active' : '') + '" data-open-board="1">'
-            + '<span class="project-nav-row"><span class="project-nav-main">' + renderSidebarSignal(state.boardError ? 'warning' : 'info') + '<span class="project-nav-title">' + escapeHTML(tr('project.boardNav', 'Status Board')) + '</span></span>'
-            + renderSidebarBadge((state.boardProjects || []).length, 'neutral', tr('project.boardNavBadge', 'projects')) + '</span>'
-            + '</button>'
-            + '<button type="button" class="project-nav-btn project-nav-compact project-nav-action' + (state.currentView === 'approvals' ? ' active' : '') + '" data-open-approvals="1">'
-            + '<span class="project-nav-row"><span class="project-nav-main">' + renderSidebarSignal(approvalsPending.length ? 'warning' : 'success') + '<span class="project-nav-title">' + escapeHTML(tr('project.approvals', 'Approvals')) + '</span></span>'
-            + renderSidebarBadge(approvalsPending.length, approvalsPending.length ? 'warning' : 'success', approvalsPending.length === 1 ? tr('project.itemSingular', 'item') : tr('project.itemPlural', 'items')) + '</span>'
-            + '<span class="project-nav-meta-row"><span class="project-nav-meta">' + escapeHTML(approvalsPending.length ? tr('project.statusReview', 'Review') : tr('project.statusClear', 'Clear')) + '</span></span>'
-            + '</button>'
-            + '</div>'
-            + '<div class="project-sidebar-section">'
-            + '<div class="project-sidebar-kicker">' + escapeHTML(tr('project.sidebarRuntimes', 'Runtimes')) + '</div>'
-            + runtimeList.map(function(runtime) {
-                return '<div class="project-runtime-card project-runtime-compact tone-' + escapeHTML(statusTone(runtime.status)) + '">'
-                    + '<div class="project-nav-row"><div class="project-nav-main">' + renderSidebarSignal(statusTone(runtime.status)) + '<div class="project-runtime-name">' + escapeHTML(runtime.name) + '</div></div>'
-                    + renderSidebarBadge(runtime.kind || tr('project.localRuntime', 'local'), 'neutral', '') + '</div>'
-                    + '<div class="project-runtime-meta-row"><div class="project-runtime-meta">' + escapeHTML(shortStatusLabel(runtime.status || 'unknown')) + '</div></div>'
-                    + '</div>';
-            }).join('')
-            + '</div>'
-            + '</aside>';
-    }
-
     function renderBreadcrumbs() {
-        var crumbs = [];
-        var project = getSelectedProject();
-        var workstream = getSelectedWorkstream();
-        var task = getSelectedTask();
-        var session = getSelectedSession();
-
-        if (project) {
-            crumbs.push('<button type="button" class="project-breadcrumb" data-project-id="' + escapeHTML(project.id) + '">' + escapeHTML(project.name) + '</button>');
-        }
-        if (workstream) {
-            crumbs.push('<button type="button" class="project-breadcrumb" data-workstream-id="' + escapeHTML(workstream.id) + '">' + escapeHTML(workstream.title) + '</button>');
-        }
-        if (task) {
-            crumbs.push('<button type="button" class="project-breadcrumb" data-task-id="' + escapeHTML(task.id) + '">' + escapeHTML(task.title) + '</button>');
-        }
-        if (session) {
-            crumbs.push('<span class="project-breadcrumb current">' + escapeHTML(session.name) + '</span>');
-        }
-        if (state.currentView === 'board') {
-            crumbs.push('<span class="project-breadcrumb current">' + escapeHTML(tr('project.boardNav', 'Status Board')) + '</span>');
-        }
-        if (state.currentView === 'approvals') {
-            crumbs.push('<span class="project-breadcrumb current">' + escapeHTML(tr('project.approvals', 'Approvals Inbox')) + '</span>');
-        }
-        return crumbs.join('<span class="project-breadcrumb-sep">/</span>');
-    }
-
-    function renderToolManager() {
-        var toolDefs = (state.snapshot && state.snapshot.tools) || [];
-        var rows = toolDefs.map(function(def) {
-            var kindLabel = def.kind === 'agent' ? 'Agent' : 'Command';
-            var cmd = Array.isArray(def.command) ? def.command.join(' ') : '';
-            return '<div class="project-agent-row">'
-                + '<span class="project-agent-detail"><strong>' + escapeHTML(def.name || def.id) + '</strong>'
-                + ' <small>(' + escapeHTML(kindLabel) + (cmd ? ': ' + escapeHTML(cmd) : '') + ')</small>'
-                + ' \u2192 ' + escapeHTML(def.artifactKind)
-                + (def.timeoutSeconds ? ' / ' + def.timeoutSeconds + 's' : '')
-                + '</span>'
-                + '<button type="button" class="project-inline-btn project-inline-btn-sm" data-delete-tool="' + escapeHTML(def.id) + '">\u00d7</button>'
-                + '</div>';
-        }).join('');
-        return '<details class="project-disclosure"><summary><span>' + escapeHTML(tr('project.tools', 'Tools')) + '</span><small>' + escapeHTML(itemCountText(toolDefs.length)) + '</small></summary>'
-            + '<div class="project-disclosure-body">' + rows
-            + '<div class="project-tool-add-form">'
-            + '<input type="text" class="project-input" data-tool-field="id" placeholder="Tool ID (e.g. npm_test)" />'
-            + '<input type="text" class="project-input" data-tool-field="name" placeholder="Display name" />'
-            + '<input type="text" class="project-input" data-tool-field="command" placeholder="Command (e.g. npm test)" />'
-            + '<input type="text" class="project-input" data-tool-field="artifactKind" placeholder="Artifact kind (e.g. test_result)" />'
-            + '<input type="text" class="project-input" data-tool-field="allowedPhases" placeholder="Phases (e.g. test,final_validation)" />'
-            + '<select class="project-input" data-tool-field="kind"><option value="">Command</option><option value="agent">Agent</option></select>'
-            + '<button type="button" class="project-inline-btn primary" data-add-tool="1">' + escapeHTML(tr('project.addTool', 'Add tool')) + '</button>'
-            + '</div></div></details>';
-    }
-
-    function renderAgentActivity(projectSnapshot) {
-        var activeRuns = (state.snapshot && state.snapshot.toolRuns || []).filter(function(run) {
-            return run.status === 'running' || run.status === 'waiting';
-        });
-        var activeSessions = (state.snapshot && state.snapshot.sessions || []).filter(function(s) {
-            return s.state === 'running' || s.state === 'active';
-        });
-        if (!activeRuns.length && !activeSessions.length) {
-            return '';
-        }
-        var rows = activeRuns.map(function(run) {
-            var taskTitle = '';
-            projectSnapshot.tasks.forEach(function(t) { if (t.id === run.taskId) taskTitle = t.title; });
-            var icon = run.status === 'waiting' ? '\u23F3' : '\u25B6';
-            return '<div class="project-agent-row">'
-                + '<span class="project-agent-icon">' + icon + '</span>'
-                + '<span class="project-agent-detail"><strong>' + escapeHTML(run.toolId) + '</strong> on ' + escapeHTML(humanizePhase(run.phaseId))
-                + (taskTitle ? ' \u2014 ' + escapeHTML(taskTitle) : '') + '</span>'
-                + '<span class="project-pill tone-' + (run.status === 'waiting' ? 'warning' : 'info') + '">' + escapeHTML(run.status) + '</span>'
-                + '</div>';
-        }).join('');
-        return '<div class="project-agent-activity">'
-            + '<div class="project-fact-label">' + escapeHTML(tr('project.agentActivity', 'Agent activity')) + '</div>'
-            + rows
-            + '</div>';
-    }
-
-    function renderDashboard() {
-        var project = getSelectedProject();
-        var projectSnapshot;
-        var taskList;
-        var waitingTotal;
-        var stats;
-        if (!project) {
-            return '<div class="project-empty-state">' + escapeHTML(tr('project.empty', 'No project data yet.')) + '</div>';
-        }
-        projectSnapshot = buildProjectSnapshot(project.id);
-        taskList = projectSnapshot.tasks;
-        waitingTotal = projectSnapshot.waitingTasks + projectSnapshot.pendingApprovals.length;
-        stats = [
-            { label: tr('project.statusRunning', 'Running'), value: projectSnapshot.runningTasks, tone: projectSnapshot.runningTasks ? 'info' : 'neutral' },
-            { label: tr('project.statusWaiting', 'Waiting'), value: waitingTotal, tone: waitingTotal ? 'warning' : 'success' },
-            { label: tr('project.statusBlocked', 'Blocked'), value: projectSnapshot.blockedTasks, tone: projectSnapshot.blockedTasks ? 'danger' : 'success' }
-        ];
-        return '<section class="project-main-section project-manager-view project-command-view">'
-            + '<div class="project-section-header">'
-            + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.taskManager', 'Task Manager')) + '</div>'
-            + '<h2>' + escapeHTML(project.name) + '</h2><p>' + escapeHTML(taskCountText(taskList.length) + ' / ' + workstreamCountText(projectSnapshot.workstreams.length)) + '</p></div>'
-            + '<div class="project-header-actions">'
-            + (projectSnapshot.focusWorkstream ? '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(projectSnapshot.focusWorkstream.id) + '">' + escapeHTML(tr('project.newTaskShort', '+ Task')) + '</button>' : '')
-            + '<button type="button" class="project-inline-btn" data-create-workstream="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.newWorkstreamShort', '+ Workstream')) + '</button>'
-            + (projectSnapshot.pendingApprovals.length ? '<button type="button" class="project-inline-btn primary" data-open-approvals="1">' + escapeHTML(tr('project.statusReview', 'Review')) + '</button>' : '')
-            + '</div>'
-            + '</div>'
-            + renderCommandStats(stats)
-            + renderAgentActivity(projectSnapshot)
-            + (state.creatingWorkstreamProjectId === project.id ? renderWorkstreamWizard(project) : (!projectSnapshot.workstreams.length && !taskList.length ? '' : renderCommandHero(project, projectSnapshot)))
-            + renderCommandLanes(projectSnapshot)
-            + (taskList.length
-                ? '<details class="project-disclosure"><summary><span>' + escapeHTML(tr('project.taskList', 'Task list')) + '</span><small>' + escapeHTML(tr('project.countTotal', '{count} total', { count: taskList.length })) + '</small></summary>'
-                    + '<div class="project-disclosure-actions"><button type="button" class="project-inline-btn" data-project-history="' + escapeHTML(project.id) + '">' + escapeHTML(tr('project.history', 'History')) + '</button></div>'
-                    + renderTaskManagerTable(taskList, tr('project.noTasksYetSentence', 'No tasks yet.'))
-                    + '</details>'
-                : '')
-            + renderToolManager()
-            + '</section>';
-    }
-
-    function renderWorkstreamBoard() {
-        var workstream = getSelectedWorkstream();
-        var tasks = workstream ? tasksForWorkstream(workstream.id) : [];
-        var runCount;
-        var waitCount;
-        var blockCount;
-        var columnModels;
-        var visibleColumns;
-        var emptyColumns;
-        var columns = [
-            {
-                key: 'up_next',
-                label: tr('project.columnUpNext', 'Up next'),
-                subtitle: tr('project.columnUpNextSubtitle', 'Start one of these next.'),
-                empty: tr('project.columnUpNextEmpty', 'Nothing is queued yet.'),
-                tone: 'neutral',
-                states: ['planned', 'queued']
-            },
-            {
-                key: 'in_progress',
-                label: tr('project.columnInProgress', 'In progress'),
-                subtitle: tr('project.columnInProgressSubtitle', 'Work currently moving.'),
-                empty: tr('project.columnInProgressEmpty', 'No live task right now.'),
-                tone: 'info',
-                states: ['running']
-            },
-            {
-                key: 'needs_decision',
-                label: tr('project.columnNeedsDecision', 'Needs review or input'),
-                subtitle: tr('project.columnNeedsDecisionSubtitle', 'Waiting on a human or reviewer.'),
-                empty: tr('project.columnNeedsDecisionEmpty', 'No decisions are pending.'),
-                tone: 'warning',
-                states: ['waiting_review', 'waiting_human']
-            },
-            {
-                key: 'blocked',
-                label: tr('project.statusBlocked', 'Blocked'),
-                subtitle: tr('project.columnBlockedSubtitle', 'Needs intervention before it can move.'),
-                empty: tr('project.columnBlockedEmpty', 'Nothing is blocked.'),
-                tone: 'danger',
-                states: ['blocked', 'failed']
-            },
-            {
-                key: 'ready',
-                label: tr('project.columnReadyClose', 'Ready to close'),
-                subtitle: tr('project.columnReadyCloseSubtitle', 'Execution finished, follow-through remains.'),
-                empty: tr('project.columnReadyCloseEmpty', 'Nothing is awaiting closeout.'),
-                tone: 'success',
-                states: ['execution_complete']
-            }
-        ];
-        if (!workstream) {
-            return renderDashboard();
-        }
-        runCount = countTasksByStates(workstream.id, ['running']);
-        waitCount = countTasksByStates(workstream.id, ['waiting_human', 'waiting_review']);
-        blockCount = countTasksByStates(workstream.id, ['blocked', 'failed']);
-        columnModels = columns.map(function(column) {
-            return {
-                key: column.key,
-                label: column.label,
-                subtitle: column.subtitle,
-                empty: column.empty,
-                tone: column.tone,
-                states: column.states,
-                tasks: tasks.filter(function(task) { return column.states.indexOf(task.state) !== -1; })
-            };
-        });
-        visibleColumns = columnModels.filter(function(column) {
-            return column.tasks.length;
-        });
-        emptyColumns = columnModels.filter(function(column) {
-            return !column.tasks.length;
-        });
-        return '<section class="project-main-section project-manager-view">'
-            + '<div class="project-section-header">'
-            + '<div><div class="project-section-kicker">' + escapeHTML(tr('project.workstreamLane', 'Workstream')) + '</div>'
-            + '<h2>' + escapeHTML(workstream.title) + '</h2><p>' + escapeHTML(workstreamFlowSummary(workstream)) + '</p></div>'
-            + '<div class="project-header-actions">'
-            + '<button type="button" class="project-inline-btn" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.newTaskShort', '+ Task')) + '</button>'
-            + renderWorkstreamInlineControls(workstream)
-            + '</div>'
-            + '</div>'
-            + renderCommandStats([
-                { label: tr('project.statusRunning', 'Running'), value: runCount, tone: runCount ? 'info' : 'neutral' },
-                { label: tr('project.statusWaiting', 'Waiting'), value: waitCount, tone: waitCount ? 'warning' : 'success' },
-                { label: tr('project.statusBlocked', 'Blocked'), value: blockCount, tone: blockCount ? 'danger' : 'success' }
-            ])
-            + (state.creatingTaskWorkstreamId === workstream.id ? renderTaskWizard(workstream) : '')
-            + renderWorkstreamGuide(workstream, tasks)
-            + (visibleColumns.length
-                ? '<div class="project-board project-board-progressive">'
-                    + visibleColumns.map(function(column) {
-                        return '<div class="project-board-column tone-' + escapeHTML(column.tone) + ' lane-' + escapeHTML(column.key) + '"><div class="project-board-column-header"><div class="project-board-column-title-row"><div class="project-board-column-title">' + escapeHTML(column.label) + '</div><div class="project-board-column-count">' + escapeHTML(String(column.tasks.length)) + '</div></div><div class="project-board-column-subtitle">' + escapeHTML(column.subtitle) + '</div></div>'
-                    + column.tasks.map(function(task) {
-                        return renderBoardTaskCard(task);
-                    }).join('')
-                        + '</div>';
-                    }).join('')
-                    + '</div>'
-                : '<div class="project-lane-empty-state"><div><strong>' + escapeHTML(tr('project.noTasksInLane', 'No tasks in this lane yet')) + '</strong><span>' + escapeHTML(tr('project.noTasksInLaneCopy', 'Add one concrete next step when this lane is ready to move.')) + '</span></div><button type="button" class="project-inline-btn primary" data-create-task="' + escapeHTML(workstream.id) + '">' + escapeHTML(tr('project.addTask', 'Add task')) + '</button></div>')
-            + renderCollapsedLaneStates(emptyColumns)
-            + '</section>';
+        if (state.currentView === 'board') return '';
+        return '<button type="button" class="project-breadcrumb" data-open-board>&#x2190; ' + escapeHTML(tr('project.boardTitle', 'Task board')) + '</button>';
     }
 
     function renderTaskRunbookPanel(task) {
@@ -3896,7 +1285,6 @@
         var missing = taskMissingEvidence(task);
         var updating = state.phaseUpdatingTaskId === task.id || state.updatingTaskId === task.id;
         var currentAttempt = currentPhaseAttemptForTask(task);
-        var currentSession = sessionForPhaseAttempt(currentAttempt);
         var runningToolRun = latestRunningToolRunForAttempt(currentAttempt);
         var currentToolRun = runningToolRun || latestToolRunForAttempt(currentAttempt);
         var currentAttemptToolRuns = sortedToolRunsNewestFirst(toolRunsForPhaseAttempt(currentAttempt));
@@ -3962,13 +1350,6 @@
                 + renderToolRunHistory(task, currentAttemptToolRuns.slice(1), currentAttempt, canComplete, toolRunning, currentPhase, false)
                 + '</div>'
             : '';
-        var sessionHTML = currentSession
-            ? '<div class="project-phase-requirements"><div class="project-fact-label">' + escapeHTML(tr('project.phaseSession', 'Phase session')) + '</div>'
-                + '<div class="project-action-group">'
-                + '<button type="button" class="project-inline-btn" data-session-id="' + escapeHTML(currentSession.id) + '">' + escapeHTML(tr('project.sessionDetails', 'Session details')) + '</button>'
-                + (currentSession.supportsAttach && currentSession.terminalId ? '<button type="button" class="project-inline-btn primary" data-attach-terminal="' + escapeHTML(currentSession.terminalId) + '">' + escapeHTML(tr('project.attachTerminal', 'Attach Terminal')) + '</button>' : '')
-                + '</div></div>'
-            : '';
         var controlsHTML = '';
 
         if (canStart) {
@@ -4002,7 +1383,6 @@
             + '<div class="project-phase-workbench-title">' + escapeHTML(humanizePhase(currentPhase)) + '</div></div>'
             + '<span class="project-pill tone-' + escapeHTML(currentTone) + '">' + escapeHTML(phaseStatusLabel(currentStatus)) + '</span></div>'
             + currentMetaHTML
-            + sessionHTML
             + requiredHTML
             + toolRunHTML
             + completionAssistHTML
@@ -4034,18 +1414,13 @@
             + '</div></div>';
     }
 
-    function renderTaskTimelinePanel(task) {
-        return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.timeline', 'Timeline')) + '</h3>'
-            + renderStructuredEventStream(task.timeline || [], tr('project.noTimeline', 'No timeline entries yet.'))
-            + '</div>';
-    }
-
     function renderTaskEvidencePanel(task) {
         var currentAttempt = currentPhaseAttemptForTask(task);
         var currentPhase = currentPhaseForTask(task);
         var canComplete = !!currentAttempt && currentPhase !== 'ready_for_acceptance' && currentAttempt.status === 'running';
         var toolRunning = !!latestRunningToolRunForAttempt(currentAttempt);
         return '<div class="project-tab-sections project-task-detail-sections">'
+            + '<section class="project-self-report"><h3>' + escapeHTML(tr('project.claims', 'Self-reports')) + '</h3><p>' + escapeHTML(task.recentSummary || '—') + '</p></section>'
             + renderTaskArtifactsPanel(task)
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.toolRuns', 'Tool runs')) + '</h3>'
             + renderToolRunHistory(task, taskToolRuns(task.id), currentAttempt, canComplete, toolRunning, currentPhase, false)
@@ -4061,137 +1436,73 @@
             + '</div>';
     }
 
-    function renderTaskSessionsPanel(taskSessions) {
-        return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.sessions', 'Sessions')) + '</h3>'
-            + (taskSessions.length ? taskSessions.map(function(session) {
-                var tone = statusTone(session.state);
-                tone = tone === 'neutral' ? toneFromText(session.state || session.name || '') : tone;
-                return '<button type="button" class="project-list-button project-session-button tone-' + escapeHTML(tone) + '" data-session-id="' + escapeHTML(session.id) + '">'
-                    + '<span class="project-nav-row"><span class="project-nav-main">' + renderSidebarSignal(tone) + '<span>' + escapeHTML(session.name) + '</span></span>'
-                    + (session.supportsAttach && session.terminalId ? renderSidebarBadge('TTY', 'info', '') : '') + '</span><span class="project-list-meta">' + escapeHTML(session.state + ' • ' + session.durationLabel) + '</span></button>';
-            }).join('') : '<div class="project-list-item muted">' + escapeHTML(tr('project.noSessions', 'No sessions recorded yet.')) + '</div>')
-            + '</div>';
-    }
-
     function renderTaskAuditPanel(task, decisionCards) {
         return '<div class="project-task-detail-stack">'
             + '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.audit', 'Audit')) + '</h3>'
             + renderStructuredEventStream(task.audit || [], tr('project.noAudit', 'No audit entries yet.'))
-            + '<div class="project-action-group project-task-audit-actions">'
-            + '<button type="button" class="project-inline-btn" data-task-history="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.viewHistory', 'View history')) + '</button>'
-            + '<button type="button" class="project-inline-btn" data-task-replay="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.openReplay', 'Open replay')) + '</button>'
-            + '</div>'
             + '</div>'
             + (decisionCards || '')
             + '</div>';
     }
 
-    function renderTaskDetailTabs() {
-        var currentTab = currentTaskDetailTab();
-        var tabs = [
-            { id: 'overview', label: tr('project.overview', 'Overview') },
-            { id: 'timeline', label: tr('project.timeline', 'Timeline') },
-            { id: 'evidence', label: tr('project.evidence', 'Evidence') },
-            { id: 'files_diff', label: tr('project.filesDiff', 'Files & Diff') },
-            { id: 'sessions', label: tr('project.sessions', 'Sessions') },
-            { id: 'audit', label: tr('project.audit', 'Audit') }
-        ];
-        return '<div class="project-task-detail-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.taskDetail', 'Task Detail')) + '">'
-            + tabs.map(function(tab) {
-                var active = tab.id === currentTab;
-                return '<button type="button" class="project-inline-btn project-task-detail-tab' + (active ? ' active' : '') + '" data-task-detail-tab="' + escapeHTML(tab.id) + '" role="tab" aria-selected="' + (active ? 'true' : 'false') + '">'
-                    + escapeHTML(tab.label)
-                    + '</button>';
-            }).join('')
+    // Overview follows the v3 prototype's detail dialog: summary pills plus
+    // flat info cards (task info, evidence, self-report) — no forms, no tabs.
+    function renderTaskOverviewCards(task) {
+        var status = boardAPI().taskStatus(task, state.snapshot);
+        var cls = boardStatusClass(status);
+        var label = tr('project.taskStatus.' + status, status);
+        var phase = currentPhaseForTask(task);
+        var workstream = task.workstreamId ? findById(workstreams(), task.workstreamId) : null;
+        var stamp = boardAPI().taskTimestamp(task, state.snapshot);
+        var artifacts = taskArtifacts(task.id).slice().sort(function(a, b) {
+            return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+        }).slice(0, 4);
+        var audit = (Array.isArray(task.audit) ? task.audit : []).slice(-3).reverse();
+        function def(term, value) {
+            return '<div class="definition-row"><dt>' + escapeHTML(term) + '</dt><dd>' + value + '</dd></div>';
+        }
+        var summary = '<div class="detail-summary">'
+            + '<span class="pill' + (status === 'running' ? ' accent' : '') + '"><span class="board-task-dot ' + cls + '" aria-hidden="true"></span>' + escapeHTML(label) + '</span>'
+            + '<span class="pill">' + escapeHTML(humanizePhase(phase)) + '</span>'
+            + (workstream ? '<span class="pill">' + escapeHTML(workstream.title) + '</span>' : '')
             + '</div>';
-    }
-
-    function renderTaskDetailTabContent(task, taskSessions, decisionCards) {
-        switch (currentTaskDetailTab()) {
-        case 'timeline':
-            return renderTaskTimelinePanel(task);
-        case 'evidence':
-            return renderTaskEvidencePanel(task);
-        case 'files_diff':
-            return renderTaskFilesDiffPanel(task);
-        case 'sessions':
-            return renderTaskSessionsPanel(taskSessions);
-        case 'audit':
-            return renderTaskAuditPanel(task, decisionCards);
-        default:
-            return '<div class="project-task-detail-stack">'
-                + renderTaskExecutionGuide(task, taskSessions)
-                + renderTaskDispatchCard(task)
-                + renderTaskRunbookPanel(task)
-                + renderTaskApprovalStatusCard(task)
-                + '</div>';
-        }
-    }
-
-    function renderTaskDetail() {
-        var task = getSelectedTask();
-        var acceptanceDecision = task && task.acceptanceDecisionId ? decisionById(task.acceptanceDecisionId) : null;
-        var archiveDecision = task && task.archiveDecisionId ? decisionById(task.archiveDecisionId) : null;
-        var taskSessions = task ? sessionsForTask(task.id) : [];
-        var decisionCards = '';
-        if (!task) {
-            return renderDashboard();
-        }
-        if (acceptanceDecision) {
-            decisionCards += '<div class="project-card-list"><h3>' + escapeHTML(tr('project.acceptanceDecision', 'Acceptance Decision')) + '</h3>'
-                + renderDecisionCard(acceptanceDecision, tr('project.acceptanceDecision', 'Acceptance Decision'))
-                + '</div>';
-        }
-        if (archiveDecision) {
-            decisionCards += '<div class="project-card-list"><h3>' + escapeHTML(tr('project.archiveDecision', 'Archive Decision')) + '</h3>'
-                + renderDecisionCard(archiveDecision, tr('project.archiveDecision', 'Archive Decision'))
-                + '</div>';
-        }
-        return '<section class="project-main-section project-manager-view">'
-            + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.taskDetail', 'Task Detail')) + '</div>'
-            + '<h2>' + escapeHTML(task.title) + '</h2><p>' + escapeHTML(taskAgentName(task) + ' / ' + taskWorkstreamName(task)) + '</p></div><div class="project-header-actions project-task-actions">' + renderTaskInlineControls(task) + '</div></div>'
-            + renderCommandStats([
-                { label: tr('project.state', 'State'), value: shortStatusLabel(task.state), tone: statusTone(task.state) },
-                { label: tr('project.skill', 'Skill'), value: humanizeSkill(task.selectedSkill), tone: 'info' },
-                { label: tr('project.phase', 'Phase'), value: humanizePhase(currentPhaseForTask(task)), tone: phaseStatusTone(phaseStatusForTask(task, currentRunbookPhase(task))) },
-                { label: tr('project.evidence', 'Evidence'), value: taskMissingEvidence(task).length ? String(taskMissingEvidence(task).length) : tr('project.statusClear', 'Clear'), tone: taskMissingEvidence(task).length ? 'warning' : 'success' },
-                { label: tr('project.risk', 'Risk'), value: shortRiskLabel(task.riskLevel), tone: riskTone(task.riskLevel) },
-                { label: tr('project.sessions', 'Sessions'), value: taskSessions.length, tone: taskSessions.length ? 'info' : 'neutral' }
-            ])
-            + renderTaskDetailTabs()
-            + '<div class="project-task-detail-panel">'
-            + renderTaskDetailTabContent(task, taskSessions, decisionCards)
-            + '</div>'
+        var info = '<section class="info-card"><h3>' + escapeHTML(tr('project.taskInfoTitle', 'Task info')) + '</h3><dl>'
+            + def(tr('project.taskInfoState', 'State'), escapeHTML(humanizeTaskState(task.state)))
+            + def(tr('project.currentPhase', 'Current phase'), escapeHTML(humanizePhase(phase)))
+            + def(tr('project.taskInfoGoal', 'Goal'), escapeHTML(task.goal || '—'))
+            + def(tr('project.taskInfoNextStep', 'Next step'), escapeHTML(task.nextStep || task.recentSummary || tr('project.noNextStep', 'No next step recorded.')))
+            + def(tr('project.taskInfoUpdated', 'Last update'), escapeHTML(stamp ? formatTime(stamp) : '—'))
+            + '</dl></section>';
+        var evidence = '<section class="info-card evidence-card"><h3>' + escapeHTML(tr('project.evidence', 'Evidence')) + '</h3>'
+            + (artifacts.length
+                ? '<ul class="evidence-list">' + artifacts.map(function(item) {
+                    return '<li><div class="evidence-heading">'
+                        + '<span class="source-badge">' + escapeHTML(humanizeArtifactOutcome(item.outcome)) + '</span>'
+                        + '<strong>' + escapeHTML(humanizeArtifactKind(item.kind)) + '</strong>'
+                        + '<span class="source-note">' + escapeHTML(formatTime(item.createdAt)) + '</span></div>'
+                        + (item.value ? '<pre class="evidence-value">' + escapeHTML(item.value) + '</pre>' : '')
+                        + '</li>';
+                }).join('') + '</ul>'
+                : '<p class="muted">' + escapeHTML(tr('project.noArtifacts', 'No artifacts recorded yet.')) + '</p>')
             + '</section>';
-    }
-
-    function renderSessionDetail(sessionOverride) {
-        var session = sessionOverride || getSelectedSession();
-        if (!session) {
-            return renderTaskDetail();
-        }
-        return '<section class="project-main-section">'
-            + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.sessionDetail', 'Session Detail')) + '</div>'
-            + '<h2>' + escapeHTML(session.name) + '</h2><p>' + escapeHTML(session.summary) + '</p></div>'
-            + (session.supportsAttach && session.terminalId ? '<button type="button" class="project-inline-btn primary" data-attach-terminal="' + escapeHTML(session.terminalId) + '">' + escapeHTML(tr('project.attachTerminal', 'Attach Terminal')) + '</button>' : '')
-            + '</div>'
-            + '<div class="project-two-column">'
-            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.sessionInfo', 'Session Info')) + '</h3>'
-            + '<div class="project-list-item"><strong>ID:</strong> ' + escapeHTML(session.id) + '</div>'
-            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.runtime', 'Runtime')) + ':</strong> ' + escapeHTML(session.runtimeId) + '</div>'
-            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.executionRole', 'Execution role')) + ':</strong> ' + escapeHTML(humanizeExecutionRole(session.executionRole)) + '</div>'
-            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.systemRole', 'System role')) + ':</strong> ' + escapeHTML(humanizeSystemRole(session.systemRole || 'worker')) + '</div>'
-            + (session.phaseAttemptId ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.phaseAttempt', 'Phase attempt')) + ':</strong> ' + escapeHTML(session.phaseAttemptId) + '</div>' : '')
-            + (session.workspaceRef ? '<div class="project-list-item"><strong>' + escapeHTML(tr('project.workspace', 'Workspace')) + ':</strong> ' + escapeHTML(humanizeWorkspaceRef(session.workspaceRef)) + '</div>' : '')
-            + '<div class="project-list-item"><strong>' + escapeHTML(tr('project.startedAt', 'Started')) + ':</strong> ' + escapeHTML(formatTime(session.startedAt)) + '</div>'
-            + '</div>'
-            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.claims', 'Self-reports')) + '</h3>'
-            + (session.claims || []).map(function(item) { return '<div class="project-list-item">' + escapeHTML(item) + '</div>'; }).join('')
-            + '<h3>' + escapeHTML(tr('project.artifacts', 'Artifacts')) + '</h3>'
-            + (session.artifacts || []).map(function(item) { return '<div class="project-list-item">' + escapeHTML(item) + '</div>'; }).join('')
-            + '</div>'
-            + '</div>'
+        var report = task.recentSummary
+            ? '<section class="info-card report-card"><div class="card-heading"><h3>' + escapeHTML(tr('project.taskReportTitle', 'Self-report')) + '</h3>'
+                + '<span class="source-badge">' + escapeHTML(tr('project.taskReportTitle', 'Self-report')) + '</span>'
+                + '<span class="pill">' + escapeHTML(tr('project.taskUnverified', 'Unverified')) + '</span></div>'
+                + '<blockquote>' + escapeHTML(task.recentSummary) + '</blockquote></section>'
+            : '';
+        var activity = '<section class="info-card"><h3>' + escapeHTML(tr('project.taskActivityTitle', 'Recent activity')) + '</h3>'
+            + (audit.length
+                ? audit.map(function(item) {
+                    return '<p class="source-note">' + escapeHTML((item && item.action || tr('project.update', 'Update')) + ' · ' + (item && item.detail || '—') + ' · ' + formatTime(item && item.timestamp)) + '</p>';
+                }).join('')
+                : '<p class="muted">' + escapeHTML(tr('project.noActivity', 'No activity yet.')) + '</p>')
             + '</section>';
+        return summary
+            + info
+            + '<div class="detail-columns' + (report ? '' : ' single') + '">' + evidence + report + '</div>'
+            + activity
+            + renderTaskApprovalStatusCard(task);
     }
 
     function renderApprovalCard(item) {
@@ -4234,8 +1545,6 @@
             + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.approvals', 'Approvals Inbox')) + '</div>'
             + '<h2>' + escapeHTML(tr('project.approvalsTitle', 'Items waiting for your decision')) + '</h2>'
             + '<p>' + escapeHTML(tr('project.approvalsHint', 'Review the task context, then approve, reject, or reroute the request.')) + '</p></div></div>'
-            + renderApprovalFocusCard(pending, resolved)
-            + renderApprovalQueueSummary(pending, resolved)
             + '<div class="project-approval-section"><div class="project-section-kicker">' + escapeHTML(tr('project.reviewNow', 'Review now')) + '</div>'
             + (pending.length
                 ? pending.map(renderApprovalCard).join('')
@@ -4249,454 +1558,275 @@
             + '</section>';
     }
 
-    function renderEventsView() {
-        var header = state.selectedTaskId ? tr('project.taskHistory', 'Task Event History') : tr('project.projectHistory', 'Project Event History');
-        var subcopy = state.selectedTaskId ? tr('project.taskHistoryHint', 'Replay-ready task events, newest first.') : tr('project.projectHistoryHint', 'Project-scoped event history, newest first.');
-        var visibleEvents = filterEventsByQuery(filterEventsByLane(state.currentEvents, state.selectedEventLane), state.eventSearchQuery);
-        if (state.eventsLoading) {
-            return '<section class="project-main-section"><div class="project-empty-state">' + escapeHTML(tr('project.loadingEvents', 'Loading events…')) + '</div></section>';
-        }
-        return '<section class="project-main-section">'
-            + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.history', 'History')) + '</div><h2>' + escapeHTML(header) + '</h2><p>' + escapeHTML(subcopy) + '</p></div></div>'
-            + (state.eventsError ? '<div class="project-banner error">' + escapeHTML(state.eventsError) + '</div>' : '')
-            + renderLaneFilterControls('events', state.selectedEventLane)
-            + renderTextFilterControl('events', state.eventSearchQuery)
-            + '<div class="project-card-list">'
-            + (visibleEvents.length ? renderLaneGroups(visibleEvents, state.eventSearchQuery) : '<div class="project-list-item muted">' + escapeHTML(tr('project.noEvents', 'No events matched this filter.')) + '</div>')
-            + (state.currentEventsCursor ? '<button type="button" class="project-inline-btn" data-events-load-more="1">' + escapeHTML(tr('project.loadMoreEvents', 'Load more')) + '</button>' : '')
-            + '</div>'
-            + '</section>';
-    }
-
-    function renderReplayView() {
-        var visibleReplaySteps = filterEventsByQuery(filterEventsByLane(state.currentReplay && state.currentReplay.steps, state.selectedReplayLane), state.replaySearchQuery);
-        var visibleReplayTransitions = filterTransitionsByQuery(filterTransitionsByLane(state.currentReplay && state.currentReplay.transitions, state.selectedReplayLane), state.replaySearchQuery);
-        var visibleReplaySections = (state.currentReplay && state.currentReplay.sections ? state.currentReplay.sections : []).filter(function(section) {
-            return state.selectedReplayLane === 'all' || section.kind === state.selectedReplayLane;
-        }).map(function(section) {
-            return {
-                kind: section.kind,
-                title: section.title,
-                steps: filterEventsByQuery(section.steps, state.replaySearchQuery)
-            };
-        }).filter(function(section) {
-            return section.steps.length > 0;
-        });
-        if (state.replayLoading) {
-            return '<section class="project-main-section"><div class="project-empty-state">' + escapeHTML(tr('project.loadingReplay', 'Loading replay…')) + '</div></section>';
-        }
-        if (!state.currentReplay) {
-            return '<section class="project-main-section"><div class="project-empty-state">' + escapeHTML(tr('project.noReplay', 'No replay data available.')) + '</div></section>';
-        }
-        return '<section class="project-main-section">'
-            + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.replay', 'Replay')) + '</div><h2>' + escapeHTML(state.currentReplay.title) + '</h2><p>' + escapeHTML(tr('project.replayHint', 'Ordered task events for step-by-step playback.')) + '</p></div></div>'
-            + renderLaneFilterControls('replay', state.selectedReplayLane)
-            + renderTextFilterControl('replay', state.replaySearchQuery)
-            + '<div class="project-two-column">'
-            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.replaySections', 'Replay sections')) + '</h3>'
-            + visibleReplaySections.map(function(section) {
-                return '<div class="project-lane-section lane-' + escapeHTML(section.kind) + '">'
-                    + '<div class="project-lane-header">'
-                    + renderLanePill(section.kind)
-                    + '<span class="project-list-meta">' + escapeHTML(section.title) + '</span>'
-                    + '</div>'
-                    + section.steps.map(function(step, index) {
-                        return renderLaneEventCard(step, index, state.replaySearchQuery);
-                    }).join('')
-                    + '</div>';
-            }).join('')
-            + '</div>'
-            + '<div class="project-card-list"><h3>' + escapeHTML(tr('project.replayTransitions', 'Transitions')) + '</h3>'
-            + visibleReplayTransitions.map(function(item) {
-                return renderTransitionCard(item, state.replaySearchQuery);
-            }).join('')
-            + '<h3>' + escapeHTML(tr('project.acceptanceDecision', 'Acceptance Decision')) + '</h3>'
-            + renderDecisionCard(state.currentReplay.acceptanceDecision, tr('project.replayAcceptanceDecision', 'Replay Acceptance Decision'))
-            + '<h3>' + escapeHTML(tr('project.archiveDecision', 'Archive Decision')) + '</h3>'
-            + renderDecisionCard(state.currentReplay.archiveDecision, tr('project.replayArchiveDecision', 'Replay Archive Decision'))
-            + '<h3>' + escapeHTML(tr('project.replaySteps', 'All steps')) + '</h3>'
-            + (visibleReplaySteps.length ? renderLaneGroups(visibleReplaySteps, state.replaySearchQuery) : '<div class="project-list-item muted">' + escapeHTML(tr('project.noReplay', 'No replay data available.')) + '</div>')
-            + '</div>'
-            + '</div>'
-            + '</section>';
-    }
-
-    // --- F1 status board (task card C3) ---
-
-    function boardModels() {
-        var bridge = window.RoamBenchBoardStatus;
-        if (!bridge || typeof bridge.cardModel !== 'function') {
-            return [];
-        }
-        return (state.boardProjects || []).map(function(project) {
-            return bridge.cardModel(project);
-        });
-    }
-
-    function boardTaskStateLabel(value) {
-        switch (String(value || '').trim().toLowerCase()) {
-        case 'planned':
-        case 'queued':
-            return tr('project.statusNext', 'Next');
-        case 'running':
-            return tr('project.statusRunning', 'Running');
-        case 'waiting_human':
-        case 'waiting_review':
-            return tr('project.statusReview', 'Review');
-        case 'blocked':
-        case 'failed':
-            return tr('project.statusBlocked', 'Blocked');
-        case 'execution_complete':
-            return tr('project.statusDone', 'Done');
-        case 'archived':
-            return tr('project.statusArchive', 'Archive');
-        default:
-            return value ? humanizeToken(value) : tr('project.statusActive', 'Active');
-        }
-    }
-
-    function boardPhaseLabel(value) {
-        return value ? humanizePhase(value) : '';
-    }
-
-    function boardWorktreeRow(item, index) {
-        return '<div class="board-worktree-row">'
-            + '<span class="board-worktree-path" title="' + escapeHTML(item.path) + '">' + escapeHTML(item.path) + '</span>'
-            + '<span class="board-worktree-branch">' + escapeHTML(item.branch || '—') + '</span>'
-            + (item.headSha ? '<span class="board-worktree-sha">' + escapeHTML(boardShortSha(item.headSha)) + '</span>' : '')
-            + (item.isCurrent ? '<span class="project-pill tone-info">' + escapeHTML(tr('project.boardWorktreeCurrent', 'current')) + '</span>' : '')
-            + '</div>';
-    }
-
-    function boardShortSha(sha) {
-        var bridge = window.RoamBenchBoardStatus;
-        return bridge && typeof bridge.shortSha === 'function' ? bridge.shortSha(sha) : String(sha || '').slice(0, 7);
-    }
-
-    function renderBoardGitSection(model) {
-        var git = model.git;
-        if (!git.available) {
-            return '<div class="board-git-error" role="status">'
-                + escapeHTML(tr('project.boardGitUnavailable', 'Git unavailable'))
-                + (git.error ? ': ' + escapeHTML(git.error) : '')
-                + '</div>';
-        }
-        var chips = [];
-        if (git.branchLabel) {
-            chips.push('<span class="board-git-chip" title="' + escapeHTML(git.repoPath) + '">⎇ ' + escapeHTML(git.branchLabel) + '</span>');
-        }
-        if (git.hasUpstream) {
-            chips.push('<span class="board-git-chip">↑' + escapeHTML(String(git.ahead)) + ' ↓' + escapeHTML(String(git.behind)) + '</span>');
-        }
-        if (git.dirty) {
-            chips.push('<span class="board-git-chip board-git-dirty">● ' + escapeHTML(tr('project.boardDirtyCount', '{count} changed', { count: git.dirtyCount })) + '</span>');
-        }
-        if (git.worktreeCount) {
-            chips.push('<button type="button" class="board-git-chip board-git-worktrees" data-board-worktrees="' + escapeHTML(model.projectId) + '" aria-expanded="' + (state.boardExpanded[model.projectId] ? 'true' : 'false') + '">'
-                + escapeHTML(tr('project.boardWorktreeCount', '{count} worktree', { count: git.worktreeCount }))
-                + '</button>');
-        }
-        var expanded = state.boardExpanded[model.projectId] && git.worktreeCount
-            ? '<div class="board-worktree-list">' + git.worktrees.map(boardWorktreeRow).join('') + '</div>'
-            : '';
-        return '<div class="board-git-row">' + chips.join('') + '</div>' + expanded;
-    }
-
-    function renderBoardCard(model) {
-        var taskHTML = model.currentTask
-            ? '<div class="board-card-task">'
-                + '<span class="board-card-task-title">' + escapeHTML(model.currentTask.title) + '</span>'
-                + '<span class="project-pill tone-' + escapeHTML(statusTone(model.currentTask.state)) + '">' + escapeHTML(boardTaskStateLabel(model.currentTask.state)) + '</span>'
-                + (model.currentTask.currentPhase
-                    ? '<span class="board-card-task-phase">' + escapeHTML(boardPhaseLabel(model.currentTask.currentPhase)) + '</span>'
-                    : '')
-                + '</div>'
-            : '<div class="board-card-task board-card-task-empty">' + escapeHTML(tr('project.boardNoTask', 'No task in progress')) + '</div>';
-        return '<article class="board-card tone-' + escapeHTML(statusTone(model.status)) + '" data-board-project="' + escapeHTML(model.projectId) + '">'
-            + '<header class="board-card-header">'
-            + '<h3 class="board-card-name">' + escapeHTML(model.name || model.projectId) + '</h3>'
-            + '<span class="project-pill tone-' + escapeHTML(statusTone(model.status)) + '">' + escapeHTML(shortStatusLabel(model.status)) + '</span>'
-            + '</header>'
-            + taskHTML
-            + (model.lastActivitySummary
-                ? '<div class="board-card-activity">'
-                    + '<span class="board-card-activity-time">' + escapeHTML(formatTime(model.lastActivityAt)) + '</span>'
-                    + '<span class="board-card-activity-summary">' + escapeHTML(model.lastActivitySummary) + '</span>'
-                    + '</div>'
-                : '')
-            + renderBoardGitSection(model)
-            + '</article>';
-    }
-
-    // I3 extends the existing board entry, polling, snapshot and Git inspector.
     function boardAPI() { return window.RoamBenchBoardStatus; }
-    function bt(key, vars) { return tr('project.boardV3.' + key, key, vars); }
-    function boardUnknown(value) { return value == null || value === '' ? bt('unknown') : String(value); }
-    function boardSessions() { return boardAPI().sessionModels(state.boardTerminals, state.snapshot); }
-    function boardRelative(value) {
-        var stamp = Date.parse(value);
-        if (!Number.isFinite(stamp) || stamp <= 0) return bt('unknown');
-        var duration = boardAPI().formatDuration(Math.max(0, Date.now() - stamp));
-        return bt('ago', { duration: duration });
+
+    function boardRelative(stamp) {
+        if (!stamp) return tr('project.unknownTime', 'Unknown time');
+        var seconds = Math.max(0, Math.floor((Date.now() - stamp) / 1000));
+        var unit = seconds < 60 ? 'second' : seconds < 3600 ? 'minute' : seconds < 86400 ? 'hour' : 'day';
+        var divisor = { second: 1, minute: 60, hour: 3600, day: 86400 }[unit];
+        return new Intl.RelativeTimeFormat((app() && app().getLanguage && app().getLanguage()) || 'en', { numeric: 'auto' }).format(-Math.floor(seconds / divisor), unit);
     }
-    function boardDot(status) { return '<span class="status-dot" data-status="' + escapeHTML(status) + '" aria-hidden="true"></span>'; }
-    function boardGroups(items) {
-        var groups = boardModels().map(function(p) { return { id: p.projectId, name: p.name, items: [] }; });
-        items.forEach(function(s) {
-            var group = groups.find(function(g) { return g.id === s.projectId; });
-            if (!group) {
-                var project = findById(projects(), s.projectId);
-                group = { id: s.projectId, name: project ? project.name : s.projectId || bt('unassigned'), items: [] };
-                groups.push(group);
-            }
-            group.items.push(s);
+
+    var BOARD_STAT_ORDER = ['running', 'approval', 'ready', 'planning', 'paused', 'blocked', 'failed', 'completed'];
+
+    // Status color classes follow the v3.3 board prototype's flat VS Code palette.
+    function boardStatusClass(status) {
+        return {
+            planning: 'st-planning', approval: 'st-approval', ready: 'st-ready',
+            running: 'st-running', paused: 'st-paused', completed: 'st-completed',
+            blocked: 'st-blocked', failed: 'st-failed'
+        }[status] || 'st-planning';
+    }
+
+    function countProjectsText(count) {
+        return countText(count, 'project.countProjectsSingular', '{count} project', 'project.countProjectsPlural', '{count} projects');
+    }
+
+    // Task interval for the timeline: from the earliest recorded observation to the latest.
+    function taskInterval(task, latest) {
+        var end = latest || 0;
+        var starts = [];
+        function push(value) {
+            var stamp = Date.parse(value || '');
+            if (Number.isFinite(stamp)) starts.push(stamp);
+        }
+        push(task.createdAt);
+        (Array.isArray(task.audit) ? task.audit : []).forEach(function(item) { push(item && item.timestamp); });
+        checkpoints().forEach(function(item) {
+            if (item.taskId === task.id) push(item.requestedAt);
         });
-        return groups;
+        var start = starts.length ? starts.reduce(function(min, value) { return Math.min(min, value); }, Infinity) : 0;
+        if (!end) end = Date.now();
+        if (!start || !Number.isFinite(start)) start = end;
+        return { start: Math.min(start, end), end: end };
     }
-    function boardGroupTitle(group) {
-        return (group.id ? '<button type="button" class="project-open" data-board-detail="' + escapeHTML(group.id) + '" aria-haspopup="dialog">' : '<span>')
-            + escapeHTML(group.name) + ' <span class="project-count">' + escapeHTML(sessionCountText(group.items.length)) + '</span>'
-            + (group.id ? '</button>' : '</span>');
+
+    var BOARD_RANGES = [
+        { id: 'today', labelKey: 'project.boardRangeToday', fallback: 'Today' },
+        { id: '7d', labelKey: 'project.boardRange7d', fallback: 'Last 7 days' },
+        { id: '30d', labelKey: 'project.boardRange30d', fallback: 'Last 30 days' },
+        { id: 'all', labelKey: 'project.boardRangeAll', fallback: 'All' }
+    ];
+
+    function boardRangeWindow(rangeId, intervals) {
+        var now = Date.now();
+        if (rangeId === 'today') {
+            var dayStart = new Date();
+            dayStart.setHours(0, 0, 0, 0);
+            return { start: dayStart.getTime(), end: Math.max(now, dayStart.getTime() + 60000) };
+        }
+        if (rangeId === '7d' || rangeId === '30d') {
+            var days = rangeId === '7d' ? 7 : 30;
+            return { start: now - days * 86400000, end: now };
+        }
+        var start = intervals.reduce(function(min, item) { return Math.min(min, item.start); }, Infinity);
+        var end = intervals.reduce(function(max, item) { return Math.max(max, item.end); }, 0);
+        if (!Number.isFinite(start) || !end) return { start: now - 3600000, end: now };
+        if (end - start < 60000) {
+            start -= 60000;
+            end += 60000;
+        }
+        return { start: start, end: Math.max(end, Math.min(now, end)) };
     }
-    function boardSessionButton(s, className, content) {
-        return '<button type="button" class="' + className + '" data-board-session="' + escapeHTML(s.id) + '" aria-haspopup="dialog" aria-label="'
-            + escapeHTML(s.name + ' · ' + bt(s.status) + ' · ' + bt('details')) + '">' + content + '</button>';
+
+    function boardTickLabel(stamp, spanMs) {
+        var lang = (app() && app().getLanguage && app().getLanguage()) || 'en';
+        try {
+            if (spanMs <= 36 * 3600000) {
+                return new Intl.DateTimeFormat(lang, { hour: '2-digit', minute: '2-digit' }).format(stamp);
+            }
+            return new Intl.DateTimeFormat(lang, { month: 'numeric', day: 'numeric' }).format(stamp);
+        } catch (_) {
+            return new Date(stamp).toISOString().slice(0, spanMs <= 36 * 3600000 ? 16 : 10);
+        }
     }
-    function renderBoardWall(groups) {
-        return groups.map(function(group) {
-            return '<section class="project-group"><div class="project-heading"><h3>' + boardGroupTitle(group) + '</h3></div>'
-                + (group.items.length ? '<ul class="session-grid">' + group.items.map(function(s) {
-                    return '<li class="session-cell">' + boardSessionButton(s, 'session-open',
-                        '<span class="session-name-row">' + boardDot(s.status) + '<span class="session-name">' + escapeHTML(s.name) + '</span></span>'
-                        + '<span class="session-meta"><span class="session-state-time">' + escapeHTML(bt(s.status)) + ' · ' + escapeHTML(boardRelative(s.lastActivity)) + '</span>'
-                        + (s.taskId ? '<span class="task-mini">' + escapeHTML(s.taskId) + '</span>' : '') + '</span>')
-                        + '<span class="hermes-badge" data-mode="' + s.hermesMode + '" title="' + escapeHTML(bt('hermes_' + s.hermesMode)) + '" aria-label="' + escapeHTML(bt('hermes_' + s.hermesMode)) + '">H</span></li>';
-                }).join('') + '</ul>' : '<p class="panel-note">' + escapeHTML(bt('noSessions')) + '</p>') + '</section>';
+
+    function renderBoardGantt(visible, range, dataEnd) {
+        var intervals = visible.map(function(row) {
+            return Object.assign({ interval: taskInterval(row.task, row.stamp || dataEnd) }, row);
+        }).filter(function(row) {
+            // Inclusive bounds: tasks whose only timestamp equals a range edge still show.
+            return row.interval.end >= range.start && row.interval.start <= range.end;
+        });
+        var groups = [];
+        var byProject = {};
+        intervals.forEach(function(row) {
+            var pid = row.task.projectId || '';
+            if (!byProject[pid]) {
+                var project = findById(projects(), pid);
+                byProject[pid] = { id: pid, name: project ? (project.name || project.id) : (pid || '—'), rows: [] };
+                groups.push(byProject[pid]);
+            }
+            byProject[pid].rows.push(row);
+        });
+        var tickCount = 6;
+        var ticks = [];
+        for (var i = 0; i < tickCount; i += 1) {
+            var tickStamp = range.start + (range.end - range.start) * i / (tickCount - 1);
+            ticks.push('<span style="--tick:' + (i / (tickCount - 1) * 100) + '%">' + escapeHTML(boardTickLabel(tickStamp, range.end - range.start)) + '</span>');
+        }
+        var nowPos = Math.max(0, Math.min(100, (Date.now() - range.start) / (range.end - range.start) * 100));
+        var rangePills = BOARD_RANGES.map(function(range) {
+            return '<button type="button" class="board-range-pill" data-board-range="' + range.id + '" aria-pressed="' + (state.boardRange === range.id) + '">'
+                + escapeHTML(tr(range.labelKey, range.fallback)) + '</button>';
         }).join('');
+        if (!intervals.length) {
+            return '<section class="board-panel" id="board-panel-gantt" role="tabpanel" aria-labelledby="board-tab-gantt"' + (state.boardTab === 'gantt' ? '' : ' hidden') + '>'
+                + '<div class="board-panel-heading"><h2>' + escapeHTML(tr('project.boardTimelineTitle', 'Task timeline')) + '</h2>'
+                + '<div class="board-range-pills" role="group">' + rangePills + '</div></div>'
+                + '<div class="board-empty-note">' + escapeHTML(tr('project.boardTimelineEmpty', 'No tasks in this time range.')) + '</div>'
+                + '</section>';
+        }
+        return '<section class="board-panel" id="board-panel-gantt" role="tabpanel" aria-labelledby="board-tab-gantt"' + (state.boardTab === 'gantt' ? '' : ' hidden') + '>'
+            + '<div class="board-panel-heading"><h2>' + escapeHTML(tr('project.boardTimelineTitle', 'Task timeline')) + '</h2>'
+            + '<div class="board-range-pills" role="group">' + rangePills + '</div></div>'
+            + '<div class="board-gantt-scroll" role="region" tabindex="0" style="--now:' + nowPos.toFixed(3) + '%">'
+            + '<table class="board-gantt-table">'
+            + '<caption class="sr-only">' + escapeHTML(itemCountText(intervals.length)) + '</caption>'
+            + '<colgroup><col class="board-gantt-name-col"><col></colgroup>'
+            + '<thead><tr><th scope="col" class="board-gantt-label">' + escapeHTML(tr('project.boardTimelineNameCol', 'Task · click for details')) + '</th>'
+            + '<th><span class="sr-only">' + escapeHTML(boardTickLabel(range.start, range.end - range.start) + ' – ' + boardTickLabel(range.end, 0)) + '</span>'
+            + '<div class="board-time-axis" aria-hidden="true">' + ticks.join('') + '</div></th></tr></thead>'
+            + groups.map(function(group) {
+                return '<tbody aria-label="' + escapeHTML(group.name) + '">'
+                    + '<tr class="board-gantt-project"><th scope="rowgroup" class="board-gantt-label"><span class="board-gantt-project-name">'
+                    + escapeHTML(group.name + ' · ' + itemCountText(group.rows.length)) + '</span></th><td></td></tr>'
+                    + group.rows.map(function(row) {
+                        var clipStart = Math.max(row.interval.start, range.start);
+                        var clipEnd = Math.min(row.interval.end, range.end);
+                        var startPct = (clipStart - range.start) / (range.end - range.start) * 100;
+                        var durationPct = Math.max(0, (clipEnd - clipStart) / (range.end - range.start) * 100);
+                        var barTitle = formatTime(row.interval.start) + ' – ' + formatTime(row.interval.end);
+                        return '<tr class="board-gantt-row"><th scope="row" class="board-gantt-label">'
+                            + '<button type="button" class="board-gantt-name" data-task-id="' + escapeHTML(row.task.id) + '"'
+                            + ' aria-label="' + escapeHTML((row.task.title || row.task.id) + ', ' + row.label) + '">'
+                            + '<span class="board-task-dot ' + row.cls + '" aria-hidden="true"></span>'
+                            + '<span class="board-gantt-name-text">' + escapeHTML(row.task.title || row.task.id) + '</span></button></th>'
+                            + '<td><div class="board-timeline-track">'
+                            + '<span class="board-timeline-bar ' + row.cls + '" style="--start:' + startPct.toFixed(3) + '%; --duration:' + durationPct.toFixed(3) + '%" title="' + escapeHTML(barTitle) + '"></span>'
+                            + '</div></td></tr>';
+                    }).join('')
+                    + '</tbody>';
+            }).join('')
+            + '</table></div>'
+            + '<div class="board-gantt-footnote"><p>│ ' + escapeHTML(tr('project.boardTimelineNow', 'now')) + '</p></div>'
+            + '</section>';
     }
-    function boardRange() {
-        return boardAPI().calendarRange(state.boardRangePreset, Date.now(), state.boardRangeFrom, state.boardRangeTo);
-    }
-    function renderBoardCalendar(range) {
-        var month = state.boardCalendarMonth || boardAPI().dateKey(Date.now()).slice(0, 7);
-        var from = state.boardDraftFrom || range.from, to = state.boardDraftTo || from;
-        var low = from < to ? from : to, high = from < to ? to : from;
-        return '<div class="range-wrap"><button type="button" class="range-btn" data-board-calendar-toggle aria-expanded="' + state.boardCalendarOpen + '" aria-controls="board-range-pop">'
-            + escapeHTML(range.from + ' – ' + range.to) + ' <span class="caret">▾</span></button>'
-            + '<div class="range-pop" id="board-range-pop"' + (state.boardCalendarOpen ? '' : ' hidden') + '><div class="range-presets">'
-            + ['today', '3days', '7days', 'month'].map(function(key) { return '<button type="button" class="pill" data-board-range="' + key + '" aria-pressed="' + (state.boardRangePreset === key) + '">' + escapeHTML(bt(key)) + '</button>'; }).join('')
-            + '</div><div class="cal-head"><span class="cal-title">' + escapeHTML(month) + '</span><div class="cal-nav">'
-            + '<button type="button" data-board-month="-1" aria-label="' + escapeHTML(bt('previousMonth')) + '">‹</button><button type="button" data-board-month="1" aria-label="' + escapeHTML(bt('nextMonth')) + '">›</button></div></div>'
-            + '<div class="cal-grid">' + bt('weekdays').split('|').map(function(day) { return '<span class="dow">' + escapeHTML(day) + '</span>'; }).join('')
-            + boardAPI().calendarDays(month).map(function(day) {
-                return '<button type="button" class="cal-day' + (day.other ? ' other' : '') + (day.key === boardAPI().dateKey(Date.now()) ? ' today' : '')
-                    + (day.key >= low && day.key <= high ? ' in-range' : '') + (day.key === from || day.key === to ? ' edge' : '')
-                    + '" data-board-day="' + day.key + '" aria-label="' + day.key + '" aria-pressed="' + (day.key >= low && day.key <= high) + '">' + day.day + '</button>';
-            }).join('') + '</div><div class="range-foot"><span class="range-hint" aria-live="polite">'
-            + escapeHTML(state.boardDraftFrom ? from + (state.boardDraftTo ? ' – ' + to : ' · ' + bt('selectEnd')) : bt('selectRange'))
-            + '</span><button type="button" class="btn small" data-board-range-apply' + (!state.boardDraftFrom || !state.boardDraftTo ? ' disabled' : '') + '>' + escapeHTML(bt('apply')) + '</button></div></div></div>';
-    }
-    function renderBoardTimeline(groups) {
-        var api = boardAPI(), range = boardRange(), now = Date.now();
-        var todayPosition = (now - range.start) / (range.end - range.start) * 100;
-        var ticks = api.rangeTicks(range);
-        // Each task occupies one row; linked sessions open the existing session inspector.
-        // Unassociated sessions remain visible with an explicit unknown duration.
-        var rows = groups.map(function(g) {
-            var seenTasks = new Set();
-            var entries = g.items.filter(function(s) {
-                if (!s.taskId) return true;
-                if (seenTasks.has(s.taskId)) return false;
-                seenTasks.add(s.taskId); return true;
-            });
-            return '<tbody><tr class="gantt-project"><th class="gantt-label" scope="rowgroup">' + boardGroupTitle(g) + '</th><th></th></tr>'
-                + entries.map(function(s) {
-                    var segments = s.taskId ? api.taskSegments(s.taskId, state.snapshot, state.snapshot.generatedAt) : [];
-                    var visible = api.clipSegments(segments, range);
-                    var laneEnds = [];
-                    var bars = visible.map(function(segment) {
-                        var lane = laneEnds.findIndex(function(end) { return end <= segment.start; });
-                        if (lane < 0) lane = laneEnds.length;
-                        laneEnds[lane] = segment.end;
-                        var target = g.items.find(function(item) { return item.session && (item.session.phaseAttemptId === segment.id || item.session.id === segment.sessionId); }) || s;
-                        var label = bt(segment.kind) + ' · ' + api.formatDuration(segment.duration);
-                        return '<button type="button" class="timeline-bar" data-status="' + s.status + '" data-kind="' + segment.kind + '" data-board-session="' + escapeHTML(target.id)
-                            + '" aria-haspopup="dialog" aria-label="' + escapeHTML((s.task ? s.task.title : s.name) + ' · ' + label) + '" title="' + escapeHTML(label)
-                            + '" style="--start:' + segment.left + '%;--duration:' + segment.width + '%;top:' + (11 + lane * 20) + 'px"><span class="timeline-duration">' + escapeHTML(api.formatDuration(segment.duration)) + '</span></button>';
-                    }).join('');
-                    return '<tr class="gantt-session-row"><th scope="row" class="gantt-label">' + boardSessionButton(s, 'gantt-name', boardDot(s.status) + escapeHTML(s.task ? s.task.title : s.name))
-                        + '</th><td><div class="timeline-track" style="height:' + Math.max(36, laneEnds.length * 20 + 16) + 'px">'
-                        + (segments.length ? bars : '<span class="timeline-unknown">' + escapeHTML(bt('unknownDuration')) + '</span>') + '</div></td></tr>';
-                }).join('') + '</tbody>';
-        }).join('');
-        return '<div class="panel-heading"><h2>' + escapeHTML(bt('timeline')) + '</h2>' + renderBoardCalendar(range) + '</div>'
-            + '<div class="gantt-scroll' + (todayPosition < 0 || todayPosition >= 100 ? ' outside-today' : '') + '" role="region" aria-label="' + escapeHTML(bt('timeline'))
-            + '" tabindex="0" style="--today:' + todayPosition + '%;--grid-step:' + (range.days === 1 ? 12.5 : 100 / range.days) + '%">'
-            + '<table class="gantt-table" style="min-width:' + Math.max(990, 220 + ticks.length * 56) + 'px"><caption class="sr-only">' + escapeHTML(bt('timelineNote'))
-            + '</caption><colgroup><col class="gantt-name-column"><col></colgroup><thead><tr><th class="gantt-label" scope="col">' + escapeHTML(bt('taskSession'))
-            + '</th><th scope="col"><div class="time-axis">' + ticks.map(function(t) { return '<span style="--tick:' + t.position + '%">' + escapeHTML(t.label) + '</span>'; }).join('')
-            + '</div></th></tr></thead>' + rows + '</table></div><div class="gantt-footnote"><p>' + escapeHTML(bt('timelineNote')) + '</p><p>' + escapeHTML(bt(range.days === 1 ? 'hourScale' : 'dayScale')) + '</p></div>';
-    }
+
     function renderBoard() {
-        var items = boardSessions(), groups = boardGroups(items), counts = boardAPI().statusCounts(items);
-        return '<section class="project-main-section project-board-view board-v3"><div class="page-heading"><div><h1>' + escapeHTML(tr('project.boardTitle', 'Project Board'))
-            + '</h1><p class="page-meta">' + escapeHTML(tr('project.boardUpdated', 'Updated {time}', { time: formatTime(state.boardGeneratedAt) }))
-            + (state.boardLoading ? ' · ' + escapeHTML(tr('project.boardRefreshing', 'Refreshing…')) : '') + '</p></div><div class="task-toolbar">' + i4Button('newProject', 'data-create-project', '', true) + i4Button('drawer', 'data-open-drawer') + '<button type="button" class="btn" data-board-refresh="1">' + escapeHTML(tr('project.boardRefresh', 'Refresh')) + '</button></div></div>'
-            + (state.boardError ? '<p role="alert" class="board-inline-error">' + escapeHTML(tr('project.boardRefreshFailed', 'Board refresh failed') + ': ' + state.boardError) + '</p>' : '')
-            + renderDrawerSummary(boardAPI().drawerGroups(state.snapshot))
-            + '<div class="view-toolbar"><div class="view-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.boardTitle', 'Project Board')) + '">'
-            + ['wall', 'timeline'].map(function(view) { return '<button type="button" class="view-tab" role="tab" id="board-tab-' + view + '" aria-controls="board-panel-' + view + '" aria-selected="' + (state.boardView === view) + '" tabindex="' + (state.boardView === view ? 0 : -1) + '" data-board-view="' + view + '">' + escapeHTML(bt(view)) + '</button>'; }).join('')
-            + '</div><ul class="legend" aria-label="' + escapeHTML(bt('summary')) + '">' + ['active', 'idle', 'exited', 'detached'].concat(counts.unknown ? ['unknown'] : []).map(function(key) {
-                return '<li>' + boardDot(key) + escapeHTML(bt(key)) + ' <span class="legend-count">' + (state.boardLoaded ? counts[key] : escapeHTML(bt('unknown'))) + '</span></li>';
-            }).join('') + '</ul></div>'
-            + '<section role="tabpanel" id="board-panel-wall" aria-labelledby="board-tab-wall"' + (state.boardView === 'wall' ? '' : ' hidden') + '><div class="panel-heading"><h2>' + escapeHTML(bt('wall'))
-            + '</h2><p class="panel-note">' + escapeHTML(sessionCountText(items.length) + ' · ' + bt('wallNote')) + '</p></div>' + renderBoardWall(groups) + '</section>'
-            + '<section role="tabpanel" id="board-panel-timeline" aria-labelledby="board-tab-timeline"' + (state.boardView === 'timeline' ? '' : ' hidden') + '>' + renderBoardTimeline(groups) + '</section>'
-            + (!groups.length ? '<p class="panel-note">' + escapeHTML(tr('project.boardEmpty', 'No projects on the board yet.')) + '</p>' : '') + '</section>';
+        var filter = state.boardProjectFilter || 'all';
+        var rows = boardAPI().sortTasksNewestFirst(tasks(), state.snapshot).map(function(task) {
+            var status = boardAPI().taskStatus(task, state.snapshot);
+            return {
+                task: task,
+                status: status,
+                cls: boardStatusClass(status),
+                label: tr('project.taskStatus.' + status, status),
+                stamp: boardAPI().taskTimestamp(task, state.snapshot)
+            };
+        });
+        var visible = filter === 'all' ? rows : rows.filter(function(row) { return row.task.projectId === filter; });
+        var groups = [];
+        var byProject = {};
+        function groupFor(projectId) {
+            if (!byProject[projectId]) {
+                var project = findById(projects(), projectId);
+                byProject[projectId] = { id: projectId, name: project ? (project.name || project.id) : (projectId || '—'), rows: [] };
+                groups.push(byProject[projectId]);
+            }
+            return byProject[projectId];
+        }
+        (filter === 'all' ? projects().map(function(project) { return project.id; }) : [filter]).forEach(groupFor);
+        visible.forEach(function(row) { groupFor(row.task.projectId || '').rows.push(row); });
+        groups.forEach(function(group) {
+            group.latest = group.rows.reduce(function(latest, row) { return Math.max(latest, row.stamp || 0); }, 0);
+        });
+        groups.sort(function(a, b) { return b.latest - a.latest; });
+        var counts = BOARD_STAT_ORDER.map(function(status) {
+            return { status: status, cls: boardStatusClass(status), count: visible.filter(function(row) { return row.status === status; }).length };
+        }).filter(function(entry) { return entry.count > 0; });
+        var projectOptions = projects().map(function(project) {
+            return '<option value="' + escapeHTML(project.id) + '"' + (filter === project.id ? ' selected' : '') + '>' + escapeHTML(project.name || project.id) + '</option>';
+        }).join('');
+        // Legacy tasks can lack every timestamp; anchor them at the latest
+        // known activity so they stay visible on the timeline.
+        var dataEnd = visible.reduce(function(max, row) { return Math.max(max, row.stamp || 0); }, 0) || Date.now();
+        var timelineWindow = boardRangeWindow(state.boardRange || 'all', visible.map(function(row) { return taskInterval(row.task, row.stamp || dataEnd); }));
+        var timelineCount = visible.filter(function(row) {
+            var interval = taskInterval(row.task, row.stamp || dataEnd);
+            return interval.end >= timelineWindow.start && interval.start <= timelineWindow.end;
+        }).length;
+        var tab = state.boardTab === 'gantt' ? 'gantt' : 'wall';
+        return '<section class="project-main-section project-board-view board-v3">'
+            + '<div class="page-heading"><div><h1>' + escapeHTML(tr('project.boardTitle', 'Task board')) + '</h1>'
+            + '<p class="page-meta">' + escapeHTML(countProjectsText(filter === 'all' ? projects().length : 1)) + ' · ' + escapeHTML(itemCountText(rows.length)) + '</p></div>'
+            + '<div class="heading-actions">'
+            + '<label class="board-filter"><span>' + escapeHTML(tr('project.boardFilterLabel', 'Project')) + '</span>'
+            + '<select data-board-filter aria-label="' + escapeHTML(tr('project.boardFilterLabel', 'Project')) + '">'
+            + '<option value="all"' + (filter === 'all' ? ' selected' : '') + '>' + escapeHTML(tr('project.boardFilterAll', 'All projects')) + '</option>'
+            + projectOptions
+            + '</select></label>'
+            + '<button type="button" class="btn" data-board-refresh' + (state.boardLoading ? ' disabled' : '') + '>' + escapeHTML(tr('project.boardRefresh', 'Refresh')) + '</button>'
+            + i4Button('newProject', 'data-create-project', '', true)
+            + '</div></div>'
+            + (state.boardError ? '<p role="alert" class="board-inline-error">' + escapeHTML(state.boardError) + '</p>' : '')
+            + (state.boardLoading && !state.snapshot ? '<p role="status">' + escapeHTML(tr('project.loading', 'Loading…')) + '</p>' : '')
+            + '<div class="view-toolbar">'
+            + '<div class="view-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.boardTitle', 'Task board')) + '">'
+            + '<button type="button" class="view-tab" id="board-tab-wall" data-board-tab="wall" role="tab" aria-selected="' + (tab === 'wall') + '" aria-controls="board-panel-wall" tabindex="' + (tab === 'wall' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabWall', 'Status wall')) + '</button>'
+            + '<button type="button" class="view-tab" id="board-tab-gantt" data-board-tab="gantt" role="tab" aria-selected="' + (tab === 'gantt') + '" aria-controls="board-panel-gantt" tabindex="' + (tab === 'gantt' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabTimeline', 'Timeline')) + '</button>'
+            + '</div>'
+            + (counts.length ? '<ul class="board-legend">' + counts.map(function(entry) {
+                return '<li><span class="board-task-dot ' + entry.cls + '" aria-hidden="true"></span>' + escapeHTML(tr('project.taskStatus.' + entry.status, entry.status))
+                    + ' <span class="board-legend-count">' + entry.count + '</span></li>';
+            }).join('') + '</ul>' : '')
+            + '</div>'
+            + '<section class="board-panel" id="board-panel-wall" role="tabpanel" aria-labelledby="board-tab-wall"' + (tab === 'wall' ? '' : ' hidden') + '>'
+            + (rows.length || filter !== 'all' ? '<div class="board-panel-heading"><h2>' + escapeHTML(tr('project.boardWallTitle', 'Task status')) + '</h2>'
+                + '<p class="board-panel-note">' + escapeHTML(tr('project.boardNote', '{count} tasks · grouped by project · click a task to open it', { count: visible.length })) + '</p></div>' : '')
+            + (groups.length ? groups.map(function(group) {
+                return '<section class="board-project-group">'
+                    + '<div class="board-project-heading"><h3>' + escapeHTML(group.name) + '</h3>'
+                    + '<span class="board-project-count">' + escapeHTML(itemCountText(group.rows.length)) + '</span></div>'
+                    + (group.rows.length ? '<ul class="board-task-grid">' + group.rows.map(function(row) {
+                        var task = row.task;
+                        var rel = boardRelative(row.stamp);
+                        return '<li class="board-task-cell"><button type="button" class="board-task-open" data-task-id="' + escapeHTML(task.id) + '"'
+                            + (row.stamp ? ' title="' + escapeHTML(formatTime(row.stamp)) + '"' : '')
+                            + ' aria-label="' + escapeHTML((task.title || task.id) + ', ' + row.label + ', ' + rel) + '">'
+                            + '<span class="board-task-name-row"><span class="board-task-dot ' + row.cls + '" aria-hidden="true"></span>'
+                            + '<span class="board-task-name">' + escapeHTML(task.title || task.id) + '</span></span>'
+                            + '<span class="board-task-meta"><span class="board-task-state">' + escapeHTML(row.label + ' · ' + rel) + '</span></span>'
+                            + '</button></li>';
+                    }).join('') + '</ul>' : '<div class="board-empty-note">' + escapeHTML(tr('project.boardEmptyProject', 'No tasks in this project yet.')) + '</div>')
+                    + '</section>';
+            }).join('') : '')
+            + (!rows.length && filter === 'all' && !state.boardLoading && !state.boardError ? '<div class="board-empty-note">' + escapeHTML(tr('project.boardEmpty', 'No tasks yet')) + '</div>' : '')
+            + '</section>'
+            + renderBoardGantt(visible, timelineWindow, dataEnd)
+            + (rows.length ? '<footer class="board-footer"><p>' + escapeHTML(itemCountText(tab === 'wall' ? visible.length : timelineCount)) + '</p></footer>' : '')
+            + '</section>';
     }
-    function renderBoardProjectDetail(id) {
-        var cached = state.boardDetails[id], detail = cached && cached.data || {}, api = boardAPI();
-        var milestones = Array.isArray(detail.milestones) ? detail.milestones : [];
-        var next = detail.nextAction || {}, stats = detail.stats || {}, changes = stats.codeChanges || {};
-        var counts = stats.checkpointsByKind || {}, kinds = ['design', 'test', 'coding', 'unclassified'];
-        var validCounts = kinds.every(function(k) { return Number.isInteger(counts[k]) && counts[k] >= 0; });
-        var total = validCounts ? kinds.reduce(function(n, k) { return n + counts[k]; }, 0) : 0;
-        var colors = ['#7170ff', '#d4a72c', '#4ec9b0', '#4d4f55'];
-        var legend = kinds.map(function(k) { return bt(k) + ' ' + boardUnknown(Number.isInteger(counts[k]) && counts[k] >= 0 ? counts[k] : null); }).join(' · ');
-        var number = function(value) { return boardUnknown(Number.isInteger(value) && value >= 0 && !changes.error ? value : null); };
-        var model = boardModels().find(function(p) { return p.projectId === id; });
-        return (cached && cached.error ? '<p role="alert">' + escapeHTML(cached.error) + '</p>' : '')
-            + (!cached || cached.loading ? '<p role="status">' + escapeHTML(tr('project.boardRefreshing', 'Refreshing…')) + '</p>' : '')
-            + '<ol class="lifecycle-chain" aria-label="' + escapeHTML(bt('lifecycle')) + '">' + api.lifecycleChain(detail.lifecycle).map(function(step, index) {
-                return '<li class="lifecycle-step' + (step.current ? ' current' : step.done ? ' done' : '') + '"' + (step.current ? ' aria-current="step"' : '') + '>'
-                    + (index ? '<span class="lifecycle-arrow" aria-hidden="true">→</span>' : '') + escapeHTML(bt(step.key) + (step.key === 'executing' ? ' · ' + boardUnknown(step.milestoneId) : '')) + '</li>';
-            }).join('') + '</ol>'
-            + '<section class="info-card"><h3>' + escapeHTML(bt('milestones')) + '</h3><div class="milestone-line">'
-            + (milestones.length ? milestones.map(function(m) {
-                var status = ['done', 'current', 'todo'].includes(m.status) ? m.status : 'unknown';
-                return '<span class="milestone ' + status + '"><span class="mark" aria-label="' + escapeHTML(bt('milestone_' + status)) + '">' + ({ done: '✓', current: '●', todo: '○', unknown: '?' })[status] + '</span>' + escapeHTML(boardUnknown(m.name)) + '</span>';
-            }).join('') : escapeHTML(bt(Array.isArray(detail.milestones) ? 'noMilestones' : 'unknown'))) + '</div>'
-            + milestones.filter(function(m) { return m.status === 'current'; }).map(function(m) { return '<p class="milestone-detail">' + escapeHTML(boardUnknown(m.acceptanceEvidence)) + '</p>'; }).join('') + '</section>'
-            + '<div class="project-metrics"><section class="info-card"><h3>' + escapeHTML(bt('activity')) + '</h3><div class="project-activity-bar" role="img" aria-label="' + escapeHTML(legend + ' · ' + bt('eventShare')) + '">'
-            + (validCounts ? kinds.map(function(k, i) { return '<span class="project-activity-segment" aria-hidden="true" style="width:' + (total ? counts[k] / total * 100 : 0) + '%;background:' + colors[i] + '"></span>'; }).join('') : '')
-            + '</div><p class="project-mono project-activity-legend">' + escapeHTML(legend) + '</p><p class="source-note">' + escapeHTML(bt('eventShare')) + '</p></section>'
-            + '<section class="info-card"><h3>' + escapeHTML(bt('codeChanges')) + '</h3><p class="project-mono">' + escapeHTML(bt('changeSummary', { added: number(changes.added), removed: number(changes.removed), files: number(changes.files), base: boardUnknown(changes.error ? null : api.shortSha(changes.base)) }))
-            + '</p><p class="source-note">' + escapeHTML(bt('changeExtra', { untracked: number(changes.untracked), binary: number(changes.binary) })) + '</p>'
-            + (changes.error ? '<p class="source-note">' + escapeHTML(changes.error) + '</p>' : '') + '</section></div>'
-            + '<div class="next-step" role="status"><span class="actor' + (next.actor === 'human' ? ' human' : '') + '">' + escapeHTML(next.actor === 'human' ? bt('you') : next.actor === 'Hermes' ? 'Hermes' : bt('unknown'))
-            + '</span>' + escapeHTML(bt('next') + boardUnknown(next.text)) + '</div>'
-            + '<section class="info-card"><h3>' + escapeHTML(bt('issues')) + '</h3>' + (Array.isArray(detail.issues) ? detail.issues.length ? '<ul class="project-issues">' + detail.issues.map(function(issue) {
-                return '<li class="project-issue">' + boardDot(issue.severity === 'error' ? 'exited' : issue.severity === 'warning' ? 'idle' : 'unknown') + '<span class="project-issue-text">' + escapeHTML(boardUnknown(issue.text)) + '</span>'
-                    + (issue.session || issue.task ? '<button type="button" class="btn small project-ghost" data-board-issue-session="' + escapeHTML(issue.session || '') + '" data-board-issue-task="' + escapeHTML(issue.task || '') + '">' + escapeHTML(bt('handle')) + '</button>' : '') + '</li>';
-            }).join('') + '</ul>' : '<p class="project-clear">' + escapeHTML(bt('noIssues')) + '</p>' : '<p>' + escapeHTML(bt('unknown')) + '</p>') + '</section>'
-            + (model ? renderBoardGitSection(model) : '');
-    }
-    var boardDialog = null, boardPreviewTimer = null, boardPreviewAnchor = null;
+    var boardDialog = null;
     function closeBoardDialog() {
-        window.clearInterval(drawerTimer); drawerTimer = null;
         if (folderDialog) { folderDialog.close(); folderDialog.remove(); folderDialog = null; }
         if (boardDialog) { boardDialog.close(); boardDialog.remove(); boardDialog = null; }
-        state.boardDetailId = '';
     }
     function showBoardDialog(title, content) {
-        closeBoardDialog(); hideBoardPreview();
+        closeBoardDialog();
         var dialog = document.createElement('dialog');
         dialog.className = 'board-v3 project-dialog';
         dialog.setAttribute('aria-labelledby', 'board-dialog-title');
-        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-dialog-title">' + escapeHTML(title) + '</h2><button type="button" class="btn small" data-board-dialog-close>' + escapeHTML(bt('close')) + '</button></header><div class="dialog-body">' + content + '</div>';
+        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-dialog-title">' + escapeHTML(title) + '</h2><button type="button" class="btn small" data-board-dialog-close>' + escapeHTML(i4('close')) + '</button></header><div class="dialog-body">' + content + '</div>';
         document.body.appendChild(dialog); boardDialog = dialog;
         dialog.querySelector('[data-board-dialog-close]').addEventListener('click', closeBoardDialog);
         bindDialogDismiss(dialog, closeBoardDialog);
         dialog.showModal();
         return dialog;
     }
-    function bindBoardDetail(dialog) {
-        dialog.querySelectorAll('[data-board-worktrees]').forEach(function(node) { node.addEventListener('click', function() {
-            state.boardExpanded[state.boardDetailId] = !state.boardExpanded[state.boardDetailId]; updateBoardDetail();
-        }); });
-        dialog.querySelectorAll('[data-board-issue-session]').forEach(function(node) { node.addEventListener('click', function() {
-            var sessionId = node.dataset.boardIssueSession, taskId = node.dataset.boardIssueTask;
-            var s = boardSessions().find(function(item) { return item.id === sessionId || (item.session && item.session.id === sessionId); });
-            if (s) { openBoardSession(s.id); return; }
-            var recorded = findById(sessions(), sessionId);
-            if (recorded) { showBoardSessionDetail(recorded); return; }
-            if (findById(tasks(), taskId)) { closeBoardDialog(); openTask(taskId); }
-            else node.textContent = bt('unknown');
-        }); });
-    }
-    function updateBoardDetail() {
-        if (!boardDialog || !state.boardDetailId) return;
-        boardDialog.querySelector('.dialog-body').innerHTML = renderBoardProjectDetail(state.boardDetailId);
-        bindBoardDetail(boardDialog);
-    }
-    function loadBoardDetail(id, force) {
-        var cache = state.boardDetails[id], epoch = state.boardEpoch;
-        if (cache && (cache.loading || (!force && Date.now() - cache.fetchedAt < BOARD_REFRESH_INTERVAL_MS))) return;
-        state.boardDetails[id] = Object.assign({}, cache, { loading: true, error: '' });
-        updateBoardDetail();
-        fetchJSON('/api/project-control/projects/' + encodeURIComponent(id) + '/detail').then(function(data) {
-            if (epoch !== state.boardEpoch || !state.authenticated) return;
-            state.boardDetails[id] = { data: data, fetchedAt: Date.now(), loading: false, error: '' };
-            if (state.boardDetailId === id) updateBoardDetail();
-        }).catch(function(error) {
-            if (epoch !== state.boardEpoch || !state.authenticated) return;
-            state.boardDetails[id] = Object.assign({}, cache, { loading: false, error: error.message });
-            if (state.boardDetailId === id) updateBoardDetail();
-        });
-    }
-    function openBoardDetail(id) {
-        var p = boardModels().find(function(item) { return item.projectId === id; }) || findById(projects(), id);
-        var dialog = showBoardDialog(p ? p.name : id, renderBoardProjectDetail(id));
-        state.boardDetailId = id;
-        bindBoardDetail(dialog); loadBoardDetail(id);
-    }
-    function showBoardSessionDetail(session) {
-        var dialog = showBoardDialog(session.name, renderSessionDetail(session));
-        dialog.querySelectorAll('[data-attach-terminal]').forEach(function(node) { node.addEventListener('click', closeBoardDialog); });
-        // Reuse the existing attach-terminal interaction and session detail markup.
-        bindInteractions(dialog);
-    }
-    function openBoardSession(id) {
-        var s = boardSessions().find(function(item) { return item.id === id; });
-        if (!s) return;
-        var unknown = bt('unknown');
-        var session = s.session || { id: s.id, name: s.name, runtimeId: unknown, executionRole: unknown, systemRole: unknown,
-            startedAt: s.createdAt, summary: bt('unlinkedSession'), claims: [], artifacts: [] };
-        showBoardSessionDetail(Object.assign({}, session, { name: s.name, terminalId: s.id, supportsAttach: s.status !== 'exited' }));
-    }
-    function hideBoardPreview() {
-        window.clearTimeout(boardPreviewTimer); boardPreviewTimer = null;
-        if (boardPreviewAnchor) boardPreviewAnchor.removeAttribute('aria-describedby');
-        boardPreviewAnchor = null;
-        var preview = document.getElementById('board-session-preview');
-        if (preview) preview.remove();
-    }
-    function queueBoardPreview(node) {
-        hideBoardPreview();
-        boardPreviewTimer = window.setTimeout(function() {
-            if (!node.isConnected) return;
-            var s = boardSessions().find(function(item) { return item.id === node.dataset.boardSession; });
-            if (!s) return;
-            var evidence = boardAPI().latestVerification(s.taskId, state.snapshot);
-            var preview = document.createElement('div');
-            preview.id = 'board-session-preview'; preview.className = 'board-v3 hover-card'; preview.setAttribute('role', 'tooltip');
-            preview.innerHTML = '<div class="hover-head">' + boardDot(s.status) + '<span class="hover-name">' + escapeHTML(s.name) + '</span><span class="hover-age">' + escapeHTML(boardRelative(s.lastActivity))
-                + '</span></div><p class="hover-task">' + escapeHTML((s.task ? s.task.title : bt('unlinkedTask')) + ' · ' + bt('phase') + ' ' + (s.task && s.task.currentPhase ? boardPhaseLabel(s.task.currentPhase) : bt('unknown')))
-                + '</p><p class="hover-evidence">' + escapeHTML(evidence ? bt('verification') + ': ' + evidence.value : bt('noEvidence')) + '</p><p class="hover-updated">' + escapeHTML(bt('dataTime') + ' ' + formatTime(state.snapshot.generatedAt)) + '</p>';
-            document.body.appendChild(preview);
-            boardPreviewAnchor = node; node.setAttribute('aria-describedby', preview.id);
-            var anchor = node.getBoundingClientRect(), box = preview.getBoundingClientRect();
-            preview.style.left = Math.max(8, Math.min(anchor.left, window.innerWidth - box.width - 8)) + 'px';
-            preview.style.top = Math.max(8, anchor.bottom + box.height + 14 < window.innerHeight ? anchor.bottom + 14 : anchor.top - box.height - 14) + 'px';
-        }, 200);
-    }
-    function boardRenderFocus(selector) {
-        render();
-        var node = getPanel().querySelector(selector);
-        if (node) node.focus({ preventScroll: true });
-    }
-    // I4: registration, folder navigation and the task drawer extend the I3 dialogs.
-    var drawerTimer = null, folderDialog = null, drawerBusy = false;
+
+    var folderDialog = null;
     function i4(key, vars) { return tr('project.boardI4.' + key, key, vars); }
     function i4Button(key, attr, value, primary) {
         return '<button type="button" class="btn small' + (primary ? ' primary' : '') + '" ' + attr + '="' + escapeHTML(value || '') + '">' + escapeHTML(i4(key)) + '</button>';
@@ -4704,13 +1834,7 @@
     function boardRequest(url, method, body) {
         return fetchJSON('/api/project-control/' + url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     }
-    function entryPreferences() {
-        try { return JSON.parse(localStorage.getItem(storageKey('board-entries')) || '{}') || {}; } catch (_) { return {}; }
-    }
-    function saveEntryPreference(id, value) {
-        var entries = entryPreferences(); entries[id] = value;
-        try { localStorage.setItem(storageKey('board-entries'), JSON.stringify(entries)); } catch (_) { /* Private browsing may disable persistence. */ }
-    }
+
     function bindDialogDismiss(dialog, close) {
         var origin = document.activeElement, downOutside = false;
         function outside(event) {
@@ -4762,26 +1886,18 @@
         dialog.showModal(); navigate('', true);
     }
     function openNewProject() {
-        var dialog = showBoardDialog(i4('newProject'), '<form data-board-entry><fieldset><div class="entry-options">'
-            + '<label class="entry-option"><input type="radio" name="type" value="folder" checked>' + escapeHTML(i4('folder')) + '</label>'
-            + '<label class="entry-option"><input type="radio" name="type" value="git">Git URL</label></div>'
+        var dialog = showBoardDialog(i4('newProject'), '<form data-board-entry><fieldset>'
             + '<div class="field" data-entry-folder><label for="board-entry-path">' + escapeHTML(i4('folderPath')) + '</label><div class="path-row"><input id="board-entry-path" name="path" required maxlength="1000" autocomplete="off" placeholder="/home/…">'
             + '<button class="path-pick" type="button" data-pick-folder aria-haspopup="dialog" aria-label="' + escapeHTML(i4('chooseFolder')) + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg></button></div></div>'
-            + '<label class="field" data-entry-git hidden><span>Git URL</span><input name="git" required disabled maxlength="1000" placeholder="' + escapeHTML(i4('gitPlaceholder')) + '"></label>'
             + '<label class="field"><span>' + escapeHTML(i4('goal')) + '</span><input name="goal" required maxlength="300" autocomplete="off"></label>'
-            + '<label class="auto-option"><input type="checkbox" name="autoTakeover" checked><span>' + escapeHTML(i4('autoTakeover')) + '</span></label><p class="auto-help">' + escapeHTML(i4('manualHelp')) + '</p><p class="risk-note">' + escapeHTML(i4('riskNote')) + '</p></fieldset>'
-            + '<p class="form-error" role="alert"></p><footer class="dialog-footer"><span class="source-note">' + escapeHTML(i4('entryNote')) + '</span><button type="submit" class="btn primary">' + escapeHTML(i4('submit')) + '</button></footer></form>');
+            + '</fieldset>'
+            + '<p class="form-error" role="alert"></p><footer class="dialog-footer"><button type="submit" class="btn primary">' + escapeHTML(i4('submit')) + '</button></footer></form>');
         dialog.classList.add('create-dialog');
         var form = dialog.querySelector('form'), progress = { projectId: '', workstreamId: '' }, busy = false, entry = null;
-        form.querySelectorAll('[name="type"]').forEach(function(node) { node.onchange = function() {
-            var git = form.elements.type.value === 'git';
-            form.querySelector('[data-entry-folder]').hidden = git; form.querySelector('[data-entry-git]').hidden = !git;
-            form.elements.path.disabled = git; form.elements.git.disabled = !git;
-        }; });
         form.querySelector('[data-pick-folder]').onclick = function() { openFolderPicker(form.elements.path); };
         form.onsubmit = async function(event) {
             event.preventDefault(); if (busy) return;
-            if (!entry) entry = boardAPI().projectEntry({ type: form.elements.type.value, source: form.elements.type.value === 'git' ? form.elements.git.value : form.elements.path.value, goal: form.elements.goal.value, autoTakeover: form.elements.autoTakeover.checked });
+            if (!entry) entry = boardAPI().projectEntry({ source: form.elements.path.value, goal: form.elements.goal.value });
             var errorNode = form.querySelector('.form-error'), submit = form.querySelector('[type="submit"]');
             if (entry.error) { errorNode.textContent = i4(entry.error); entry = null; return; }
             busy = true; submit.disabled = true; form.querySelector('fieldset').disabled = true; errorNode.textContent = ''; submit.textContent = i4('saving');
@@ -4789,12 +1905,10 @@
             try {
                 var snapshot;
                 if (!progress.projectId) {
-                    // Persist remote source as description; the server has no clone endpoint.
-                    snapshot = await boardRequest('projects', 'POST', { name: entry.name, currentGoal: entry.goal, repoPath: entry.type === 'folder' ? entry.source : '', description: entry.type === 'git' ? 'Git URL: ' + entry.source : '', brief: { understanding: entry.goal } });
+                    snapshot = await boardRequest('projects', 'POST', { name: entry.name, currentGoal: entry.goal, repoPath: entry.source, brief: { understanding: entry.goal } });
                     progress.projectId = snapshot.activeProjectId;
                     if (epoch !== state.boardEpoch) return;
                     state.snapshot = snapshot;
-                    saveEntryPreference(progress.projectId, { autoTakeover: entry.autoTakeover, source: entry.source, type: entry.type });
                 }
                 if (!progress.workstreamId) {
                     snapshot = await boardRequest('workstreams', 'POST', { projectId: progress.projectId, title: entry.goal, scopeSummary: entry.goal, priority: 'medium' });
@@ -4807,7 +1921,7 @@
                 snapshot = await boardRequest('tasks', 'POST', { projectId: progress.projectId, workstreamId: progress.workstreamId, title: entry.goal, goal: entry.goal, priority: 'medium', riskLevel: 'medium' });
                 if (epoch !== state.boardEpoch) return;
                 state.snapshot = snapshot; updateBadge();
-                if (boardDialog === dialog) openTaskDrawer();
+                if (boardDialog === dialog) { closeBoardDialog(); openBoard(); }
             } catch (error) {
                 if (!dialog.isConnected) return;
                 errorNode.textContent = (progress.projectId ? i4('partialRegistration') + ' ' : '') + error.message;
@@ -4816,153 +1930,17 @@
             } finally { busy = false; submit.disabled = false; submit.textContent = i4('submit'); }
         };
     }
-    function renderDrawerSummary(groups) {
-        return '<div class="task-toolbar task-summary" aria-label="' + escapeHTML(i4('drawer')) + '">' + ['approval', 'ready', 'running', 'ended'].map(function(key) {
-            return '<span class="pill">' + escapeHTML(i4(key)) + ' <strong>' + groups[key].length + '</strong></span>';
-        }).join('') + '</div>';
-    }
-    function renderTaskDrawer() {
-        var groups = boardAPI().drawerGroups(state.snapshot), prefs = entryPreferences();
-        return renderDrawerSummary(groups) + '<div class="task-toolbar">' + i4Button('newProject', 'data-drawer-new') + i4Button('refresh', 'data-drawer-refresh') + '</div><p class="form-error" data-drawer-error role="alert"></p>'
-            + ['approval', 'ready', 'running', 'ended'].map(function(key) {
-                return '<section class="task-section"><h3>' + escapeHTML(i4(key)) + ' · ' + groups[key].length + '</h3><ul class="task-list">' + (groups[key].length ? groups[key].map(function(row) {
-                    var task = row.task, preference = prefs[task.projectId], project = findById(projects(), task.projectId);
-                    var evidence = boardAPI().latestVerification(task.id, state.snapshot);
-                    var approvals = row.checkpoints.filter(function(c) { return !row.planning || c.kind !== 'dispatch'; });
-                    return '<li class="task-item"><div class="task-item-meta"><span class="pill">' + escapeHTML(row.planning ? i4('planning') : key === 'approval' ? i4('approval') : humanizeTaskState(task.state))
-                        + '</span><small>' + escapeHTML(project ? project.name : task.projectId) + '</small></div><strong>' + escapeHTML(task.title) + '</strong>'
-                        + (key === 'approval' ? '<span class="source-tag">' + escapeHTML(i4('separated')) + '</span><p class="source-note">' + escapeHTML(i4('evidence') + ': ' + (evidence ? evidence.value : i4('noEvidence'))) + '</p><p class="source-note">' + escapeHTML(i4('selfReport') + ': ' + (task.recentSummary || '—')) + '</p>' : '')
-                        + (row.planning ? '<p class="source-note">' + escapeHTML(i4('planningNote')) + '</p>' : '')
-                        + (preference && preference.type === 'git' && !(project && project.repoPath) ? '<p class="source-note">' + escapeHTML(i4('gitPending')) + '</p>' : '')
-                        + (row.draft && key === 'approval' ? '<details class="draft-card"><summary>' + escapeHTML(i4('draft')) + '</summary><p class="pre-line">' + escapeHTML(row.draft.value) + '</p>'
-                            + '<form data-draft-task="' + escapeHTML(task.id) + '"><label class="field"><span>' + escapeHTML(i4('acceptanceCommand')) + '</span><textarea name="command" rows="3">' + escapeHTML(JSON.stringify(task.acceptanceCommand || [])) + '</textarea><small>' + escapeHTML(i4('commandHelp')) + '</small></label>'
-                            + '<label class="field"><span>' + escapeHTML(i4('outOfScope')) + '</span><textarea name="outOfScope" rows="3">' + escapeHTML(project && project.brief && project.brief.outOfScope || '') + '</textarea></label><button type="submit" class="btn small">' + escapeHTML(i4('saveDraft')) + '</button></form></details>' : '')
-                        + '<div class="task-row-actions">' + (approvals.length ? approvals.map(function(c) {
-                            return '<span>' + escapeHTML(approvalKindLabel(c.kind)) + ' ' + ['approve', 'reject'].filter(function(action) { return (c.allowedActions || []).includes(action); }).map(function(action) {
-                                return '<button type="button" class="btn small' + (action === 'approve' ? ' primary' : '') + '" data-drawer-decision="' + action + '" data-checkpoint="' + escapeHTML(c.id) + '">' + escapeHTML(i4(action)) + '</button>';
-                            }).join('') + '</span>';
-                        }).join('') : i4Button('details', 'data-drawer-task', task.id)) + '</div></li>';
-                }).join('') : '<li class="fs-empty">' + escapeHTML(i4('emptyGroup')) + '</li>') + '</ul></section>';
-            }).join('');
-    }
-    async function refreshDrawer(dialog) {
-        if (drawerBusy || boardDialog !== dialog || !dialog.open) return;
-        try {
-            var snapshot = await fetchJSON('/api/project-control');
-            if (boardDialog !== dialog || !dialog.open || drawerBusy) return;
-            state.snapshot = snapshot; updateBadge();
-            // Keep draft edits and keyboard focus intact during automatic refresh.
-            if (!dialog.querySelector('details[open]') && !dialog.querySelector('.dialog-body').contains(document.activeElement)) updateTaskDrawer(dialog);
-        } catch (error) { if (dialog.isConnected) dialog.querySelector('[data-drawer-error]').textContent = error.message; }
-    }
-    function updateTaskDrawer(dialog) {
-        if (boardDialog !== dialog) return;
-        dialog.querySelector('.dialog-body').innerHTML = renderTaskDrawer(); bindTaskDrawer(dialog);
-    }
-    function openTaskDrawer() {
-        var dialog = showBoardDialog(i4('drawer'), renderTaskDrawer()); dialog.classList.add('drawer');
-        bindTaskDrawer(dialog); refreshDrawer(dialog);
-        drawerTimer = window.setInterval(function() { refreshDrawer(dialog); }, 5000);
-    }
-    async function drawerMutation(dialog, action) {
-        if (drawerBusy) return;
-        drawerBusy = true;
-        dialog.querySelectorAll('.dialog-body button').forEach(function(node) { node.disabled = true; });
-        try { await action(); if (dialog.isConnected) updateTaskDrawer(dialog); }
-        catch (error) {
-            if (dialog.isConnected) dialog.querySelector('[data-drawer-error]').textContent = error.message;
-        } finally {
-            drawerBusy = false; updateBadge();
-            if (dialog.isConnected) dialog.querySelectorAll('.dialog-body button').forEach(function(node) { node.disabled = false; });
-        }
-    }
-    function bindTaskDrawer(dialog) {
-        dialog.querySelector('[data-drawer-new]').onclick = openNewProject;
-        dialog.querySelector('[data-drawer-refresh]').onclick = async function() {
-            if (drawerBusy) return;
-            try { state.snapshot = await fetchJSON('/api/project-control'); if (dialog.isConnected) updateTaskDrawer(dialog); updateBadge(); }
-            catch (error) { if (dialog.isConnected) dialog.querySelector('[data-drawer-error]').textContent = error.message; }
-        };
-        dialog.querySelectorAll('[data-drawer-task]').forEach(function(node) { node.onclick = function() { closeBoardDialog(); openTask(node.dataset.drawerTask); }; });
-        dialog.querySelectorAll('[data-draft-task]').forEach(function(form) { form.onsubmit = function(event) {
-            event.preventDefault(); drawerMutation(dialog, async function() {
-                var task = findById(tasks(), form.dataset.draftTask), project = findById(projects(), task.projectId), command;
-                try { command = JSON.parse(form.elements.command.value); } catch (_) { throw new Error(i4('invalidCommand')); }
-                if (!Array.isArray(command) || !command.length || command.some(function(v) { return typeof v !== 'string' || !v.trim(); })) throw new Error(i4('invalidCommand'));
-                var changedCommand = JSON.stringify(command) !== JSON.stringify(task.acceptanceCommand || []);
-                var brief = Object.assign({}, project.brief, { outOfScope: form.elements.outOfScope.value.trim() });
-                if (brief.outOfScope !== (project.brief && project.brief.outOfScope || '')) {
-                    var updated = await boardRequest('projects/' + encodeURIComponent(project.id) + '/contract', 'PATCH', { expectedRowVersion: project.rowVersion, brief: brief });
-                    Object.assign(project, updated);
-                }
-                if (changedCommand) state.snapshot = await boardRequest('tasks/' + encodeURIComponent(task.id), 'PATCH', { expectedRowVersion: task.rowVersion, acceptanceCommand: command });
-            });
-        }; });
-        dialog.querySelectorAll('[data-drawer-decision]').forEach(function(node) { node.onclick = function() {
-            drawerMutation(dialog, async function() {
-                var checkpoint = findById(checkpoints(), node.dataset.checkpoint), task = findById(tasks(), checkpoint.taskId), preference = entryPreferences()[task.projectId];
-                state.snapshot = await boardRequest('checkpoints/' + encodeURIComponent(checkpoint.id) + '/decision', 'POST', { action: node.dataset.drawerDecision });
-                updateTaskDrawer(dialog);
-                if (node.dataset.drawerDecision !== 'approve' || checkpoint.kind !== 'dispatch' || !preference || !preference.autoTakeover) return;
-                var project = findById(projects(), task.projectId);
-                if (project.takeover && project.takeover.mode === 'active') return;
-                if (project.lifecycle.state === 'awaiting_confirmation') {
-                    project = await boardRequest('projects/' + encodeURIComponent(project.id) + '/contract', 'PATCH', { expectedRowVersion: project.rowVersion, lifecycle: 'executing' });
-                }
-                // Only the server can enable takeover; do not synthesize a claim or session.
-                await boardRequest('projects/' + encodeURIComponent(project.id) + '/takeover', 'POST', { action: 'start' });
-                state.snapshot = await fetchJSON('/api/project-control');
-            });
-        }; });
-    }
+
     function initBoardFont() {
         var size = 14;
         try { size = boardAPI().boardFontSize(localStorage.getItem('roambench-board-font-size')); } catch (_) { /* Use default. */ }
         function apply(next) {
             size = boardAPI().boardFontSize(next); document.documentElement.style.setProperty('--board-fs', size + 'px');
-            try { localStorage.setItem('roambench-board-font-size', String(size)); } catch (_) { /* Use session value. */ }
+            try { localStorage.setItem('roambench-board-font-size', String(size)); } catch (_) { /* Keep the current value. */ }
             document.querySelectorAll('[data-board-font]').forEach(function(node) { node.disabled = node.dataset.boardFont === '-1' ? size <= 12 : node.dataset.boardFont === '1' ? size >= 20 : size === 14; });
         }
         document.querySelectorAll('[data-board-font]').forEach(function(node) { node.addEventListener('click', function() { apply(node.dataset.boardFont === 'reset' ? 14 : size + Number(node.dataset.boardFont)); }); });
         apply(size);
-    }
-
-    function bindBoardInteractions(panel) {
-        panel.querySelectorAll('[data-board-detail]').forEach(function(node) { node.addEventListener('click', function() { openBoardDetail(node.dataset.boardDetail); }); });
-        panel.querySelectorAll('[data-board-session]').forEach(function(node) {
-            node.addEventListener('click', function() { openBoardSession(node.dataset.boardSession); });
-            node.addEventListener('pointerenter', function(event) { if (event.pointerType !== 'touch' && window.matchMedia('(hover: hover) and (pointer: fine)').matches) queueBoardPreview(node); });
-            node.addEventListener('pointerleave', hideBoardPreview);
-            node.addEventListener('focus', function() { if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) queueBoardPreview(node); });
-            node.addEventListener('blur', hideBoardPreview);
-        });
-        panel.querySelectorAll('[data-board-view]').forEach(function(node) {
-            function select(view) { state.boardView = view; state.boardCalendarOpen = false; boardRenderFocus('[data-board-view="' + view + '"]'); }
-            node.addEventListener('click', function() { select(node.dataset.boardView); });
-            node.addEventListener('keydown', function(event) { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); select(event.key === 'Home' ? 'wall' : event.key === 'End' ? 'timeline' : state.boardView === 'wall' ? 'timeline' : 'wall'); } });
-        });
-        panel.querySelectorAll('[data-board-calendar-toggle]').forEach(function(node) { node.addEventListener('click', function() {
-            state.boardCalendarOpen = !state.boardCalendarOpen;
-            if (state.boardCalendarOpen) { state.boardDraftFrom = ''; state.boardDraftTo = ''; state.boardCalendarMonth = boardRange().from.slice(0, 7); }
-            boardRenderFocus(state.boardCalendarOpen ? '[data-board-range]' : '[data-board-calendar-toggle]');
-        }); });
-        panel.querySelectorAll('[data-board-range]').forEach(function(node) { node.addEventListener('click', function() { state.boardRangePreset = node.dataset.boardRange; state.boardCalendarOpen = false; boardRenderFocus('[data-board-calendar-toggle]'); }); });
-        panel.querySelectorAll('[data-board-month]').forEach(function(node) { node.addEventListener('click', function() {
-            var parts = state.boardCalendarMonth.split('-');
-            state.boardCalendarMonth = boardAPI().dateKey(new Date(+parts[0], +parts[1] - 1 + +node.dataset.boardMonth, 1)).slice(0, 7);
-            boardRenderFocus('[data-board-month="' + node.dataset.boardMonth + '"]');
-        }); });
-        panel.querySelectorAll('[data-board-day]').forEach(function(node) { node.addEventListener('click', function() {
-            if (!state.boardDraftFrom || state.boardDraftTo) { state.boardDraftFrom = node.dataset.boardDay; state.boardDraftTo = ''; }
-            else state.boardDraftTo = node.dataset.boardDay;
-            boardRenderFocus('[data-board-day="' + node.dataset.boardDay + '"]');
-        }); });
-        panel.querySelectorAll('[data-board-range-apply]').forEach(function(node) { node.addEventListener('click', function() {
-            var range = boardAPI().calendarRange('custom', Date.now(), state.boardDraftFrom, state.boardDraftTo);
-            if (!range) return;
-            state.boardRangePreset = 'custom'; state.boardRangeFrom = range.from; state.boardRangeTo = range.to; state.boardCalendarOpen = false;
-            boardRenderFocus('[data-board-calendar-toggle]');
-        }); });
     }
 
     function loadBoard(options) {
@@ -4970,39 +1948,33 @@
         options = options || {};
         var epoch = state.boardEpoch;
         state.boardLoading = true;
-        if (!options.silent) { state.boardError = ''; render(); }
-        return Promise.all([
-            fetchJSON('/api/project-control/board'),
-            fetchJSON('/api/terminals'),
-            fetchJSON('/api/project-control')
-        ]).then(function(results) {
+        state.boardError = '';
+        if (!options.silent) render();
+        // The current board endpoint has project summaries only. The snapshot
+        // supplies full tasks, approval gates and evidence for task details.
+        return Promise.all([fetchJSON('/api/project-control/board'), fetchJSON('/api/project-control')]).then(function(results) {
             if (!state.authenticated || epoch !== state.boardEpoch) return null;
-            var data = results[0];
-            if (!data || !Array.isArray(data.projects) || !Array.isArray(results[1]) || !results[2]) throw new Error(bt('unknown'));
-            state.boardLoading = false; state.boardLoaded = true; state.boardError = '';
-            state.boardGeneratedAt = data.generatedAt || '';
-            state.boardProjects = data.projects; state.boardTerminals = results[1]; state.snapshot = results[2];
-            // The open calendar keeps its in-progress selection. Restore board
-            // keyboard focus after replacing the polling snapshot's markup.
-            var focused = document.activeElement, focusSelector = '';
-            if (focused && focused.closest('.project-board-view')) {
-                ['data-board-session', 'data-board-detail', 'data-board-view', 'data-board-refresh', 'data-board-calendar-toggle'].some(function(attr) {
-                    if (!focused.hasAttribute(attr)) return false;
-                    focusSelector = '[' + attr + '="' + CSS.escape(focused.getAttribute(attr)) + '"]';
-                    return true;
-                });
+            var board = results[0], snapshot = results[1];
+            if (!board || !Array.isArray(board.projects) || !snapshot || !Array.isArray(snapshot.tasks)) throw new Error(tr('project.loadFailed', 'Failed to load tasks'));
+            state.snapshot = Object.assign({}, snapshot, {
+                tasks: Array.isArray(board.tasks) ? board.tasks : snapshot.tasks,
+                checkpoints: Array.isArray(board.checkpoints) ? board.checkpoints : snapshot.checkpoints
+            });
+            state.boardLoading = false;
+            var focused = document.activeElement;
+            var taskId = focused && focused.getAttribute('data-task-id');
+            render();
+            if (taskId) {
+                var row = getPanel().querySelector('[data-task-id="' + CSS.escape(taskId) + '"]');
+                if (row) row.focus({ preventScroll: true });
             }
-            if (!(options.silent && state.boardCalendarOpen)) {
-                if (focusSelector) boardRenderFocus(focusSelector); else render();
-            }
-            if (state.boardDetailId) loadBoardDetail(state.boardDetailId, true);
             scheduleBoardRefresh();
-            return data;
-        }).catch(function(err) {
+            return board;
+        }).catch(function(error) {
             if (!state.authenticated || epoch !== state.boardEpoch) return null;
             state.boardLoading = false;
-            state.boardError = err.message || tr('project.boardRefreshFailed', 'Board refresh failed');
-            if (!state.boardCalendarOpen) render();
+            state.boardError = error.message || tr('project.loadFailed', 'Failed to load tasks');
+            render();
             scheduleBoardRefresh();
             return null;
         });
@@ -5025,57 +1997,19 @@
     }
 
     function openBoard() {
-        resetWorkstreamWizard();
-        resetTaskWizard();
         state.currentView = 'board';
         state.selectedTaskId = '';
-        state.selectedSessionId = '';
         state.error = '';
         render();
-        loadBoard();
-    }
-
-    function toggleBoardWorktrees(projectId) {
-        if (!projectId) {
-            return;
-        }
-        state.boardExpanded[projectId] = !state.boardExpanded[projectId];
-        render();
+        return loadBoard();
     }
 
     function renderMain() {
-        if (!state.snapshot) {
-            return '<div class="project-empty-state">' + escapeHTML(tr('project.empty', 'No project data yet.')) + '</div>';
-        }
-        if (state.currentView === 'board') {
-            return renderBoard();
-        }
-        if (state.currentView === 'workstream') {
-            return renderWorkstreamBoard();
-        }
-        if (state.currentView === 'task') {
-            return renderTaskDetail();
-        }
-        if (state.currentView === 'session') {
-            return renderSessionDetail();
-        }
-        if (state.currentView === 'approvals') {
-            return renderApprovals();
-        }
-        if (state.currentView === 'events') {
-            return renderEventsView();
-        }
-        if (state.currentView === 'replay') {
-            return renderReplayView();
-        }
-        return renderDashboard();
+        if (state.currentView === 'approvals') return renderApprovals();
+        return renderBoard();
     }
 
     function createProject() { openNewProject(); }
-
-    function createWorkstream(projectId) {
-        startWorkstreamWizard(projectId);
-    }
 
     function findCreatedWorkstream(snapshot, projectId, title) {
         var items = snapshot && Array.isArray(snapshot.workstreams) ? snapshot.workstreams : [];
@@ -5086,136 +2020,6 @@
             }
         }
         return null;
-    }
-
-    function submitWorkstreamWizard(form) {
-        var projectId = form.getAttribute('data-workstream-wizard') || state.creatingWorkstreamProjectId;
-        var titleInput = form.querySelector('[name="title"]');
-        var scopeInput = form.querySelector('[name="scopeSummary"]');
-        var title = String(titleInput && titleInput.value ? titleInput.value : '').trim();
-        var scopeSummary = String(scopeInput && scopeInput.value ? scopeInput.value : '').trim();
-        var created;
-
-        state.creatingWorkstreamTitle = title;
-        state.creatingWorkstreamScope = scopeSummary;
-        if (!projectId || !title) {
-            state.error = tr('project.workstreamNameRequired', 'Name required.');
-            render();
-            focusWorkstreamWizard();
-            return;
-        }
-        state.error = '';
-        state.creatingWorkstreamSaving = true;
-        render();
-        fetchJSON('/api/project-control/workstreams', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                projectId: projectId,
-                title: title,
-                description: '',
-                priority: 'medium',
-                scopeSummary: scopeSummary
-            })
-        }).then(function(snapshot) {
-            created = findCreatedWorkstream(snapshot, projectId, title);
-            state.snapshot = snapshot;
-            state.selectedProjectId = projectId;
-            resetWorkstreamWizard();
-            if (created) {
-                state.selectedWorkstreamId = created.id;
-                state.selectedTaskId = '';
-                state.selectedSessionId = '';
-                state.currentView = 'workstream';
-            } else {
-                state.currentView = 'dashboard';
-            }
-            updateBadge();
-            render();
-        }).catch(function(err) {
-            state.creatingWorkstreamSaving = false;
-            state.error = err.message || tr('project.createWorkstreamFailed', 'Create workstream failed');
-            render();
-            focusWorkstreamWizard();
-        });
-    }
-
-    function startTaskWizard(workstreamId) {
-        var workstream = findById(workstreams(), workstreamId);
-        var skill = defaultSkill();
-        var runbook;
-        if (!workstream) {
-            return;
-        }
-        if (state.creatingTaskWorkstreamId !== workstreamId) {
-            state.creatingTaskTitle = '';
-            state.creatingTaskGoal = '';
-        }
-        runbook = runbookForSkill(skill.id, '');
-        state.creatingTaskWorkstreamId = workstreamId;
-        state.creatingTaskSelectedSkill = skill.id || 'code_change';
-        state.creatingTaskRunbookId = runbook.id || 'code_change_default';
-        state.creatingTaskStep = 1;
-        state.creatingTaskSaving = false;
-        if (!state.agentRecommendations.length && !state.agentRecommendationsLoading) {
-            loadAgentRecommendations();
-        }
-        state.selectedProjectId = workstream.projectId;
-        state.selectedWorkstreamId = workstream.id;
-        state.selectedTaskId = '';
-        state.selectedSessionId = '';
-        state.currentView = 'workstream';
-        state.error = '';
-        render();
-        focusTaskWizard();
-    }
-
-    function submitTaskWizard(form) {
-        var workstreamId = form.getAttribute('data-task-wizard') || state.creatingTaskWorkstreamId;
-        var workstream = findById(workstreams(), workstreamId);
-        var draft = syncTaskWizardDraft(form);
-        var title = draft.title;
-        var goal = draft.goal;
-        var selectedSkill = draft.selectedSkill;
-        var runbook = draft.runbook;
-
-        if (currentTaskWizardStep() < TASK_WIZARD_TOTAL_STEPS) {
-            nextTaskWizardStep(form);
-            return;
-        }
-        if (!validateTaskWizardStep(TASK_WIZARD_TOTAL_STEPS, workstream, draft)) {
-            render();
-            focusTaskWizard();
-            return;
-        }
-        state.error = '';
-        state.creatingTaskSaving = true;
-        render();
-        fetchJSON('/api/project-control/tasks', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                projectId: workstream.projectId,
-                workstreamId: workstream.id,
-                title: title,
-                goal: goal,
-                priority: 'medium',
-                riskLevel: 'medium',
-                selectedSkill: selectedSkill,
-                runbookId: runbook.id || ''
-            })
-        }).then(function(snapshot) {
-            state.snapshot = snapshot;
-            resetTaskWizard();
-            openWorkstream(workstreamId);
-            updateBadge();
-            render();
-        }).catch(function(err) {
-            state.creatingTaskSaving = false;
-            state.error = err.message || tr('project.createTaskFailed', 'Create task failed');
-            render();
-            focusTaskWizard();
-        });
     }
 
     function startTaskPhase(taskId, phaseId) {
@@ -5282,32 +2086,9 @@
     }
 
     function bindInteractions(panel) {
-        bindBoardInteractions(panel);
-        panel.querySelectorAll('[data-open-drawer]').forEach(function(node) { node.addEventListener('click', openTaskDrawer); });
-        panel.querySelectorAll('[data-project-id]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                openDashboard(node.getAttribute('data-project-id'));
-            });
-        });
-        panel.querySelectorAll('[data-workstream-id]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                openWorkstream(node.getAttribute('data-workstream-id'));
-            });
-        });
         panel.querySelectorAll('[data-task-id]').forEach(function(node) {
             node.addEventListener('click', function() {
                 openTask(node.getAttribute('data-task-id'));
-            });
-        });
-        panel.querySelectorAll('[data-task-detail-tab]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                state.selectedTaskTab = normalizeTaskDetailTab(node.getAttribute('data-task-detail-tab'));
-                render();
-            });
-        });
-        panel.querySelectorAll('[data-session-id]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                openSession(node.getAttribute('data-session-id'));
             });
         });
         panel.querySelectorAll('[data-open-approvals]').forEach(function(node) {
@@ -5321,29 +2102,10 @@
                 loadBoard();
             });
         });
-        panel.querySelectorAll('[data-board-worktrees]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                toggleBoardWorktrees(node.getAttribute('data-board-worktrees'));
-            });
-        });
-        panel.querySelectorAll('[data-project-history]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                openProjectHistory(node.getAttribute('data-project-history'));
-            });
-        });
-        panel.querySelectorAll('[data-task-history]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                openTaskHistory(node.getAttribute('data-task-history'));
-            });
-        });
-        panel.querySelectorAll('[data-task-replay]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                loadTaskReplay(node.getAttribute('data-task-replay'));
-            });
-        });
-        panel.querySelectorAll('[data-update-workstream]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                updateWorkstreamInline(node.getAttribute('data-update-workstream'), node.getAttribute('data-action') || '');
+        panel.querySelectorAll('[data-board-filter]').forEach(function(node) {
+            node.addEventListener('change', function() {
+                state.boardProjectFilter = node.value || 'all';
+                render();
             });
         });
         panel.querySelectorAll('[data-update-task]').forEach(function(node) {
@@ -5382,132 +2144,37 @@
                 submitPhaseFailForm(form);
             });
         });
-        panel.querySelectorAll('[data-events-load-more]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                loadEvents(state.currentEventFilters || {}, true);
-            });
-        });
-        panel.querySelectorAll('[data-lane-filter]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                var kind = node.getAttribute('data-lane-filter-kind');
-                var lane = node.getAttribute('data-lane-filter') || 'all';
-                if (kind === 'events') {
-                    state.selectedEventLane = lane;
-                } else if (kind === 'replay') {
-                    state.selectedReplayLane = lane;
-                }
-                persistFilterPreferences();
-                render();
-            });
-        });
-        panel.querySelectorAll('[data-filter-input-kind]').forEach(function(node) {
-            node.addEventListener('input', function() {
-                var kind = node.getAttribute('data-filter-input-kind');
-                if (kind === 'events') {
-                    state.eventSearchQuery = node.value || '';
-                } else if (kind === 'replay') {
-                    state.replaySearchQuery = node.value || '';
-                }
-                persistFilterPreferences();
-                render();
-            });
-        });
         panel.querySelectorAll('[data-create-project]').forEach(function(node) {
             node.addEventListener('click', createProject);
         });
-        panel.querySelectorAll('[data-workstream-wizard]').forEach(function(form) {
-            form.addEventListener('submit', function(event) {
-                event.preventDefault();
-                submitWorkstreamWizard(form);
-            });
-        });
-        panel.querySelectorAll('[data-workstream-title-input]').forEach(function(node) {
-            node.addEventListener('input', function() {
-                state.creatingWorkstreamTitle = node.value || '';
-            });
-        });
-        panel.querySelectorAll('[data-workstream-scope-input]').forEach(function(node) {
-            node.addEventListener('input', function() {
-                state.creatingWorkstreamScope = node.value || '';
-            });
-        });
-        panel.querySelectorAll('[data-cancel-workstream-wizard]').forEach(function(node) {
+        panel.querySelectorAll('[data-board-tab]').forEach(function(node) {
             node.addEventListener('click', function() {
-                resetWorkstreamWizard();
-                state.error = '';
+                state.boardTab = node.getAttribute('data-board-tab') === 'gantt' ? 'gantt' : 'wall';
                 render();
             });
         });
-        panel.querySelectorAll('[data-task-wizard]').forEach(function(form) {
-            form.addEventListener('submit', function(event) {
-                event.preventDefault();
-                submitTaskWizard(form);
+        (function() {
+            var tabs = Array.prototype.slice.call(panel.querySelectorAll('[data-board-tab]'));
+            tabs.forEach(function(node, index) {
+                node.addEventListener('keydown', function(event) {
+                    var next;
+                    if (event.key === 'ArrowRight') next = tabs[(index + 1) % tabs.length];
+                    if (event.key === 'ArrowLeft') next = tabs[(index - 1 + tabs.length) % tabs.length];
+                    if (event.key === 'Home') next = tabs[0];
+                    if (event.key === 'End') next = tabs[tabs.length - 1];
+                    if (!next) return;
+                    event.preventDefault();
+                    state.boardTab = next.getAttribute('data-board-tab') === 'gantt' ? 'gantt' : 'wall';
+                    render();
+                    var focusTarget = getPanel().querySelector('[data-board-tab="' + state.boardTab + '"]');
+                    if (focusTarget) focusTarget.focus();
+                });
             });
-        });
-        panel.querySelectorAll('[data-task-title-input]').forEach(function(node) {
-            node.addEventListener('input', function() {
-                state.creatingTaskTitle = node.value || '';
-            });
-        });
-        panel.querySelectorAll('[data-task-goal-input]').forEach(function(node) {
-            node.addEventListener('input', function() {
-                state.creatingTaskGoal = node.value || '';
-            });
-        });
-        panel.querySelectorAll('[data-task-skill-select]').forEach(function(node) {
-            node.addEventListener('change', function() {
-                var skill = skillForId(node.value || '');
-                var runbook = runbookForSkill(skill.id, '');
-                state.creatingTaskSelectedSkill = skill.id || '';
-                state.creatingTaskRunbookId = runbook.id || '';
+        })();
+        panel.querySelectorAll('[data-board-range]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                state.boardRange = node.getAttribute('data-board-range') || 'all';
                 render();
-                focusTaskWizard();
-            });
-        });
-        panel.querySelectorAll('[data-task-wizard-prev]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                previousTaskWizardStep();
-            });
-        });
-        panel.querySelectorAll('[data-task-wizard-next]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                var form = node.closest('[data-task-wizard]');
-                if (form) {
-                    nextTaskWizardStep(form);
-                }
-            });
-        });
-        panel.querySelectorAll('[data-cancel-task-wizard]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                resetTaskWizard();
-                state.error = '';
-                render();
-            });
-        });
-        panel.querySelectorAll('[data-create-workstream]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                createWorkstream(node.getAttribute('data-create-workstream'));
-            });
-        });
-        panel.querySelectorAll('[data-create-task]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                startTaskWizard(node.getAttribute('data-create-task'));
-            });
-        });
-        panel.querySelectorAll('[data-attach-terminal]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                var bridge = app();
-                if (bridge && typeof bridge.attachTerminal === 'function') {
-                    bridge.attachTerminal(node.getAttribute('data-attach-terminal'));
-                }
-            });
-        });
-        panel.querySelectorAll('[data-open-terminal-mode]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                var bridge = app();
-                if (bridge && typeof bridge.setMode === 'function') {
-                    bridge.setMode('terminal');
-                }
             });
         });
         panel.querySelectorAll('[data-checkpoint-action]').forEach(function(node) {
@@ -5522,7 +2189,6 @@
                 }).then(function(snapshot) {
                     state.snapshot = snapshot;
                     if (source === 'task' && state.selectedTaskId) {
-                        state.currentView = 'task';
                         openTask(state.selectedTaskId);
                     } else {
                         state.currentView = 'approvals';
@@ -5535,142 +2201,75 @@
                 });
             });
         });
-        panel.querySelectorAll('[data-add-tool]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                var container = node.closest('.project-tool-add-form');
-                if (!container) return;
-                var id = (container.querySelector('[data-tool-field="id"]') || {}).value || '';
-                var name = (container.querySelector('[data-tool-field="name"]') || {}).value || '';
-                var command = (container.querySelector('[data-tool-field="command"]') || {}).value || '';
-                var artifactKind = (container.querySelector('[data-tool-field="artifactKind"]') || {}).value || '';
-                var allowedPhases = (container.querySelector('[data-tool-field="allowedPhases"]') || {}).value || '';
-                var kind = (container.querySelector('[data-tool-field="kind"]') || {}).value || '';
-                if (!id || !artifactKind) { state.error = 'Tool ID and artifact kind are required'; render(); return; }
-                var body = { id: id, name: name || id, artifactKind: artifactKind };
-                if (command) body.command = command.split(/\s+/);
-                if (allowedPhases) body.allowedPhases = allowedPhases.split(',').map(function(s) { return s.trim(); });
-                if (kind) body.kind = kind;
-                fetchJSON('/api/project-control/tools', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                }).then(function() { refreshSnapshotSilently(); }).catch(function(err) {
-                    state.error = err.message || 'Failed to add tool'; render();
-                });
-            });
-        });
-        panel.querySelectorAll('[data-delete-tool]').forEach(function(node) {
-            node.addEventListener('click', function() {
-                var toolId = node.getAttribute('data-delete-tool');
-                if (!toolId || !confirm('Delete tool ' + toolId + '?')) return;
-                fetchJSON('/api/project-control/tools/' + encodeURIComponent(toolId), { method: 'DELETE' })
-                    .then(function() { refreshSnapshotSilently(); })
-                    .catch(function(err) { state.error = err.message || 'Failed to delete tool'; render(); });
-            });
-        });
     }
 
     function render() {
-        hideBoardPreview();
-        if (state.currentView !== 'board' && boardDialog && !boardDialog.classList.contains('drawer') && !boardDialog.classList.contains('create-dialog')) closeBoardDialog();
         var panel = getPanel();
-        if (!panel) {
-            return;
-        }
+        if (!panel) return;
         if (state.currentView !== 'board' && state.boardTimer) {
             window.clearTimeout(state.boardTimer);
             state.boardTimer = null;
         }
         updateBadge();
-        if (!state.authenticated) {
-            panel.innerHTML = '';
-            return;
-        }
-        if (state.loading && !state.snapshot) {
-            panel.innerHTML = '<div class="project-empty-state">' + escapeHTML(tr('project.loading', 'Loading project panel…')) + '</div>';
-            return;
-        }
-        if (state.error && !state.snapshot) {
-            panel.innerHTML = '<div class="project-empty-state error">' + escapeHTML(state.error) + '</div>';
-            return;
-        }
-        ensureSelection();
+        panel.classList.toggle('board-full', state.authenticated && state.currentView === 'board');
+        if (!state.authenticated) { panel.innerHTML = ''; return; }
         panel.innerHTML = (state.error ? '<div class="project-banner error">' + escapeHTML(state.error) + '</div>' : '')
-            + renderSidebar()
             + '<main class="project-panel-main"><div class="project-breadcrumbs">' + renderBreadcrumbs() + '</div>' + renderMain() + '</main>';
         bindInteractions(panel);
+        if (taskDialog && taskDialog.isConnected && taskDialog.open) {
+            renderTaskDialogContent(taskDialog);
+        }
     }
 
     function handleAuth(event) {
         state.authenticated = Boolean(event && event.detail && event.detail.authenticated);
         if (!state.authenticated) {
             closeBoardDialog();
+            closeTaskDialog();
             state.snapshot = null;
             state.error = '';
-            state.currentView = 'dashboard';
-            state.boardProjects = [];
-            state.boardEpoch++; state.boardLoading = false;
-            state.boardTerminals = []; state.boardLoaded = false; state.boardDetails = {};
-            state.boardCalendarOpen = false;
+            state.currentView = 'board';
+            state.selectedTaskId = '';
+            state.boardEpoch++;
+            state.boardLoading = false;
             state.boardError = '';
-            state.boardGeneratedAt = '';
-            state.boardExpanded = {};
-            if (state.boardTimer) {
-                window.clearTimeout(state.boardTimer);
-                state.boardTimer = null;
-            }
+            state.boardProjectFilter = '';
+            state.boardTab = 'wall';
+            state.boardRange = 'all';
+            window.clearTimeout(state.boardTimer);
+            window.clearTimeout(state.toolRunRefreshTimer);
+            state.boardTimer = null;
+            state.toolRunRefreshTimer = null;
             render();
-            return;
-        }
-        if (app() && app().getMode && app().getMode() === 'project') {
-            loadSnapshot();
+        } else if (app() && app().getMode && app().getMode() === 'project') {
+            openBoard();
         }
     }
 
     function handleModeChange(event) {
         var mode = event && event.detail ? event.detail.mode : '';
-        if (mode !== 'project') { closeBoardDialog(); hideBoardPreview(); }
-        if (mode === 'project' && state.authenticated) {
-            loadSnapshot();
+        if (mode === 'project' && state.authenticated) openBoard();
+        else {
+            closeBoardDialog();
+            closeTaskDialog();
+            window.clearTimeout(state.boardTimer);
+            state.boardTimer = null;
         }
     }
 
     function init() {
         initBoardFont();
-        window.addEventListener('scroll', hideBoardPreview, true);
-        window.addEventListener('resize', hideBoardPreview);
-        document.addEventListener('keydown', function(event) {
-            if (event.key !== 'Escape') return;
-            hideBoardPreview();
-            if (state.boardCalendarOpen) { state.boardCalendarOpen = false; boardRenderFocus('[data-board-calendar-toggle]'); }
-        });
-        document.addEventListener('pointerdown', function(event) {
-            if (state.boardCalendarOpen && !event.target.closest('.range-wrap')) {
-                state.boardCalendarOpen = false;
-                var pop = document.getElementById('board-range-pop');
-                if (pop) pop.hidden = true;
-                var toggle = getPanel().querySelector('[data-board-calendar-toggle]');
-                if (toggle) toggle.setAttribute('aria-expanded', 'false');
-            }
-        });
         var badge = getBadge();
-        loadFilterPreferences();
-        if (badge) {
-            badge.addEventListener('click', function() {
-                if (app() && app().setMode) {
-                    app().setMode('project');
-                }
-                openTaskDrawer();
-                if (!state.snapshot && state.authenticated) {
-                    loadSnapshot();
-                } else {
-                    render();
-                }
-            });
-        }
+        if (badge) badge.addEventListener('click', function() {
+            if (app() && app().setMode) app().setMode('project');
+            openApprovals();
+            if (!state.snapshot && state.authenticated) loadBoard();
+        });
         document.addEventListener('roambench:auth', handleAuth);
         document.addEventListener('roambench:modechange', handleModeChange);
         if (app() && app().getUsername && app().getUsername()) {
             state.authenticated = true;
+            if (app().getMode() === 'project') openBoard();
         }
         render();
     }
