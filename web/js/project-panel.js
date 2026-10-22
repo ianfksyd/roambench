@@ -778,7 +778,7 @@
             dialog.setAttribute('aria-labelledby', 'board-task-dialog-title');
             dialog.innerHTML = '<header class="dialog-header"><div><h2 id="board-task-dialog-title"></h2>'
                 + '<p class="board-detail-subtitle" id="board-task-dialog-subtitle"></p></div>'
-                + '<button type="button" class="btn small" data-task-dialog-close>' + escapeHTML(i4('close')) + '</button></header>'
+                + '<button type="button" class="btn small dialog-close" data-task-dialog-close aria-label="' + escapeHTML(i4('close')) + '" title="' + escapeHTML(i4('close')) + '">' + escapeHTML(i4('closeSymbol')) + '</button></header>'
                 + '<div class="dialog-body" id="board-task-dialog-body"></div>';
             document.body.appendChild(dialog);
             taskDialog = dialog;
@@ -1818,7 +1818,7 @@
         var dialog = document.createElement('dialog');
         dialog.className = 'board-v3 project-dialog';
         dialog.setAttribute('aria-labelledby', 'board-dialog-title');
-        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-dialog-title">' + escapeHTML(title) + '</h2><button type="button" class="btn small" data-board-dialog-close>' + escapeHTML(i4('close')) + '</button></header><div class="dialog-body">' + content + '</div>';
+        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-dialog-title">' + escapeHTML(title) + '</h2><button type="button" class="btn small dialog-close" data-board-dialog-close aria-label="' + escapeHTML(i4('close')) + '" title="' + escapeHTML(i4('close')) + '">' + escapeHTML(i4('closeSymbol')) + '</button></header><div class="dialog-body">' + content + '</div>';
         document.body.appendChild(dialog); boardDialog = dialog;
         dialog.querySelector('[data-board-dialog-close]').addEventListener('click', closeBoardDialog);
         bindDialogDismiss(dialog, closeBoardDialog);
@@ -1830,6 +1830,11 @@
     function i4(key, vars) { return tr('project.boardI4.' + key, key, vars); }
     function i4Button(key, attr, value, primary) {
         return '<button type="button" class="btn small' + (primary ? ' primary' : '') + '" ' + attr + '="' + escapeHTML(value || '') + '">' + escapeHTML(i4(key)) + '</button>';
+    }
+    // The close affordance is a symbol, not a word: less to read, and the
+    // accessible name stays on the button.
+    function i4CloseButton(attr) {
+        return '<button type="button" class="btn small dialog-close" ' + attr + ' aria-label="' + escapeHTML(i4('close')) + '" title="' + escapeHTML(i4('close')) + '">' + escapeHTML(i4('closeSymbol')) + '</button>';
     }
     function boardRequest(url, method, body) {
         return fetchJSON('/api/project-control/' + url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1851,7 +1856,7 @@
         var dialog = document.createElement('dialog'), current = '', version = 0, roots = [], allowUserRoots = false;
         dialog.className = 'board-v3 fs-dialog';
         dialog.setAttribute('aria-labelledby', 'board-folder-title');
-        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-folder-title">' + escapeHTML(i4('chooseFolder')) + '</h2>' + i4Button('close', 'data-fs-close') + '</header><div class="dialog-body">'
+        dialog.innerHTML = '<header class="dialog-header"><h2 id="board-folder-title">' + escapeHTML(i4('chooseFolder')) + '</h2>' + i4CloseButton('data-fs-close') + '</header><div class="dialog-body">'
             + '<nav class="fs-roots" aria-label="' + escapeHTML(i4('roots')) + '"><span class="fs-roots-label">' + escapeHTML(i4('roots')) + '</span></nav>'
             + '<div class="fs-add" hidden><input class="fs-add-input" aria-label="' + escapeHTML(i4('rootPath')) + '" placeholder="/data/…" maxlength="1000" autocomplete="off">'
             + '<button type="button" class="btn small primary" data-fs-add-save>' + escapeHTML(i4('add')) + '</button>'

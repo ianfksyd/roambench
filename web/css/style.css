@@ -4831,26 +4831,41 @@ button.tab-action:focus-visible {
 .board-v3 .heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .board-filter { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .board-v3 select {
-    min-height: 36px;
+    min-height: 30px;
     max-width: 100%;
-    padding: 7px 10px;
+    padding: 4px 9px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--bg);
     color: inherit;
+    font-size: 12px;
     cursor: pointer;
 }
 .board-v3 .btn, .board-v3 .path-pick, .board-v3 .fs-crumb button {
-    min-height: 36px;
-    padding: 7px 13px;
+    min-height: 30px;
+    padding: 4px 11px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--surface);
+    font-size: 12px;
 }
 .board-v3 .btn:hover, .board-v3 .path-pick:hover, .board-v3 .fs-crumb button:hover { background: var(--hover); }
 .board-v3 .btn.primary { color: #152b26; border-color: var(--accent); background: var(--accent); }
 .board-v3 .btn.primary:hover { background: #6bd6c0; }
-.board-v3 .btn.small { min-height: 30px; padding: 4px 9px; font-size: 12px; }
+/* The close affordance is a symbol button: no word to read. */
+.board-v3 .dialog-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    min-height: 26px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 15px;
+    line-height: 1;
+    color: var(--muted);
+}
+.board-v3 .dialog-close:hover { color: var(--text); background: var(--hover); }
 .board-v3 .view-toolbar {
     display: flex;
     align-items: center;
@@ -4900,6 +4915,13 @@ button.tab-action:focus-visible {
     height: 2px;
     background: var(--accent);
 }
+/* Board tabs follow the board button size. */
+.board-v3 .view-tab {
+    min-height: 30px;
+    padding: 3px 16px;
+    font-size: 12px;
+}
+.board-v3 .view-tab[aria-selected="true"]::after { right: 16px; left: 16px; }
 .board-range-pills {
     display: flex;
     flex-wrap: wrap;
@@ -5151,10 +5173,12 @@ button.tab-action:focus-visible {
 }
 .board-task-state { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 .board-empty-note {
-    padding: 22px;
+    padding: 28px 22px;
     border: 1px dashed var(--border);
-    border-radius: 4px;
+    border-radius: 6px;
     color: var(--muted);
+    font-size: 13px;
+    text-align: center;
 }
 .board-footer {
     display: flex;
