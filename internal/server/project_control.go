@@ -5399,9 +5399,32 @@ func projectControlNormalizeState(state *projectControlState) {
 	}
 }
 
+// maxProjectControlIDLength bounds every generated ID. The decision route
+// validates path segments against this limit, so an ID generated here must
+// always pass; long seeds are truncated because the timestamp already makes
+// the ID unique.
+const maxProjectControlIDLength = 128
+
 func projectControlID(prefix, seed string) string {
 	stamp := time.Now().UTC().Format("20060102-150405.000000000")
-	return prefix + "-" + slugifyProjectControl(seed) + "-" + strings.ReplaceAll(stamp, ".", "")
+	id := prefix + "-" + slugifyProjectControl(seed) + "-" + strings.ReplaceAll(stamp, ".", "")
+	if len(id) > maxProjectControlIDLength {
+		// Keep the prefix and the timestamp tail; drop seed characters from
+		// the middle of the seed portion only.
+		head := len(prefix) + 1
+		tail := len(strings.ReplaceAll(stamp, ".", "")) + 1
+		keep := maxProjectControlIDLength - head - tail
+		seedSlug := slugifyProjectControl(seed)
+		if keep < 0 {
+			keep = 0
+		}
+		if len(seedSlug) > keep {
+			seedSlug = seedSlug[:keep]
+		}
+		seedSlug = strings.Trim(seedSlug, "-")
+		id = prefix + "-" + seedSlug + "-" + strings.ReplaceAll(stamp, ".", "")
+	}
+	return id
 }
 
 func slugifyProjectControl(value string) string {
@@ -6398,7 +6421,7 @@ func (s *Server) handleProjectControlCheckpointDecision(w http.ResponseWriter, r
 		return
 	}
 	id = strings.TrimSpace(strings.Trim(strings.TrimSuffix(id, "/decision"), "/"))
-	if id == "" || len(id) > 128 || !isValidProjectControlID(id) {
+	if id == "" || len(id) > maxProjectControlIDLength || !isValidProjectControlID(id) {
 		http.NotFound(w, r)
 		return
 	}

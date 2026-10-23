@@ -451,3 +451,68 @@ func TestDispatchCheckpointCreationAndApprovalGatesClaim(t *testing.T) {
 		t.Fatalf("claim after rejection = %d, want 204", rec.Code)
 	}
 }
+
+// A task with a very long title must still produce a dispatch checkpoint
+// whose ID passes the decision route's length validation (regression: a
+// 155-char ID was rejected with 404 before the human could approve).
+func TestDispatchCheckpointIDStaysWithinRouteLimit(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+
+	longTitle := strings.Repeat("很长的任务标题", 30) // ~180 chars of seed text
+	// Seed the fixture project + workstream through withStateLocked.
+	if _, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		for i := range state.Projects {
+			if state.Projects[i].ID == "project-roambench-control" {
+				state.Projects[i].Takeover = projectTakeover{Mode: "active"}
+				state.Projects[i].Lifecycle = projectLifecycle{State: "executing"}
+			}
+		}
+		if !projectControlWorkstreamExists(*state, "workstream-ui-ia", "project-roambench-control") {
+			state.Workstreams = append(state.Workstreams, projectControlWorkstream{ID: "workstream-ui-ia", ProjectID: "project-roambench-control", Title: "WS"})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks",
+		strings.NewReader(`{"projectId":"project-roambench-control","workstreamId":"workstream-ui-ia","title":"`+longTitle+`","acceptanceCommand":["/bin/true"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create task = %d: %s", rec.Code, rec.Body.String())
+	}
+	snapshot := decodeProjectControlSnapshot(t, rec)
+
+	checkpointID := ""
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.Kind == "dispatch" && checkpoint.Status == "pending" {
+			checkpointID = checkpoint.ID
+		}
+	}
+	if checkpointID == "" {
+		t.Fatal("no pending dispatch checkpoint")
+	}
+	if len(checkpointID) > 128 {
+		t.Fatalf("checkpoint ID is %d chars, must be <= 128: %s", len(checkpointID), checkpointID)
+	}
+
+	// The decision endpoint must reach the handler (400/200, not 404).
+	agentToken := agentTokenFor(t, srv, token)
+	_ = agentToken
+	decision := httptest.NewRequest(http.MethodPost,
+		"/api/project-control/checkpoints/"+checkpointID+"/decision",
+		strings.NewReader(`{"action":"approve"}`))
+	decision.Header.Set("Content-Type", "application/json")
+	decision.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	decisionRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(decisionRec, decision)
+	if decisionRec.Code == http.StatusNotFound {
+		t.Fatalf("decision route 404 on a %d-char ID: %s", len(checkpointID), decisionRec.Body.String())
+	}
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("approve = %d: %s", decisionRec.Code, decisionRec.Body.String())
+	}
+}

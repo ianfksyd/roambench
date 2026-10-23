@@ -1147,7 +1147,7 @@
         if (!finalAcceptance && !archiveOverride && !dispatch) {
             return '';
         }
-        return '<div class="project-card-list project-card-visual"><h3>' + escapeHTML(tr('project.currentApprovals', 'Current approvals')) + '</h3>'
+        return '<div class="project-card-list project-card-visual approvals-compact"><h3>' + escapeHTML(tr('project.currentApprovals', 'Current approvals')) + '</h3>'
             + renderStatusRow(tr('project.dispatchCheckpoint', 'Dispatch approval'), dispatch, 'dispatch')
             + renderStatusRow(tr('project.finalAcceptance', 'Final acceptance'), finalAcceptance, 'final_acceptance')
             + renderStatusRow(tr('project.archiveOverride', 'Archive override'), archiveOverride, 'archive_override')
@@ -1488,7 +1488,6 @@
             + '</section>';
         var report = task.recentSummary
             ? '<section class="info-card report-card"><div class="card-heading"><h3>' + escapeHTML(tr('project.taskReportTitle', 'Self-report')) + '</h3>'
-                + '<span class="source-badge">' + escapeHTML(tr('project.taskReportTitle', 'Self-report')) + '</span>'
                 + '<span class="pill">' + escapeHTML(tr('project.taskUnverified', 'Unverified')) + '</span></div>'
                 + '<blockquote>' + escapeHTML(task.recentSummary) + '</blockquote></section>'
             : '';
@@ -1499,11 +1498,14 @@
                 }).join('')
                 : '<p class="muted">' + escapeHTML(tr('project.noActivity', 'No activity yet.')) + '</p>')
             + '</section>';
+        // 最低密度: 无证据/无动态时不渲染空卡片,只留有用的块。
+        var evidenceBlock = artifacts.length ? evidence : '';
+        var activityBlock = audit.length ? activity : '';
         return summary
             + info
-            + '<div class="detail-columns' + (report ? '' : ' single') + '">' + evidence + report + '</div>'
-            + activity
-            + renderTaskApprovalStatusCard(task);
+            + renderTaskApprovalStatusCard(task)
+            + '<div class="detail-columns' + (report ? '' : ' single') + '">' + evidenceBlock + report + '</div>'
+            + activityBlock;
     }
 
     function renderApprovalCard(item) {

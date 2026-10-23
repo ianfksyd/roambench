@@ -5368,6 +5368,18 @@ dialog.board-v3 {
 /* The folder dialog keeps its scrollability without showing a scrollbar. */
 .board-v3.fs-dialog { scrollbar-width: none; }
 .board-v3.fs-dialog::-webkit-scrollbar { display: none; }
+/* 任务详情抽屉同样隐藏滚动条(截图里那条竖条),且内容不许横向溢出。 */
+.board-v3.board-detail-dialog { overflow-x: hidden; scrollbar-width: none; }
+.board-v3.board-detail-dialog::-webkit-scrollbar { display: none; }
+.board-v3.board-detail-dialog .dialog-body { overflow-x: hidden; }
+.board-v3.board-detail-dialog pre, .board-v3.board-detail-dialog code, .board-v3.board-detail-dialog blockquote { overflow-x: auto; scrollbar-width: none; }
+.board-v3.board-detail-dialog pre::-webkit-scrollbar, .board-v3.board-detail-dialog code::-webkit-scrollbar, .board-v3.board-detail-dialog blockquote::-webkit-scrollbar { display: none; }
+/* 审批卡紧凑化: 徽章一行,一句话,按钮右对齐,行高收窄。 */
+.board-v3 .approvals-compact .project-approval-card { padding: 12px 14px; }
+.board-v3 .approvals-compact .project-approval-summary { margin: 6px 0 10px; }
+.board-v3 .approvals-compact .project-card-copy { display: none; }
+.board-v3 .approvals-compact .project-approval-actions { margin-top: 0; justify-content: flex-end; gap: 8px; }
+.board-v3 .approvals-compact .project-task-badges { gap: 6px; flex-wrap: wrap; }
 .board-v3 .fs-item { display: flex; gap: 8px; width: 100%; border: 0; padding: 10px; text-align: left; background: transparent; overflow-wrap: anywhere; }
 .board-v3 .fs-item:hover { background: var(--hover); }
 .board-v3 .ficon { color: #dcdcaa; }
