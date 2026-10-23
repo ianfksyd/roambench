@@ -2027,13 +2027,23 @@
         var dialog = showBoardDialog(i4('newProject'), '<form data-board-entry><fieldset>'
             + '<div class="field" data-entry-folder><label for="board-entry-path">' + escapeHTML(i4('folderPath')) + '</label><div class="path-row"><input id="board-entry-path" name="path" required maxlength="1000" autocomplete="off" placeholder="/data/…">'
             + '<button class="path-pick" type="button" data-pick-folder aria-haspopup="dialog" aria-label="' + escapeHTML(i4('chooseFolder')) + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg></button></div></div>'
-            + '<label class="field"><span>' + escapeHTML(i4('goal')) + '</span><input name="goal" required maxlength="300" autocomplete="off"></label>'
+            + '<label class="field"><span>' + escapeHTML(i4('goal')) + '</span><textarea name="goal" class="goal-input" rows="2" required maxlength="300" autocomplete="off"></textarea></label>'
             + '</fieldset>'
             + '<p class="form-error" role="alert"></p><footer class="dialog-footer"><button type="button" class="btn small" data-setup-open>' + escapeHTML(as('title')) + '</button><button type="submit" class="btn primary">' + escapeHTML(i4('submit')) + '</button></footer></form>');
         dialog.classList.add('create-dialog');
         var form = dialog.querySelector('form'), progress = { projectId: '', workstreamId: '' }, busy = false, entry = null;
         form.querySelector('[data-pick-folder]').onclick = function() { openFolderPicker(form.elements.path); };
         form.querySelector('[data-setup-open]').onclick = function() { openAgentSetup(); };
+        // The goal grows with its text: width fixed, height follows content.
+        var goalBox = form.elements.goal;
+        function fitGoal() {
+            goalBox.style.height = 'auto';
+            // +2: the 1px borders are not part of scrollHeight but are part
+            // of the border-box height, so add them back or the last line clips.
+            goalBox.style.height = (Math.max(goalBox.scrollHeight, 58) + 2) + 'px';
+        }
+        goalBox.addEventListener('input', fitGoal);
+        fitGoal();
         form.onsubmit = async function(event) {
             event.preventDefault(); if (busy) return;
             if (!entry) entry = boardAPI().projectEntry({ source: form.elements.path.value, goal: form.elements.goal.value });

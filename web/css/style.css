@@ -5326,6 +5326,7 @@ dialog.board-v3 {
 .board-v3 fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .board-v3 .field { display: grid; gap: 8px; margin-bottom: 18px; }
 .board-v3 .field input { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+.board-v3 .field textarea { width: 100%; min-width: 0; min-height: 58px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: inherit; font: inherit; line-height: 1.5; resize: none; overflow: hidden; box-sizing: border-box; }
 .board-v3 .path-row { display: flex; gap: 8px; }
 .board-v3 .path-pick { flex: 0 0 auto; }
 .board-v3 .fs-crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; overflow-wrap: anywhere; }
