@@ -357,6 +357,9 @@ type projectControlState struct {
 	Decisions       []projectControlDecision      `json:"decisions,omitempty"`
 	Events          []projectControlRecordedEvent `json:"events,omitempty"`
 	Memories        []projectControlTaskMemory    `json:"memories,omitempty"`
+	// ProjectMemories holds the canonical memory of every project: one
+	// document all agents share instead of keeping private copies.
+	ProjectMemories []projectControlProjectMemory `json:"projectMemories,omitempty"`
 	UpdatedAt       string                        `json:"updatedAt,omitempty"`
 }
 
@@ -2765,6 +2768,7 @@ func (s *projectControlStore) createProject(username string, req projectControlP
 			RowVersion:  1,
 		}
 		state.Projects = append(state.Projects, project)
+		seedProjectMemory(state, project)
 		state.ActiveProjectID = project.ID
 		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 			ID:        projectControlID("event", "project-created"),

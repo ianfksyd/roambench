@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ianf339/roambench/internal/agentmem"
 )
 
 var version = "dev"
@@ -34,6 +37,8 @@ func main() {
 		cmdHeartbeat(os.Args[2:])
 	case "release":
 		cmdRelease(os.Args[2:])
+	case "memory":
+		cmdMemory(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("roambench-agent " + version)
 	case "help", "--help", "-h":
@@ -56,6 +61,14 @@ Commands:
                                   Renew a claim lease once, or loop every <interval>
   release --lease-id <id> --outcome done|failed|released
                                   Close a claim lease and report the outcome
+  memory get [--project <id>] [--task <id>]
+                                  Print the canonical project memory
+  memory append --project <id> --text <text> [--file <f>]
+                                  Append to the canonical project memory
+  memory set --project <id> --text <text> [--file <f>]
+                                  Replace the canonical project memory
+  memory pointer --project <id> --file <path> [--file <path> ...]
+                                  Write the shared-memory pointer into files
   artifact --kind <k> --outcome <o> [--label <l>] [--value <v>] [--file <f>]
                                   Submit an artifact for the current phase
   checkpoint --reason <r>         Request human review
@@ -109,6 +122,21 @@ func flag(args []string, name string) string {
 		}
 	}
 	return ""
+}
+
+// flagsAll returns every value given for a repeated flag.
+func flagsAll(args []string, name string) []string {
+	var values []string
+	for i, a := range args {
+		if a == name && i+1 < len(args) {
+			values = append(values, args[i+1])
+			continue
+		}
+		if strings.HasPrefix(a, name+"=") {
+			values = append(values, strings.TrimPrefix(a, name+"="))
+		}
+	}
+	return values
 }
 
 func apiGet(path string) (map[string]interface{}, error) {
@@ -178,6 +206,112 @@ func cmdStatus() {
 	fmt.Printf("Phase:   %s\n", phase)
 	if nextStep != "" {
 		fmt.Printf("Next:    %s\n", nextStep)
+	}
+}
+
+// cmdMemory reads and writes the canonical project memory: the shared
+// document every agent of a project uses instead of keeping a private copy.
+func cmdMemory(args []string) {
+	action := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
+		action = args[0]
+		args = args[1:]
+	}
+	if action == "" {
+		action = "get"
+	}
+	projectID := flag(args, "--project")
+	taskID := flag(args, "--task")
+	text := flag(args, "--text")
+	file := flag(args, "--file")
+	actor := flag(args, "--actor")
+
+	// The pointer action writes files; --file there names the target, not
+	// the body of the memory text.
+	if action != "pointer" && file != "" && text == "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			fatal(err.Error())
+		}
+		text = string(data)
+	}
+
+	switch action {
+	case "get":
+		query := ""
+		if projectID != "" {
+			query = "?project=" + url.QueryEscape(projectID)
+		} else if taskID != "" {
+			query = "?task=" + url.QueryEscape(taskID)
+		}
+		result, err := apiGet("/api/agent/v1/memory" + query)
+		if err != nil {
+			fatal(err.Error())
+		}
+		content, _ := result["content"].(string)
+		if strings.TrimSpace(content) == "" {
+			fmt.Println("(project memory is empty)")
+			return
+		}
+		fmt.Print(content)
+		if !strings.HasSuffix(content, "\n") {
+			fmt.Println()
+		}
+	case "pointer":
+		if projectID == "" {
+			fatal("--project is required")
+		}
+		files := flagsAll(args, "--file")
+		if len(files) == 0 {
+			fatal("--file is required")
+		}
+		for _, path := range files {
+			result, err := agentmem.ApplyPointer(path, projectID)
+			if err != nil {
+				fatal(err.Error())
+			}
+			switch {
+			case result.Created:
+				fmt.Printf("wrote pointer: %s\n", result.Path)
+			case result.Changed:
+				fmt.Printf("updated pointer: %s (backup: %s)\n", result.Path, result.BackupPath)
+			default:
+				fmt.Printf("pointer already current: %s\n", result.Path)
+			}
+		}
+	case "append", "set":
+		if projectID == "" {
+			fatal("--project is required")
+		}
+		if strings.TrimSpace(text) == "" {
+			fatal("--text or --file is required")
+		}
+		mode := "append"
+		if action == "set" {
+			mode = "replace"
+		}
+		payload := map[string]interface{}{
+			"projectId": projectID,
+			"content":   strings.TrimRight(text, "\n"),
+			"mode":      mode,
+		}
+		if actor != "" {
+			payload["actor"] = actor
+		}
+		result, err := apiPost("/api/agent/v1/memory", payload)
+		if err != nil {
+			fatal(err.Error())
+		}
+		revision := 0
+		switch v := result["revision"].(type) {
+		case float64:
+			revision = int(v)
+		case int:
+			revision = v
+		}
+		fmt.Printf("project memory updated (revision %d)\n", revision)
+	default:
+		fatal("unknown memory action: " + action)
 	}
 }
 

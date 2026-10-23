@@ -26,6 +26,8 @@ roambench-agent notify --title "Done" --body "Task complete"
 - [Claude Code](claude-code.md)
 - [OpenCode](opencode.md)
 - [Generic (any agent)](generic.md)
+- [Shared project memory](shared-memory.md) — one canonical memory per project,
+  read through `roambench-agent memory` instead of one private copy per agent
 
 ## How It Works
 

@@ -385,6 +385,9 @@ func (s *projectControlStore) agentTaskPayloadForTaskID(username, taskID string)
 			"requiredArtifacts":  phase.RequiredArtifacts,
 			"missingEvidence":    task.MissingEvidence,
 			"nextStep":           task.NextStep,
+			// The canonical project memory travels with the task, so an agent
+			// reads the shared facts instead of re-deriving them.
+			"projectMemory": projectMemoryPayload(state, task.ProjectID),
 		}
 	}
 	return nil

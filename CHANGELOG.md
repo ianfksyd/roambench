@@ -8,6 +8,8 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ### Added
 
+- Canonical project memory: one shared document per project, seeded from the project brief, readable and writable by every agent (`roambench-agent memory get|append|set`), included in the claim response
+- `roambench-agent memory pointer` writes a managed pointer block into CLAUDE.md / AGENTS.md, so agents read the shared memory instead of keeping private copies
 - Configurable browse roots (`[filesystem] roots`) shown in the file browser and the folder picker; `/` offers the whole machine, `~` the home directory
 - Per-user roots in `~/.config/roambench/roots.toml`, manageable from the folder picker (`/api/fs/roots`, add and remove)
 
