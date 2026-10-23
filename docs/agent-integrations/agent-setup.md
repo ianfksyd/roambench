@@ -7,8 +7,12 @@ memory surface for the agents (see [Shared project memory](shared-memory.md)).
 
 ## What it does
 
-1. **Scans** which agent CLIs are installed (`internal/agentprobe` already
-   knows how) and where each of them currently points.
+1. **Scans** which agent CLIs are installed (`internal/agentprobe`) and
+   where each of them currently points. Resolution goes through PATH first,
+   then through the common install directories of the agent ecosystems
+   (`~/.local/bin`, `~/.opencode/bin`, `~/.volta/bin`, `~/go/bin`,
+   `~/.openclaw/tools/*/bin`, `~/.nvm/versions/node/*/bin`) — agent managers
+   often install into directories a service process does not inherit.
 2. **Shows the difference**: which settings would change, key by key.
 3. **Applies** the profile with a deterministic writer — one small adapter
    per CLI — and keeps a backup of the previous file.

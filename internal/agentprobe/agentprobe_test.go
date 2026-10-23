@@ -336,3 +336,52 @@ func TestDefaultVersionRunnerContextCancel(t *testing.T) {
 		t.Errorf("runner did not respect context deadline")
 	}
 }
+
+// lookupAgentBinary must find binaries that live in the common install
+// directories of agent managers even when PATH does not include them.
+func TestLookupAgentBinaryFallsBackToInstallDirs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// The resolver reads $HOME through os.UserHomeDir; on macOS the temp dir
+	// may be a symlink, which does not matter for the fallback logic.
+	dir := filepath.Join(home, ".opencode", "bin")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "opencode")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho v1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force the PATH miss: a PATH of one read-only directory finds nothing.
+	t.Setenv("PATH", "/nonexistent-roambench-probe")
+
+	path, err := lookupAgentBinary("opencode")
+	if err != nil {
+		t.Fatalf("lookupAgentBinary error: %v", err)
+	}
+	if path != binary {
+		t.Fatalf("path = %q, want %q", path, binary)
+	}
+	if _, err := lookupAgentBinary("definitely-not-installed-xyz"); err == nil {
+		t.Fatal("expected an error for a missing binary")
+	}
+}
+
+// A candidate without the exec bit is not a usable binary.
+func TestLookupAgentBinaryIgnoresNonExecutables(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".opencode", "bin")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte("not executable"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "/nonexistent-roambench-probe")
+
+	if _, err := lookupAgentBinary("opencode"); err == nil {
+		t.Fatal("a non-executable file must not count as installed")
+	}
+}

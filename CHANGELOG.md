@@ -13,6 +13,7 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 - Agent setup wizard: scans the installed agent CLIs, shows what would change, and applies a model access point to their configuration with a deterministic per-CLI adapter (claude / codex / opencode) plus a backup
 - `roambench-agent config show|apply`: the same access-point change from the command line
 - `[agent.gateway]` configuration for the access point the wizard offers
+- Agent detection falls back to the common install directories of agent managers (`~/.opencode/bin`, `~/.openclaw/tools/*/bin`, `~/.nvm/...`, …) when PATH misses them, fixing false "not installed" reports for service-run instances
 - Registering a project inserts the shared memory pointer into the agent memory files that already exist in its workspace (detection only by default); creating the files and touching the global agent memory files are opt-in; idempotent, backed up and reversible through `POST /api/project-control/memory/pointers`
 - Configurable browse roots (`[filesystem] roots`) shown in the file browser and the folder picker; `/` offers the whole machine, `~` the home directory
 - Per-user roots in `~/.config/roambench/roots.toml`, manageable from the folder picker (`/api/fs/roots`, add and remove)

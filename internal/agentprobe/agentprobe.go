@@ -9,8 +9,10 @@ package agentprobe
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -77,7 +79,7 @@ type Prober struct {
 func NewProber() *Prober {
 	return &Prober{
 		versionRunner: defaultVersionRunner,
-		lookPath:      exec.LookPath,
+		lookPath:      lookupAgentBinary,
 	}
 }
 
@@ -128,6 +130,50 @@ func (p *Prober) probeOne(label string) Agent {
 	}
 	a.Version = truncateVersion(version)
 	return a
+}
+
+// lookupAgentBinary resolves an agent binary via PATH first, then through
+// the common install locations of the agent ecosystems. Agent CLIs are often
+// installed by their own managers (opencode, volta, nvm, openclaw-managed
+// node) into directories a service process does not inherit in its PATH.
+func lookupAgentBinary(binary string) (string, error) {
+	if path, err := exec.LookPath(binary); err == nil {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("%s not found", binary)
+	}
+	for _, dir := range agentCandidateDirs(home) {
+		candidate := filepath.Join(dir, binary)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			// A candidate outside PATH still needs the exec bit to be useful.
+			if info.Mode().Perm()&0111 != 0 {
+				return candidate, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("%s not found", binary)
+}
+
+// agentCandidateDirs lists the extra directories probed for agent binaries.
+// Patterns are expanded once per call, so freshly installed toolchains are
+// found after a refresh without a restart.
+func agentCandidateDirs(home string) []string {
+	dirs := []string{
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, ".opencode", "bin"),
+		filepath.Join(home, ".volta", "bin"),
+		filepath.Join(home, "go", "bin"),
+	}
+	for _, pattern := range []string{
+		filepath.Join(home, ".openclaw", "tools", "*", "bin"),
+		filepath.Join(home, ".nvm", "versions", "node", "*", "bin"),
+	} {
+		matches, _ := filepath.Glob(pattern)
+		dirs = append(dirs, matches...)
+	}
+	return dirs
 }
 
 // defaultVersionRunner runs `<path> --version` with the caller's context
