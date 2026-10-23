@@ -1863,6 +1863,9 @@
             + '<div class="fs-add" hidden><input class="fs-add-input" aria-label="' + escapeHTML(i4('rootPath')) + '" placeholder="/data/…" maxlength="1000" autocomplete="off">'
             + '<button type="button" class="btn small primary" data-fs-add-save>' + escapeHTML(i4('add')) + '</button>'
             + '<button type="button" class="btn small" data-fs-add-cancel>' + escapeHTML(i4('cancel')) + '</button></div>'
+            + '<div class="fs-add" data-fs-newdir hidden><input class="fs-add-input" aria-label="' + escapeHTML(i4('folderName')) + '" placeholder="' + escapeHTML(i4('folderName')) + '" maxlength="255" autocomplete="off">'
+            + '<button type="button" class="btn small primary" data-fs-newdir-save>' + escapeHTML(i4('create')) + '</button>'
+            + '<button type="button" class="btn small" data-fs-newdir-cancel>' + escapeHTML(i4('cancel')) + '</button></div>'
             + '<nav class="fs-crumb" aria-label="' + escapeHTML(i4('folderPath')) + '"></nav><ul class="fs-list"></ul><p class="form-error" role="alert"></p></div>'
             + '<footer class="dialog-footer">' + i4Button('home', 'data-fs-home') + i4Button('selectFolder', 'data-fs-select', '', true) + '</footer>';
         document.body.appendChild(dialog); folderDialog = dialog;
@@ -1874,6 +1877,11 @@
         var addBox = dialog.querySelector('.fs-add');
         var addInput = dialog.querySelector('.fs-add-input');
         dialog.querySelector('[data-fs-add-cancel]').onclick = function() { addBox.hidden = true; };
+        var newDirBox = dialog.querySelector('[data-fs-newdir]');
+        var newDirInput = dialog.querySelector('[data-fs-newdir] .fs-add-input');
+        dialog.querySelector('[data-fs-newdir-cancel]').onclick = function() { newDirBox.hidden = true; };
+        newDirInput.addEventListener('keydown', function(event) { if (event.key === 'Enter') { event.preventDefault(); createFolder(); } });
+        dialog.querySelector('[data-fs-newdir-save]').onclick = createFolder;
         addInput.addEventListener('keydown', function(event) { if (event.key === 'Enter') { event.preventDefault(); saveRoot(); } });
         dialog.querySelector('[data-fs-add-save]').onclick = saveRoot;
 
@@ -1911,9 +1919,17 @@
                 add.title = i4('addRoot');
                 add.setAttribute('aria-label', i4('addRoot'));
                 add.textContent = '+';
-                add.onclick = function() { addBox.hidden = !addBox.hidden; if (!addBox.hidden) addInput.focus(); };
+                add.onclick = function() { newDirBox.hidden = true; addBox.hidden = !addBox.hidden; if (!addBox.hidden) addInput.focus(); };
                 nav.appendChild(add);
             }
+            var newDir = document.createElement('button');
+            newDir.type = 'button';
+            newDir.className = 'fs-root-add fs-root-newdir';
+            newDir.title = i4('newFolder');
+            newDir.setAttribute('aria-label', i4('newFolder'));
+            newDir.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/><path d="M12 11v6M9 14h6"/></svg>';
+            newDir.onclick = function() { addBox.hidden = true; newDirBox.hidden = !newDirBox.hidden; if (!newDirBox.hidden) newDirInput.focus(); };
+            nav.appendChild(newDir);
         }
         async function loadRoots() {
             try {
@@ -1925,6 +1941,21 @@
                 allowUserRoots = false;
             }
             renderRoots();
+        }
+        // createFolder makes a subdirectory of the current directory and
+        // navigates into it.
+        async function createFolder() {
+            var name = newDirInput.value.trim();
+            if (!name || !current || name.indexOf('/') !== -1 || name === '.' || name === '..') return;
+            dialog.querySelector('.form-error').textContent = '';
+            try {
+                await fetchJSON('/api/files/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: current + '/' + name }) });
+                newDirBox.hidden = true;
+                newDirInput.value = '';
+                navigate(current + '/' + name);
+            } catch (error) {
+                dialog.querySelector('.form-error').textContent = error.message;
+            }
         }
         async function saveRoot() {
             var path = addInput.value.trim();

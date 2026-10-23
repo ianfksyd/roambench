@@ -5331,15 +5331,15 @@ dialog.board-v3 {
 .board-v3 .fs-crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; overflow-wrap: anywhere; }
 .board-v3 .fs-roots { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border-color); }
 .board-v3 .fs-roots-label { color: var(--muted); font-size: 12px; }
-.board-v3 .fs-root { display: inline-flex; align-items: center; gap: 2px; padding: 2px 4px 2px 9px; border: 1px solid var(--border); border-radius: 999px; background: transparent; }
-.board-v3 .fs-root:hover { background: var(--hover); }
-.board-v3 .fs-root-user { border-style: dashed; }
-.board-v3 .fs-root-open { border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; padding: 2px 0; }
+.board-v3 .fs-root, .board-v3 .fs-root-add { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
+.board-v3 .fs-root:hover, .board-v3 .fs-root-add:hover { background: var(--hover); }
+.board-v3 .fs-root-user { border-style: dashed; padding-right: 4px; }
+.board-v3 .fs-root-open { border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; padding: 0; }
 .board-v3 .fs-root-open:hover { text-decoration: underline; }
-.board-v3 .fs-root-add { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 13px; font-weight: 700; line-height: 1; cursor: pointer; }
-.board-v3 .fs-root-add:hover { background: var(--hover); }
-.board-v3 .fs-root-remove { border: 0; background: transparent; color: inherit; cursor: pointer; opacity: 0.6; padding: 2px 6px; }
+.board-v3 .fs-root-add { font-weight: 700; justify-content: center; }
+.board-v3 .fs-root-remove { border: 0; background: transparent; color: inherit; cursor: pointer; opacity: 0.6; padding: 4px 6px; align-self: center; }
 .board-v3 .fs-root-remove:hover { opacity: 1; }
+.board-v3 .fs-root-newdir svg { display: block; }
 .board-v3 .fs-add { display: flex; gap: 8px; margin-bottom: 10px; }
 .board-v3 .fs-add[hidden] { display: none; }
 .board-v3 .fs-add-input { flex: 1 1 auto; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
@@ -5363,7 +5363,11 @@ dialog.board-v3 {
 .board-v3 .setup-note { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
 .board-v3 .board-inline-note { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
 .board-v3 .form-hint { margin: -6px 0 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.board-v3 .fs-list { padding: 0; list-style: none; max-height: 40vh; overflow: auto; }
+.board-v3 .fs-list { padding: 0; list-style: none; max-height: 40vh; overflow: auto; scrollbar-width: none; }
+.board-v3 .fs-list::-webkit-scrollbar { display: none; }
+/* The folder dialog keeps its scrollability without showing a scrollbar. */
+.board-v3.fs-dialog { scrollbar-width: none; }
+.board-v3.fs-dialog::-webkit-scrollbar { display: none; }
 .board-v3 .fs-item { display: flex; gap: 8px; width: 100%; border: 0; padding: 10px; text-align: left; background: transparent; overflow-wrap: anywhere; }
 .board-v3 .fs-item:hover { background: var(--hover); }
 .board-v3 .ficon { color: #dcdcaa; }
