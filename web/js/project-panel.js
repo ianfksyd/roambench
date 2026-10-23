@@ -1800,13 +1800,19 @@
                     + (group.rows.length ? '<ul class="board-task-grid">' + group.rows.map(function(row) {
                         var task = row.task;
                         var rel = boardRelative(row.stamp);
+                        var quick = boardQuickActions(task);
                         return '<li class="board-task-cell"><button type="button" class="board-task-open" data-task-id="' + escapeHTML(task.id) + '"'
                             + (row.stamp ? ' title="' + escapeHTML(formatTime(row.stamp)) + '"' : '')
                             + ' aria-label="' + escapeHTML((task.title || task.id) + ', ' + row.label + ', ' + rel) + '">'
                             + '<span class="board-task-name-row"><span class="board-task-dot ' + row.cls + '" aria-hidden="true"></span>'
                             + '<span class="board-task-name">' + escapeHTML(task.title || task.id) + '</span></span>'
                             + '<span class="board-task-meta"><span class="board-task-state">' + escapeHTML(row.label + ' · ' + rel) + '</span></span>'
-                            + '</button></li>';
+                            + '</button>'
+                            + (quick.length ? '<div class="board-task-quick">' + quick.map(function(action) {
+                                return '<button type="button" class="board-task-quick-btn" data-board-task-action="' + action.action + '" data-board-task-id="' + escapeHTML(task.id) + '"'
+                                    + ' title="' + escapeHTML(action.label) + '" aria-label="' + escapeHTML(action.label) + '">' + escapeHTML(action.icon) + '</button>';
+                            }).join('') + '</div>' : '')
+                            + '</li>';
                     }).join('') + '</ul>' : '<div class="board-empty-note">' + escapeHTML(tr('project.boardEmptyProject', 'No tasks in this project yet.')) + '</div>')
                     + '</section>';
             }).join('') : '')
@@ -1816,6 +1822,43 @@
             + (rows.length ? '<footer class="board-footer"><p>' + escapeHTML(itemCountText(tab === 'wall' ? visible.length : timelineCount)) + '</p></footer>' : '')
             + '</section>';
     }
+    // boardQuickActions picks the fast controls for one board cell: start,
+    // pause/resume and cancel, by the task's current state.
+    function boardQuickActions(task) {
+        if (!task) {
+            return [];
+        }
+        var stateText = String(task.state || '');
+        if (stateText === 'cancelled' || stateText === 'archived' || stateText === 'failed') {
+            return [];
+        }
+        if (stateText === 'execution_complete') {
+            return [];
+        }
+        var actions = [];
+        var paused = Boolean(task.pauseReason) || stateText === 'blocked';
+        if (paused) {
+            actions.push({ action: 'resume_task', icon: '▶', label: tr('project.quickResume', 'Resume') });
+        } else if (stateText === 'running' || stateText === 'waiting_review' || stateText === 'waiting_human') {
+            actions.push({ action: 'pause_task', icon: '⏸', label: tr('project.quickPause', 'Pause') });
+        } else {
+            actions.push({ action: 'resume_execution', icon: '▶', label: tr('project.quickStart', 'Start') });
+        }
+        actions.push({ action: 'cancel_task', icon: '✕', label: tr('project.quickCancel', 'Cancel') });
+        return actions;
+    }
+
+    function applyBoardTaskAction(taskId, action) {
+        var task = findById(tasks(), taskId);
+        if (!task || state.updatingTaskId === taskId) {
+            return;
+        }
+        if (action === 'cancel_task' && !window.confirm(tr('project.quickCancelConfirm', 'Cancel this task?'))) {
+            return;
+        }
+        updateTaskInline(taskId, action);
+    }
+
     var boardDialog = null;
     function closeBoardDialog() {
         if (folderDialog) { folderDialog.close(); folderDialog.remove(); folderDialog = null; }
@@ -2413,6 +2456,12 @@
         panel.querySelectorAll('[data-update-task]').forEach(function(node) {
             node.addEventListener('click', function() {
                 updateTaskInline(node.getAttribute('data-update-task'), node.getAttribute('data-action') || '');
+            });
+        });
+        panel.querySelectorAll('[data-board-task-action]').forEach(function(node) {
+            node.addEventListener('click', function(event) {
+                event.stopPropagation();
+                applyBoardTaskAction(node.getAttribute('data-board-task-id'), node.getAttribute('data-board-task-action'));
             });
         });
         panel.querySelectorAll('[data-start-phase-task]').forEach(function(node) {

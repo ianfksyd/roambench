@@ -468,6 +468,10 @@ type projectControlTaskUpdateRequest struct {
 	ArtifactValue      string    `json:"artifactValue"`
 	FailureReason      string    `json:"failureReason"`
 	ToolID             string    `json:"toolId"`
+	// PauseReason is written by the pause_task action; ClearPauseReason marks
+	// an explicit resume/cancel so an empty reason still clears the field.
+	PauseReason      string `json:"-"`
+	ClearPauseReason bool   `json:"-"`
 }
 
 type projectControlEventsResponse struct {
@@ -555,6 +559,21 @@ func applyProjectControlTaskAction(task *projectControlTask, req *projectControl
 		return nil
 	}
 	switch action {
+	case "pause_task":
+		// Pausing keeps the task state but blocks claiming and further phase
+		// work through the pause reason.
+		req.PauseReason = "paused_by_user"
+	case "resume_task":
+		// Resuming clears the user pause; the task state is untouched, so a
+		// paused running task continues as running and a paused planned task
+		// stays planned.
+		req.PauseReason = " "
+		req.ClearPauseReason = true
+	case "cancel_task":
+		req.State = "cancelled"
+		req.AcceptanceStatus = "not_ready"
+		req.PauseReason = ""
+		req.ClearPauseReason = true
 	case "queue_task":
 		req.State = "queued"
 		req.AcceptanceStatus = "not_ready"
@@ -641,12 +660,14 @@ func isAllowedProjectControlTaskTransition(from, to string) bool {
 	}
 	switch from {
 	case "planned":
-		return to == "queued" || to == "running"
+		return to == "queued" || to == "running" || to == "cancelled"
 	case "queued":
-		return to == "planned" || to == "running"
+		return to == "planned" || to == "running" || to == "cancelled"
 	case "running":
-		return to == "waiting_review" || to == "waiting_human" || to == "blocked" || to == "failed" || to == "execution_complete"
+		return to == "waiting_review" || to == "waiting_human" || to == "blocked" || to == "failed" || to == "execution_complete" || to == "cancelled"
 	case "waiting_review", "waiting_human", "blocked", "failed":
+		return to == "running" || to == "cancelled"
+	case "cancelled":
 		return to == "running"
 	case "execution_complete":
 		if to == "archived" {
@@ -3215,6 +3236,36 @@ func (s *projectControlStore) updateTask(username, taskID string, req projectCon
 			if value := strings.TrimSpace(req.RiskLevel); value != "" {
 				task.RiskLevel = normalizeProjectControlRisk(value)
 			}
+			// User pause/resume writes the pause reason directly: a paused task
+			// cannot be claimed and runbook work is gated on the reason.
+			if action == "pause_task" && strings.TrimSpace(req.PauseReason) != "" {
+				task.PauseReason = strings.TrimSpace(req.PauseReason)
+				task.RowVersion++
+				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+					ID:           projectControlID("event", "task-paused-by-user"),
+					Timestamp:    now,
+					Actor:        "human",
+					Action:       "task_paused",
+					Detail:       "Task paused by the user.",
+					ProjectID:    task.ProjectID,
+					WorkstreamID: task.WorkstreamID,
+					TaskID:       task.ID,
+				})
+			}
+			if req.ClearPauseReason && task.PauseReason != "" {
+				task.PauseReason = ""
+				task.RowVersion++
+				projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+					ID:           projectControlID("event", "task-resumed-by-user"),
+					Timestamp:    now,
+					Actor:        "human",
+					Action:       "task_resumed",
+					Detail:       "Task pause cleared by the user.",
+					ProjectID:    task.ProjectID,
+					WorkstreamID: task.WorkstreamID,
+					TaskID:       task.ID,
+				})
+			}
 			if value := strings.TrimSpace(req.State); value != "" && value != task.State {
 				candidate := normalizeProjectControlTaskState(value)
 				if !isAllowedProjectControlTaskTransition(originalState, candidate) {
@@ -5251,7 +5302,7 @@ func normalizeProjectControlRisk(value string) string {
 
 func normalizeProjectControlTaskState(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "planned", "queued", "running", "waiting_review", "waiting_human", "blocked", "failed", "execution_complete", "archived":
+	case "planned", "queued", "running", "waiting_review", "waiting_human", "blocked", "failed", "execution_complete", "archived", "cancelled":
 		return strings.TrimSpace(strings.ToLower(value))
 	default:
 		return "planned"

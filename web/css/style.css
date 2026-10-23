@@ -5119,6 +5119,13 @@ button.tab-action:focus-visible {
     background: var(--surface);
 }
 .board-task-cell:hover, .board-task-cell:focus-within { border-color: var(--muted); }
+/* 快速操作: 悬停格子时右上角浮出,不占格子静态空间。 */
+.board-v3 .board-task-cell { position: relative; }
+.board-v3 .board-task-quick { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; opacity: 0; pointer-events: none; transition: opacity 0.12s ease; }
+.board-v3 .board-task-cell:hover .board-task-quick, .board-v3 .board-task-cell:focus-within .board-task-quick { opacity: 1; pointer-events: auto; }
+.board-v3 .board-task-quick-btn { width: 24px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-size: 12px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.board-v3 .board-task-quick-btn:hover { background: var(--hover); border-color: var(--muted); }
+.board-v3 .board-task-quick-btn:last-child:hover { color: #f48771; border-color: #f48771; }
 .board-task-open {
     display: block;
     width: 100%;
