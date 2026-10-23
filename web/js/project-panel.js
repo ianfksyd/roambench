@@ -1123,7 +1123,9 @@
     function renderTaskApprovalStatusCard(task) {
         var finalAcceptance = currentTaskApprovalState(task, 'final_acceptance');
         var archiveOverride = currentTaskApprovalState(task, 'archive_override');
-        var dispatch = currentTaskApprovalState(task, 'dispatch');
+        // A task raised by a human is dispatched automatically, so it never
+        // shows a dispatch approval.
+        var dispatch = task && task.origin === 'agent' ? currentTaskApprovalState(task, 'dispatch') : null;
         function renderStatusRow(label, approval, kind) {
             if (!approval) {
                 return '';
@@ -1470,7 +1472,6 @@
         var info = '<section class="info-card"><h3>' + escapeHTML(tr('project.taskInfoTitle', 'Task info')) + '</h3><dl>'
             + def(tr('project.taskInfoState', 'State'), escapeHTML(humanizeTaskState(task.state)))
             + def(tr('project.currentPhase', 'Current phase'), escapeHTML(humanizePhase(phase)))
-            + def(tr('project.taskInfoGoal', 'Goal'), escapeHTML(task.goal || '—'))
             + def(tr('project.taskInfoNextStep', 'Next step'), escapeHTML(task.nextStep || task.recentSummary || tr('project.noNextStep', 'No next step recorded.')))
             + def(tr('project.taskInfoUpdated', 'Last update'), escapeHTML(stamp ? formatTime(stamp) : '—'))
             + '</dl></section>';
@@ -1486,25 +1487,17 @@
                 }).join('') + '</ul>'
                 : '<p class="muted">' + escapeHTML(tr('project.noArtifacts', 'No artifacts recorded yet.')) + '</p>')
             + '</section>';
-        var report = task.recentSummary
-            ? '<section class="info-card report-card"><div class="card-heading"><h3>' + escapeHTML(tr('project.taskReportTitle', 'Self-report')) + '</h3>'
-                + '<span class="pill">' + escapeHTML(tr('project.taskUnverified', 'Unverified')) + '</span></div>'
-                + '<blockquote>' + escapeHTML(task.recentSummary) + '</blockquote></section>'
-            : '';
-        var activity = '<section class="info-card"><h3>' + escapeHTML(tr('project.taskActivityTitle', 'Recent activity')) + '</h3>'
-            + (audit.length
-                ? audit.map(function(item) {
-                    return '<p class="source-note">' + escapeHTML((item && item.action || tr('project.update', 'Update')) + ' · ' + (item && item.detail || '—') + ' · ' + formatTime(item && item.timestamp)) + '</p>';
-                }).join('')
-                : '<p class="muted">' + escapeHTML(tr('project.noActivity', 'No activity yet.')) + '</p>')
-            + '</section>';
+        // Self-report and Recent activity are not shown: the goal is already
+        // on the card, and the activity log is machine noise.
+        var report = '';
+        var activity = '';
         // 最低密度: 无证据/无动态时不渲染空卡片,只留有用的块。
         var evidenceBlock = artifacts.length ? evidence : '';
         var activityBlock = audit.length ? activity : '';
         return summary
             + info
             + renderTaskApprovalStatusCard(task)
-            + '<div class="detail-columns' + (report ? '' : ' single') + '">' + evidenceBlock + report + '</div>'
+            + evidenceBlock
             + activityBlock;
     }
 
@@ -1542,7 +1535,18 @@
 
     function renderApprovals() {
         var all = checkpoints();
-        var pending = all.filter(function(item) { return item.status === 'pending'; });
+        var pending = all.filter(function(item) {
+            if (item.status !== 'pending') {
+                return false;
+            }
+            // A dispatch gate of a human-raised task is dispatched
+            // automatically; it never needs a decision.
+            if (item.kind !== 'dispatch') {
+                return true;
+            }
+            var task = findById(tasks(), item.taskId);
+            return !task || task.origin === 'agent';
+        });
         var resolved = all.filter(function(item) { return item.status !== 'pending'; });
         return '<section class="project-main-section">'
             + '<div class="project-section-header"><div><div class="project-section-kicker">' + escapeHTML(tr('project.approvals', 'Approvals Inbox')) + '</div>'

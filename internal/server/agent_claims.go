@@ -78,7 +78,7 @@ func (s *projectControlStore) agentClaimTask(username string, req agentClaimRequ
 		}
 		for i := range state.Tasks {
 			task := &state.Tasks[i]
-			if task.DispatchState != "ready" || !taskClaimAllowed(*state, *task) {
+			if !projectControlTaskClaimable(*state, *task) || !taskClaimAllowed(*state, *task) {
 				continue
 			}
 			if sharedDirectoryConflict(*state, *task) {

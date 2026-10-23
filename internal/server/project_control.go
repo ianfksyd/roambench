@@ -132,6 +132,10 @@ type projectControlTask struct {
 	AcceptanceDecisionID string   `json:"acceptanceDecisionId,omitempty"`
 	ArchiveDecisionID    string   `json:"archiveDecisionId,omitempty"`
 	// Dispatch pipeline fields (K4, WS-20261015-001).
+	// Origin marks who raised the task: "human" (raised from the web UI) or
+	// "agent" (raised by a runtime). Human-raised tasks are dispatched
+	// automatically; only agent-raised ones need a human decision first.
+	Origin string `json:"origin,omitempty"`
 	// DispatchState: none -> awaiting_approval -> (checkpoint approved) ready ->
 	// claimed -> released|done. Empty value is treated as "none" on read.
 	DispatchState      string                    `json:"dispatchState,omitempty"`
@@ -418,6 +422,9 @@ type projectControlWorkstreamCreateRequest struct {
 }
 
 type projectControlTaskCreateRequest struct {
+	// Origin is "human" (default) or "agent". Human-raised tasks are
+	// dispatched automatically; agent-raised ones wait for a decision.
+	Origin            string   `json:"origin,omitempty"`
 	MilestoneID       string   `json:"milestoneId"`
 	DependsOn         []string `json:"dependsOn"`
 	AcceptanceCommand []string `json:"acceptanceCommand"`
@@ -2288,6 +2295,86 @@ func syncProjectControlArchiveOverrideCheckpoint(state *projectControlState, tas
 	})
 }
 
+// projectControlTaskOrigin normalises the origin of a task: only an explicit
+// "agent" origin needs a human dispatch decision.
+func projectControlTaskOrigin(origin string) string {
+	if strings.TrimSpace(strings.ToLower(origin)) == "agent" {
+		return "agent"
+	}
+	return "human"
+}
+
+// projectControlTaskClaimable reports whether a task may be picked up by an
+// agent runtime. A task raised by a human is dispatched automatically, so a
+// dispatch gate left over from an earlier policy does not block it.
+func projectControlTaskClaimable(state projectControlState, task projectControlTask) bool {
+	if task.DispatchState == controlplane.DispatchStateReady {
+		return true
+	}
+	if projectControlTaskNeedsDispatchApproval(task) {
+		return false
+	}
+	return task.DispatchState == "" || task.DispatchState == controlplane.DispatchStateNone ||
+		task.DispatchState == controlplane.DispatchStateAwaitingApproval
+}
+
+// projectControlTaskNeedsDispatchApproval reports whether a task waits for a
+// human decision before an agent may claim it. Human-raised tasks are
+// dispatched automatically.
+func projectControlTaskNeedsDispatchApproval(task projectControlTask) bool {
+	return strings.TrimSpace(task.Origin) == "agent"
+}
+
+// autoApproveDispatchCheckpoint resolves a pending dispatch gate of a
+// human-raised task: the task becomes claimable right away and the stale
+// approval disappears from the inbox.
+func autoApproveDispatchCheckpoint(state *projectControlState, task projectControlTask, now string) {
+	for i := range state.Checkpoints {
+		checkpoint := &state.Checkpoints[i]
+		if checkpoint.TaskID != task.ID || checkpoint.Kind != "dispatch" || checkpoint.Status != "pending" {
+			continue
+		}
+		checkpoint.Status = "approved"
+		checkpoint.AllowedActions = []string{}
+		checkpoint.DecisionSummary = "Dispatch approved automatically (task raised by a human)."
+		checkpoint.RowVersion++
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "checkpoint-auto-approved-dispatch"),
+			Timestamp:    now,
+			Actor:        "policy_engine",
+			Action:       "checkpoint_approved",
+			Detail:       "Dispatch approval granted automatically because the task was raised by a human.",
+			ProjectID:    task.ProjectID,
+			WorkstreamID: task.WorkstreamID,
+			TaskID:       task.ID,
+			CheckpointID: checkpoint.ID,
+		})
+	}
+	for i := range state.Tasks {
+		if state.Tasks[i].ID != task.ID {
+			continue
+		}
+		current := strings.TrimSpace(state.Tasks[i].DispatchState)
+		if current == controlplane.DispatchStateReady || current == controlplane.DispatchStateClaimed || current == controlplane.DispatchStateDone {
+			continue
+		}
+		state.Tasks[i].DispatchState = controlplane.DispatchStateReady
+		state.Tasks[i].NextStep = "Task is ready for an agent runtime to claim."
+		state.Tasks[i].RecentSummary = "Dispatched automatically; the task was raised by a human."
+		state.Tasks[i].RowVersion++
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "dispatch-auto-approved"),
+			Timestamp:    now,
+			Actor:        "policy_engine",
+			Action:       "dispatch_auto_approved",
+			Detail:       "Task dispatched automatically because it was raised by a human.",
+			ProjectID:    task.ProjectID,
+			WorkstreamID: task.WorkstreamID,
+			TaskID:       task.ID,
+		})
+	}
+}
+
 // syncProjectControlDispatchCheckpoint raises the dispatch approval gate
 // (K4, WS-20261015-001): when a task is in a dispatchable state (planned or
 // queued) and its DispatchState has no approval outcome yet (empty or none),
@@ -2302,6 +2389,13 @@ func syncProjectControlDispatchCheckpoint(state *projectControlState, task proje
 	// Only planned/queued tasks are dispatchable; anything else (running,
 	// archived, execution_complete, …) must not gain a dispatch gate.
 	if task.State != "planned" && task.State != "queued" {
+		return
+	}
+	// A task the human raised is dispatched automatically: the person who
+	// asked for the work is already the decision maker. Only tasks raised by
+	// an agent runtime wait for a human decision.
+	if !projectControlTaskNeedsDispatchApproval(task) {
+		autoApproveDispatchCheckpoint(state, task, now)
 		return
 	}
 	dispatchState := strings.TrimSpace(task.DispatchState)
@@ -2847,6 +2941,7 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 		now := time.Now().UTC().Format(time.RFC3339)
 		task := projectControlTask{
 			MilestoneID: req.MilestoneID, DependsOn: req.DependsOn, AcceptanceCommand: req.AcceptanceCommand,
+			Origin:           projectControlTaskOrigin(req.Origin),
 			ID:               projectControlID("task", title),
 			ProjectID:        projectID,
 			WorkstreamID:     workstreamID,
@@ -2889,10 +2984,32 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 			WorkstreamID: task.WorkstreamID,
 			TaskID:       task.ID,
 		})
-		// Dispatch pipeline (K4, WS-20261015-001): a fresh task starts at
-		// DispatchState=none; raise the dispatch approval gate immediately so the
-		// human can hand it to an agent runtime from the approvals inbox.
-		syncProjectControlDispatchCheckpoint(state, task, now)
+		// Dispatch pipeline (K4, WS-20261015-001): a task raised by a human is
+		// dispatched automatically — the requester is the decision maker. Only
+		// agent-raised tasks wait for a human decision in the approvals inbox.
+		if projectControlTaskNeedsDispatchApproval(task) {
+			syncProjectControlDispatchCheckpoint(state, task, now)
+		} else {
+			task.DispatchState = controlplane.DispatchStateReady
+			task.NextStep = "Task is ready for an agent runtime to claim."
+			task.RecentSummary = "Dispatched automatically; the task was raised by a human."
+			for i := range state.Tasks {
+				if state.Tasks[i].ID == task.ID {
+					state.Tasks[i] = task
+					break
+				}
+			}
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:           projectControlID("event", "dispatch-auto-approved"),
+				Timestamp:    now,
+				Actor:        "policy_engine",
+				Action:       "dispatch_auto_approved",
+				Detail:       "Task dispatched automatically because it was raised by a human.",
+				ProjectID:    projectID,
+				WorkstreamID: workstreamID,
+				TaskID:       task.ID,
+			})
+		}
 		return nil
 	})
 	if err != nil {
@@ -5405,6 +5522,11 @@ func projectControlNormalizeState(state *projectControlState) {
 // the ID unique.
 const maxProjectControlIDLength = 128
 
+// maxProjectControlRouteIDLength bounds an ID arriving in a URL path. It is
+// larger than the generated limit on purpose: checkpoints created before the
+// generation cap was introduced must stay approvable.
+const maxProjectControlRouteIDLength = 512
+
 func projectControlID(prefix, seed string) string {
 	stamp := time.Now().UTC().Format("20060102-150405.000000000")
 	id := prefix + "-" + slugifyProjectControl(seed) + "-" + strings.ReplaceAll(stamp, ".", "")
@@ -6421,7 +6543,7 @@ func (s *Server) handleProjectControlCheckpointDecision(w http.ResponseWriter, r
 		return
 	}
 	id = strings.TrimSpace(strings.Trim(strings.TrimSuffix(id, "/decision"), "/"))
-	if id == "" || len(id) > maxProjectControlIDLength || !isValidProjectControlID(id) {
+	if id == "" || len(id) > maxProjectControlRouteIDLength || !isValidProjectControlID(id) {
 		http.NotFound(w, r)
 		return
 	}

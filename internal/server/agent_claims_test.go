@@ -40,7 +40,11 @@ func setTaskDispatchState(t *testing.T, srv *Server, token, taskID, dispatchStat
 		}
 		state.Tasks = append(state.Tasks, projectControlTask{
 			ID: taskID, ProjectID: "project-test", Title: "Test task " + taskID,
-			State: "queued", DispatchState: dispatchState, AcceptanceCommand: []string{"/bin/true"},
+			// These fixtures simulate a task waiting for a human dispatch
+			// decision, so they are agent-raised: only agent-raised tasks are
+			// gated (human-raised ones are dispatched automatically).
+			Origin: "agent",
+			State:  "queued", DispatchState: dispatchState, AcceptanceCommand: []string{"/bin/true"},
 			Timeline: []projectControlEvent{}, Audit: []projectControlAuditItem{},
 			FilesChanged: []string{}, SessionIDs: []string{},
 		})
@@ -336,7 +340,7 @@ func TestDispatchCheckpointCreationAndApprovalGatesClaim(t *testing.T) {
 	workstreamSnapshot := decodeProjectControlSnapshot(t, workstreamRec)
 	createdWorkstream := workstreamSnapshot.Workstreams[len(workstreamSnapshot.Workstreams)-1]
 
-	taskReq := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"K4 dispatch task","acceptanceCommand":["/bin/true"]}`, createdProject.ID, createdWorkstream.ID)))
+	taskReq := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"K4 dispatch task","origin":"agent","acceptanceCommand":["/bin/true"]}`, createdProject.ID, createdWorkstream.ID)))
 	taskReq.Header.Set("Content-Type", "application/json")
 	taskReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	taskRec := httptest.NewRecorder()
@@ -408,7 +412,7 @@ func TestDispatchCheckpointCreationAndApprovalGatesClaim(t *testing.T) {
 	}
 
 	// Reject path: a second task rejected at its checkpoint must be unclaimable.
-	taskReq2 := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"K4 reject task"}`, createdProject.ID, createdWorkstream.ID)))
+	taskReq2 := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks", strings.NewReader(fmt.Sprintf(`{"projectId":%q,"workstreamId":%q,"title":"K4 reject task","origin":"agent"}`, createdProject.ID, createdWorkstream.ID)))
 	taskReq2.Header.Set("Content-Type", "application/json")
 	taskReq2.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	taskRec2 := httptest.NewRecorder()
@@ -476,7 +480,7 @@ func TestDispatchCheckpointIDStaysWithinRouteLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks",
-		strings.NewReader(`{"projectId":"project-roambench-control","workstreamId":"workstream-ui-ia","title":"`+longTitle+`","acceptanceCommand":["/bin/true"]}`))
+		strings.NewReader(`{"projectId":"project-roambench-control","workstreamId":"workstream-ui-ia","title":"`+longTitle+`","origin":"agent","acceptanceCommand":["/bin/true"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 	rec := httptest.NewRecorder()
@@ -514,5 +518,61 @@ func TestDispatchCheckpointIDStaysWithinRouteLimit(t *testing.T) {
 	}
 	if decisionRec.Code != http.StatusOK {
 		t.Fatalf("approve = %d: %s", decisionRec.Code, decisionRec.Body.String())
+	}
+}
+
+// A task raised by a human is dispatched automatically: no approval gate, no
+// pending checkpoint, and an agent may claim it right away.
+func TestHumanRaisedTaskIsDispatchedWithoutApproval(t *testing.T) {
+	srv, token, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	agentToken := agentTokenFor(t, srv, token)
+
+	if _, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		for i := range state.Projects {
+			if state.Projects[i].ID == "project-roambench-control" {
+				state.Projects[i].Takeover = projectTakeover{Mode: "active"}
+				state.Projects[i].Lifecycle = projectLifecycle{State: "executing"}
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks",
+		strings.NewReader(`{"projectId":"project-roambench-control","workstreamId":"workstream-ui-ia","title":"人类发起的任务","acceptanceCommand":["/bin/true"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create task = %d: %s", rec.Code, rec.Body.String())
+	}
+	snapshot := decodeProjectControlSnapshot(t, rec)
+
+	taskID := ""
+	for _, task := range snapshot.Tasks {
+		if task.Title != "人类发起的任务" {
+			continue
+		}
+		taskID = task.ID
+		if task.DispatchState != "ready" {
+			t.Fatalf("dispatchState = %q, want ready (human-raised tasks are dispatched automatically)", task.DispatchState)
+		}
+	}
+	if taskID == "" {
+		t.Fatal("created task not found")
+	}
+	for _, checkpoint := range snapshot.Checkpoints {
+		if checkpoint.TaskID == taskID && checkpoint.Kind == "dispatch" && checkpoint.Status == "pending" {
+			t.Fatal("a human-raised task must not leave a pending dispatch gate")
+		}
+	}
+
+	// An agent can claim it straight away.
+	claim := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-1","agentLabel":"claude"}`)
+	if claim.Code != http.StatusOK {
+		t.Fatalf("claim = %d, want 200: %s", claim.Code, claim.Body.String())
 	}
 }

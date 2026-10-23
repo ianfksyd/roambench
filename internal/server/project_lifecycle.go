@@ -176,6 +176,17 @@ func taskClaimAllowed(state projectControlState, task projectControlTask) bool {
 	}
 	p, _ := controlProject(state, task.ProjectID)
 
+	// A task raised by a human is dispatched automatically and may be claimed
+	// regardless of the project's takeover mode: the person who asked for the
+	// work is the decision maker, and the project may legitimately stay in
+	// manual mode for everything else. Safety checks still apply.
+	if task.Origin != "agent" {
+		if len(task.AcceptanceCommand) == 0 || isHighRisk(task.RiskLevel) {
+			return false
+		}
+		return taskDependenciesPassed(state, task)
+	}
+
 	if p.Takeover.Mode != "active" || p.Lifecycle.State != "executing" || len(task.AcceptanceCommand) == 0 || isHighRisk(task.RiskLevel) {
 		return false
 	}

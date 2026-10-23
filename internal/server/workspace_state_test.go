@@ -190,10 +190,10 @@ func TestWorkspaceStateLoadRecoversFromNewerWAL(t *testing.T) {
 func TestNormalizeWorkspaceLayout(t *testing.T) {
 	cases := map[string]string{
 		"1": "1", "2": "2", "3c": "3c", "4": "4", "4w": "4w",
-		" 3c ": "3c",
-		"3":    "1",
+		" 3c ":  "3c",
+		"3":     "1",
 		"bogus": "1",
-		"":     "1",
+		"":      "1",
 	}
 
 	for input, want := range cases {
