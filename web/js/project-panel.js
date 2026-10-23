@@ -2028,7 +2028,6 @@
             + '<div class="field" data-entry-folder><label for="board-entry-path">' + escapeHTML(i4('folderPath')) + '</label><div class="path-row"><input id="board-entry-path" name="path" required maxlength="1000" autocomplete="off" placeholder="/data/…">'
             + '<button class="path-pick" type="button" data-pick-folder aria-haspopup="dialog" aria-label="' + escapeHTML(i4('chooseFolder')) + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg></button></div></div>'
             + '<label class="field"><span>' + escapeHTML(i4('goal')) + '</span><input name="goal" required maxlength="300" autocomplete="off"></label>'
-            + '<p class="form-hint">' + escapeHTML(tr('project.boardPointerHint', 'The shared memory pointer is written into the workspace (CLAUDE.md / AGENTS.md), so the agents of this project read one memory instead of keeping private copies.')) + '</p>'
             + '</fieldset>'
             + '<p class="form-error" role="alert"></p><footer class="dialog-footer"><button type="button" class="btn small" data-setup-open>' + escapeHTML(as('title')) + '</button><button type="submit" class="btn primary">' + escapeHTML(i4('submit')) + '</button></footer></form>');
         dialog.classList.add('create-dialog');
