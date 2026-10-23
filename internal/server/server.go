@@ -220,6 +220,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/agent/v1/memory", s.tokenRequired(s.handleAgentProjectMemory))
 	s.mux.HandleFunc("/api/project-control/memory", authRequired(s.sessions, s.handleProjectControlMemory))
 	s.mux.HandleFunc("/api/project-control/agent-config", authRequired(s.sessions, s.handleAgentConfig))
+	s.mux.HandleFunc("/api/project-control/memory/pointers", authRequired(s.sessions, s.handleProjectPointers))
 	s.mux.HandleFunc("/api/agent/v1/release", s.tokenRequired(s.handleAgentRelease))
 	// Board & agent probe (K2/K3, WS-20261015-001). Stubs return 501 until C2/C4 land.
 	s.mux.HandleFunc("/api/project-control/board", authRequired(s.sessions, s.handleProjectControlBoard))

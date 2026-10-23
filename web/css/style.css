@@ -5361,6 +5361,8 @@ dialog.board-v3 {
 .board-v3 .setup-steps ol { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
 .board-v3 .setup-steps code { display: block; margin-top: 3px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); font-size: 12px; overflow-wrap: anywhere; }
 .board-v3 .setup-note { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.board-v3 .board-inline-note { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+.board-v3 .form-hint { margin: -6px 0 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .board-v3 .fs-list { padding: 0; list-style: none; max-height: 40vh; overflow: auto; }
 .board-v3 .fs-item { display: flex; gap: 8px; width: 100%; border: 0; padding: 10px; text-align: left; background: transparent; overflow-wrap: anywhere; }
 .board-v3 .fs-item:hover { background: var(--hover); }

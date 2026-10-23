@@ -14,6 +14,7 @@
         toolRunRefreshTimer: null,
         boardLoading: false,
         boardError: '',
+        boardNotice: '',
 
         boardEpoch: 0,
         boardProjectFilter: '',
@@ -1771,6 +1772,7 @@
             + i4Button('newProject', 'data-create-project', '', true)
             + '</div></div>'
             + (state.boardError ? '<p role="alert" class="board-inline-error">' + escapeHTML(state.boardError) + '</p>' : '')
+            + (state.boardNotice ? '<p class="board-inline-note">' + escapeHTML(state.boardNotice) + '</p>' : '')
             + (state.boardLoading && !state.snapshot ? '<p role="status">' + escapeHTML(tr('project.loading', 'Loading…')) + '</p>' : '')
             + '<div class="view-toolbar">'
             + '<div class="view-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.boardTitle', 'Task board')) + '">'
@@ -1975,11 +1977,27 @@
         dialog.showModal();
         loadRoots().then(function() { navigate(roots.length ? roots[0].path : '', true); });
     }
+    // reportPointers tells the user which agent memory files now carry the
+    // shared memory pointer.
+    async function reportPointers(projectId) {
+        try {
+            var data = await fetchJSON('/api/project-control/memory/pointers', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: projectId })
+            });
+            var touched = (data.pointers || []).filter(function(report) { return report.action !== 'unchanged'; });
+            var files = touched.map(function(report) { return report.path; }).join(', ');
+            state.boardNotice = touched.length ? tr('project.boardPointerWritten', 'Shared memory pointer written to {files}', { files: files }) : '';
+        } catch (error) {
+            state.boardNotice = '';
+        }
+    }
+
     function openNewProject() {
         var dialog = showBoardDialog(i4('newProject'), '<form data-board-entry><fieldset>'
             + '<div class="field" data-entry-folder><label for="board-entry-path">' + escapeHTML(i4('folderPath')) + '</label><div class="path-row"><input id="board-entry-path" name="path" required maxlength="1000" autocomplete="off" placeholder="/data/…">'
             + '<button class="path-pick" type="button" data-pick-folder aria-haspopup="dialog" aria-label="' + escapeHTML(i4('chooseFolder')) + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg></button></div></div>'
             + '<label class="field"><span>' + escapeHTML(i4('goal')) + '</span><input name="goal" required maxlength="300" autocomplete="off"></label>'
+            + '<p class="form-hint">' + escapeHTML(tr('project.boardPointerHint', 'The shared memory pointer is written into the workspace (CLAUDE.md / AGENTS.md), so the agents of this project read one memory instead of keeping private copies.')) + '</p>'
             + '</fieldset>'
             + '<p class="form-error" role="alert"></p><footer class="dialog-footer"><button type="button" class="btn small" data-setup-open>' + escapeHTML(as('title')) + '</button><button type="submit" class="btn primary">' + escapeHTML(i4('submit')) + '</button></footer></form>');
         dialog.classList.add('create-dialog');
@@ -2012,6 +2030,7 @@
                 snapshot = await boardRequest('tasks', 'POST', { projectId: progress.projectId, workstreamId: progress.workstreamId, title: entry.goal, goal: entry.goal, priority: 'medium', riskLevel: 'medium' });
                 if (epoch !== state.boardEpoch) return;
                 state.snapshot = snapshot; updateBadge();
+                await reportPointers(progress.projectId);
                 if (boardDialog === dialog) { closeBoardDialog(); openBoard(); }
             } catch (error) {
                 if (!dialog.isConnected) return;

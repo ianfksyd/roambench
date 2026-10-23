@@ -74,6 +74,20 @@ allow_user_roots = true
 # Model access point offered to the coding agents by the setup wizard.
 # Point every agent at one gateway (typically a local proxy that fronts
 # several provider subscriptions) instead of one subscription per agent.
+[agent]
+# Insert the shared memory pointer into the agent memory files that already
+# exist in the workspace of a new project, so its agents read the canonical
+# memory. Detection only: existing files are updated in place, nothing is
+# created.
+workspace_memory_pointer = true
+# Also create CLAUDE.md / AGENTS.md in a registered project's workspace when
+# the matching agent is installed.
+# create_missing_memory_files = false
+# Write the project agnostic pointer into the global agent memory files that
+# already exist (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md). Opt-in: a global
+# memory file is the user's own instruction sheet.
+# global_memory_pointer = false
+
 [agent.gateway]
 name = "magpie"
 base_url = "http://127.0.0.1:3425"

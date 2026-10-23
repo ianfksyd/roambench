@@ -146,3 +146,101 @@ func TestApplyPointerRejectsEmptyProjectID(t *testing.T) {
 		t.Fatal("expected an error for an empty project id")
 	}
 }
+
+func TestGenericPointerIsProjectAgnostic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+	if _, err := ApplyGenericPointer(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, GenericScope) {
+		t.Fatalf("generic scope missing:\n%s", content)
+	}
+	if strings.Contains(content, "project=project-") {
+		t.Fatalf("generic block must not name a project:\n%s", content)
+	}
+	// Applying it twice keeps one block.
+	if _, err := ApplyGenericPointer(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "roambench:memory:begin") != 1 {
+		t.Fatalf("generic pointer duplicated:\n%s", data)
+	}
+}
+
+func TestGenericAndProjectBlocksCoexist(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "AGENTS.md")
+	if _, err := ApplyGenericPointer(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyPointer(path, "project-abc"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, GenericScope) || !strings.Contains(content, "project=project-abc") {
+		t.Fatalf("both blocks expected:\n%s", content)
+	}
+}
+
+func TestRemovePointer(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+	if err := os.WriteFile(path, []byte("# keep me\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyPointer(path, "project-abc"); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemovePointer(path, "project=project-abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("expected the block to be removed")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "roambench:memory:begin") {
+		t.Fatalf("block still present:\n%s", data)
+	}
+	if !strings.Contains(string(data), "# keep me") {
+		t.Fatalf("other content lost:\n%s", data)
+	}
+	removed, err = RemovePointer(path, "project=project-abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed {
+		t.Fatal("removing a missing block should report nothing")
+	}
+}
+
+func TestCandidatesFindsExistingMemoryFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	found := Candidates(dir)
+	if len(found) != 1 || filepath.Base(found[0]) != "CLAUDE.md" {
+		t.Fatalf("candidates = %v, want only CLAUDE.md", found)
+	}
+}

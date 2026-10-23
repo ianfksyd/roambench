@@ -24,6 +24,11 @@ func testProjectControlServer(t *testing.T) (*Server, string, *auth.SessionManag
 	cfg.Server.AllowAllIPs = true
 	cfg.Auth.SingleUser = "ian"
 	cfg.Terminal.PersistDir = t.TempDir()
+	// Memory pointers stay off unless a test opts in: the suite must never
+	// write into agent memory files, in the working directory or the home.
+	cfg.Agent.WorkspaceMemoryPointer = false
+	cfg.Agent.CreateMissingMemoryFiles = false
+	cfg.Agent.GlobalMemoryPointer = false
 
 	sessions, err := auth.NewSessionManager(&cfg.Auth)
 	if err != nil {

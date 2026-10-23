@@ -84,6 +84,21 @@ type TelegramConfig struct {
 // coding agents installed on the machine.
 type AgentConfig struct {
 	Gateway GatewayConfig `toml:"gateway"`
+	// WorkspaceMemoryPointer inserts the shared memory pointer into the
+	// agent memory files that already exist in the workspace of a new
+	// project, so its agents read the canonical memory. Detection only:
+	// existing files are updated in place, nothing is created.
+	WorkspaceMemoryPointer bool `toml:"workspace_memory_pointer"`
+	// CreateMissingMemoryFiles also creates CLAUDE.md / AGENTS.md in the
+	// workspace of a registered project (repoPath set) when the matching
+	// agent is installed. Off by default: the workspace stays untouched
+	// unless the project registered it explicitly.
+	CreateMissingMemoryFiles bool `toml:"create_missing_memory_files"`
+	// GlobalMemoryPointer writes the project agnostic pointer into the
+	// global agent memory files that already exist (~/.claude/CLAUDE.md,
+	// ~/.codex/AGENTS.md). Off by default: a global memory file is the
+	// user's own instruction sheet.
+	GlobalMemoryPointer bool `toml:"global_memory_pointer"`
 }
 
 // GatewayConfig describes one model gateway, typically a local proxy that
@@ -150,6 +165,9 @@ func Defaults() *Config {
 			AllowUserRoots: true,
 		},
 		Agent: AgentConfig{
+			WorkspaceMemoryPointer:   true,
+			CreateMissingMemoryFiles: false,
+			GlobalMemoryPointer:      false,
 			Gateway: GatewayConfig{
 				Name:      "roambench-gateway",
 				BaseURL:   "",

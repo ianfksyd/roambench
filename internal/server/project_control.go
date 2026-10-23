@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -6294,10 +6295,24 @@ func (s *Server) handleProjectControlProjects(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	snapshot, err := s.projectControl.createProject(GetUsername(r), req, s.terminals)
+	username := GetUsername(r)
+	snapshot, err := s.projectControl.createProject(username, req, s.terminals)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+	// The shared memory pointer is written right away: without it the agents
+	// of this project keep their own copies and the token cost comes back.
+	if s.cfg.Agent.WorkspaceMemoryPointer {
+		if reports, pointerErr := s.applyProjectPointers(username, snapshot.ActiveProjectID, false); pointerErr != nil {
+			log.Printf("project memory pointer for %s: %v", snapshot.ActiveProjectID, pointerErr)
+		} else {
+			for _, report := range reports {
+				if report.Action != "unchanged" {
+					log.Printf("project memory pointer %s: %s", report.Action, report.Path)
+				}
+			}
+		}
 	}
 	writeJSON(w, http.StatusCreated, snapshot)
 }

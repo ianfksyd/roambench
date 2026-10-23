@@ -32,6 +32,44 @@ roambench-agent memory pointer --project project-abc \
 `memory get` also accepts `--task <taskId>` when the agent only knows its
 task; the project is then resolved from the task.
 
+## Automatic pointers (M3)
+
+Registering a project writes the pointer for you:
+
+- into the workspace of the project — `CLAUDE.md` and `AGENTS.md` are created
+  when the matching agent is installed on the machine, and updated in place
+  when they already exist (your own instructions are kept);
+- into the global agent memory files that already exist
+  (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, …) — as a **generic** block
+  that does not name a project, so one block per file is enough. The agent
+  learns the project from the task it claimed.
+
+Both writes are idempotent, backed up (`<file>.roambench-bak`) and reversible:
+
+```bash
+# remove the pointers again
+curl -X POST -b "roambench_session=..." \
+     -H 'Content-Type: application/json' \
+     -d '{"projectId":"project-abc","remove":true}' \
+     http://localhost:3000/api/project-control/memory/pointers
+```
+
+Three switches control it:
+
+```toml
+[agent]
+# Insert the pointer into the agent memory files that already exist in the
+# workspace of a new project (detection only, nothing is created).
+workspace_memory_pointer = true     # default
+# Also create CLAUDE.md / AGENTS.md in a registered project's workspace when
+# the matching agent is installed.
+create_missing_memory_files = false # default
+# Write the project agnostic (generic) pointer into the global agent memory
+# files that already exist: ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md. A global
+# memory file is the user's own instruction sheet, so this is opt-in.
+global_memory_pointer = false       # default
+```
+
 ## The pointer
 
 `memory pointer` writes a managed block into the target file:
