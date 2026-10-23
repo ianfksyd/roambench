@@ -19,6 +19,7 @@ type Config struct {
 	UI         UIConfig         `toml:"ui"`
 	Telegram   TelegramConfig   `toml:"telegram"`
 	Filesystem FilesystemConfig `toml:"filesystem"`
+	Agent      AgentConfig      `toml:"agent"`
 }
 
 type ServerConfig struct {
@@ -79,6 +80,29 @@ type TelegramConfig struct {
 	PollingInterval string `toml:"polling_interval"`
 }
 
+// AgentConfig holds the model access point the setup wizard offers to the
+// coding agents installed on the machine.
+type AgentConfig struct {
+	Gateway GatewayConfig `toml:"gateway"`
+}
+
+// GatewayConfig describes one model gateway, typically a local proxy that
+// fronts several provider subscriptions.
+type GatewayConfig struct {
+	// Name labels the gateway and the provider entry in the agent configs.
+	Name string `toml:"name"`
+	// BaseURL is the gateway base URL.
+	BaseURL string `toml:"base_url"`
+	// AuthToken is the credential value written into the agent configs. For
+	// a local gateway this is usually a placeholder, not a real secret.
+	AuthToken string `toml:"auth_token"`
+	// Model is the model id the agents should use.
+	Model string `toml:"model"`
+	// CodexPath is the backend path suffix Codex needs; most gateways expose
+	// the OpenAI-compatible API on another path than the Anthropic one.
+	CodexPath string `toml:"codex_path"`
+}
+
 // FilesystemConfig controls the browse roots offered by the file browser and
 // the folder picker.
 //
@@ -124,6 +148,15 @@ func Defaults() *Config {
 		Filesystem: FilesystemConfig{
 			Roots:          []string{"/"},
 			AllowUserRoots: true,
+		},
+		Agent: AgentConfig{
+			Gateway: GatewayConfig{
+				Name:      "roambench-gateway",
+				BaseURL:   "",
+				AuthToken: "",
+				Model:     "",
+				CodexPath: "/backend-api/codex",
+			},
 		},
 	}
 }

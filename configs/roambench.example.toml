@@ -71,6 +71,18 @@ title = "RoamBench"
 roots = ["/"]
 allow_user_roots = true
 
+# Model access point offered to the coding agents by the setup wizard.
+# Point every agent at one gateway (typically a local proxy that fronts
+# several provider subscriptions) instead of one subscription per agent.
+[agent.gateway]
+name = "magpie"
+base_url = "http://127.0.0.1:3425"
+auth_token = "magpie"        # usually a placeholder for a local gateway
+model = "auto/glm-5"
+# Most gateways expose the OpenAI-compatible API on another path than the
+# Anthropic one; Codex needs that path.
+codex_path = "/backend-api/codex"
+
 # [telegram]
 # enabled = false
 # bot_token = "YOUR_BOT_TOKEN"

@@ -1981,10 +1981,11 @@
             + '<button class="path-pick" type="button" data-pick-folder aria-haspopup="dialog" aria-label="' + escapeHTML(i4('chooseFolder')) + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h7A1.5 1.5 0 0 1 19 9v8.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg></button></div></div>'
             + '<label class="field"><span>' + escapeHTML(i4('goal')) + '</span><input name="goal" required maxlength="300" autocomplete="off"></label>'
             + '</fieldset>'
-            + '<p class="form-error" role="alert"></p><footer class="dialog-footer"><button type="submit" class="btn primary">' + escapeHTML(i4('submit')) + '</button></footer></form>');
+            + '<p class="form-error" role="alert"></p><footer class="dialog-footer"><button type="button" class="btn small" data-setup-open>' + escapeHTML(as('title')) + '</button><button type="submit" class="btn primary">' + escapeHTML(i4('submit')) + '</button></footer></form>');
         dialog.classList.add('create-dialog');
         var form = dialog.querySelector('form'), progress = { projectId: '', workstreamId: '' }, busy = false, entry = null;
         form.querySelector('[data-pick-folder]').onclick = function() { openFolderPicker(form.elements.path); };
+        form.querySelector('[data-setup-open]').onclick = function() { openAgentSetup(); };
         form.onsubmit = async function(event) {
             event.preventDefault(); if (busy) return;
             if (!entry) entry = boardAPI().projectEntry({ source: form.elements.path.value, goal: form.elements.goal.value });
@@ -2019,6 +2020,150 @@
                 if (!progress.projectId) { entry = null; form.querySelector('fieldset').disabled = false; }
             } finally { busy = false; submit.disabled = false; submit.textContent = i4('submit'); }
         };
+    }
+
+    var agentSetupDialog = null;
+    function as(key, vars) { return tr('project.agentSetup.' + key, key, vars); }
+
+    // The agent setup wizard moves the installed coding agents onto one
+    // gateway. The changes are computed and applied by the server; the
+    // browser never edits an agent configuration file itself.
+    function openAgentSetup() {
+        if (agentSetupDialog) return;
+        var dialog = document.createElement('dialog'), busy = false, selected = '';
+        dialog.className = 'board-v3 fs-dialog agent-setup-dialog';
+        dialog.setAttribute('aria-labelledby', 'agent-setup-title');
+        dialog.innerHTML = '<header class="dialog-header"><h2 id="agent-setup-title">' + escapeHTML(as('title')) + '</h2>'
+            + i4CloseButton('data-setup-close') + '</header>'
+            + '<div class="dialog-body">'
+            + '<div class="setup-profile">'
+            + '<label><span>' + escapeHTML(as('gatewayName')) + '</span><input data-setup-name autocomplete="off"></label>'
+            + '<label><span>' + escapeHTML(as('gatewayUrl')) + '</span><input data-setup-url autocomplete="off" placeholder="http://127.0.0.1:3425"></label>'
+            + '<label><span>' + escapeHTML(as('gatewayModel')) + '</span><input data-setup-model autocomplete="off"></label>'
+            + '</div>'
+            + '<table class="setup-table"><thead><tr><th>' + escapeHTML(as('agent')) + '</th><th>' + escapeHTML(as('current')) + '</th><th>' + escapeHTML(as('changes')) + '</th><th></th></tr></thead>'
+            + '<tbody data-setup-rows></tbody></table>'
+            + '<section class="setup-steps"><h3>' + escapeHTML(as('steps')) + '</h3><ol data-setup-step-list></ol></section>'
+            + '<p class="form-error" role="alert"></p></div>'
+            + '<footer class="dialog-footer"><button type="button" class="btn small" data-setup-refresh>' + escapeHTML(as('refresh')) + '</button></footer>';
+        document.body.appendChild(dialog); agentSetupDialog = dialog;
+
+        function close() { dialog.close(); dialog.remove(); if (agentSetupDialog === dialog) agentSetupDialog = null; }
+        bindDialogDismiss(dialog, close);
+        dialog.querySelector('[data-setup-close]').onclick = close;
+        dialog.querySelector('[data-setup-refresh]').onclick = function() { load(); };
+
+        function profile() {
+            return {
+                name: dialog.querySelector('[data-setup-name]').value.trim(),
+                baseUrl: dialog.querySelector('[data-setup-url]').value.trim(),
+                model: dialog.querySelector('[data-setup-model]').value.trim()
+            };
+        }
+        function errorNode(message) { dialog.querySelector('.form-error').textContent = message || ''; }
+
+        function renderRows(overview) {
+            var rows = dialog.querySelector('[data-setup-rows]');
+            rows.innerHTML = '';
+            (overview.agents || []).forEach(function(agent) {
+                var row = document.createElement('tr');
+                row.className = agent.label === selected ? 'setup-row selected' : 'setup-row';
+                var current = '';
+                if (agent.current) {
+                    var keys = Object.keys(agent.current);
+                    // The access point is what matters; the rest is noise.
+                    var urls = keys.filter(function(key) { return /url/i.test(key); });
+                    var shown = urls.length ? urls : keys;
+                    shown.forEach(function(key) {
+                        if (current) current += ' · ';
+                        current += agent.current[key];
+                    });
+                }
+                var pending = (agent.plan && agent.plan.changes || []).filter(function(change) { return change.action !== 'none'; });
+                var state = !agent.installed ? as('missing') : (agent.supported ? as('installed') : as('noAdapter'));
+                row.innerHTML = '<td><strong>' + escapeHTML(agent.label) + '</strong><span class="setup-state">' + escapeHTML(state) + '</span></td>'
+                    + '<td class="setup-current">' + escapeHTML(current || '—') + '</td>'
+                    + '<td>' + escapeHTML(pending.length ? pending.length + ' ' + as('changes') : as('noChanges')) + '</td>'
+                    + '<td></td>';
+                var action = document.createElement('button');
+                action.type = 'button';
+                action.className = 'btn small';
+                action.textContent = pending.length ? as('apply') : as('noChanges');
+                action.disabled = !pending.length || !agent.installed || !agent.supported;
+                action.onclick = function(event) {
+                    event.stopPropagation();
+                    applyAgent(agent.label);
+                };
+                row.querySelector('td:last-child').appendChild(action);
+                row.onclick = function() { select(agent.label); };
+                rows.appendChild(row);
+            });
+        }
+        function select(label) {
+            selected = label;
+            Array.prototype.forEach.call(dialog.querySelectorAll('.setup-row'), function(row) { row.classList.remove('selected'); });
+            loadSteps(label);
+        }
+        async function loadSteps(label) {
+            var list = dialog.querySelector('[data-setup-step-list]');
+            list.innerHTML = '';
+            if (!label) return;
+            try {
+                var data = await fetchJSON('/api/project-control/agent-config?agent=' + encodeURIComponent(label));
+                (data.steps || []).forEach(function(step) {
+                    var item = document.createElement('li');
+                    item.textContent = step.title;
+                    if (step.command) {
+                        var code = document.createElement('code');
+                        code.textContent = step.command;
+                        item.appendChild(code);
+                    }
+                    if (step.note) {
+                        var note = document.createElement('span');
+                        note.className = 'setup-note';
+                        note.textContent = step.note;
+                        item.appendChild(note);
+                    }
+                    list.appendChild(item);
+                });
+            } catch (error) {
+                list.innerHTML = '';
+            }
+        }
+        async function applyAgent(label) {
+            if (busy) return;
+            busy = true; errorNode('');
+            try {
+                await fetchJSON('/api/project-control/agent-config?agent=' + encodeURIComponent(label) + '&action=apply', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile: profile() })
+                });
+                await load();
+            } catch (error) {
+                errorNode(as('failed') + ': ' + error.message);
+            } finally { busy = false; }
+        }
+        async function load() {
+            errorNode('');
+            try {
+                var overview = await fetchJSON('/api/project-control/agent-config');
+                var current = overview.profile || {};
+                var nameInput = dialog.querySelector('[data-setup-name]');
+                var urlInput = dialog.querySelector('[data-setup-url]');
+                var modelInput = dialog.querySelector('[data-setup-model]');
+                if (!nameInput.value) nameInput.value = current.name || '';
+                if (!urlInput.value) urlInput.value = current.baseUrl || '';
+                if (!modelInput.value) modelInput.value = current.model || '';
+                renderRows(overview);
+                if (!selected) {
+                    var first = (overview.agents || []).filter(function(agent) { return agent.installed && agent.supported; })[0];
+                    if (first) select(first.label);
+                }
+            } catch (error) {
+                errorNode(as('failed') + ': ' + error.message);
+            }
+        }
+        dialog.showModal();
+        load();
     }
 
     function initBoardFont() {

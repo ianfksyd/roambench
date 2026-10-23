@@ -5343,6 +5343,24 @@ dialog.board-v3 {
 .board-v3 .fs-add { display: flex; gap: 8px; margin-bottom: 10px; }
 .board-v3 .fs-add[hidden] { display: none; }
 .board-v3 .fs-add-input { flex: 1 1 auto; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+.board-v3 .agent-setup-dialog { width: 720px; max-width: 94vw; }
+.board-v3 .setup-profile { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.board-v3 .setup-profile label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.board-v3 .setup-profile input { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: inherit; font-size: 12px; }
+.board-v3 .setup-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.board-v3 .setup-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 0 8px 8px 0; border-bottom: 1px solid var(--border); }
+.board-v3 .setup-table td { padding: 8px 8px 8px 0; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+.board-v3 .setup-row { cursor: pointer; }
+.board-v3 .setup-row:hover { background: var(--hover); }
+.board-v3 .setup-row.selected { background: var(--hover); }
+.board-v3 .setup-state { display: block; color: var(--muted); font-size: 11px; }
+.board-v3 .setup-current { color: var(--muted); overflow-wrap: anywhere; }
+.board-v3 .setup-table td:nth-child(3), .board-v3 .setup-table td:nth-child(4) { white-space: nowrap; }
+.board-v3 .setup-steps { margin-top: 16px; }
+.board-v3 .setup-steps h3 { font-size: 13px; margin: 0 0 8px; }
+.board-v3 .setup-steps ol { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.board-v3 .setup-steps code { display: block; margin-top: 3px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); font-size: 12px; overflow-wrap: anywhere; }
+.board-v3 .setup-note { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
 .board-v3 .fs-list { padding: 0; list-style: none; max-height: 40vh; overflow: auto; }
 .board-v3 .fs-item { display: flex; gap: 8px; width: 100%; border: 0; padding: 10px; text-align: left; background: transparent; overflow-wrap: anywhere; }
 .board-v3 .fs-item:hover { background: var(--hover); }

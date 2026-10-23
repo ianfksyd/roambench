@@ -10,6 +10,9 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 - Canonical project memory: one shared document per project, seeded from the project brief, readable and writable by every agent (`roambench-agent memory get|append|set`), included in the claim response
 - `roambench-agent memory pointer` writes a managed pointer block into CLAUDE.md / AGENTS.md, so agents read the shared memory instead of keeping private copies
+- Agent setup wizard: scans the installed agent CLIs, shows what would change, and applies a model access point to their configuration with a deterministic per-CLI adapter (claude / codex / opencode) plus a backup
+- `roambench-agent config show|apply`: the same access-point change from the command line
+- `[agent.gateway]` configuration for the access point the wizard offers
 - Configurable browse roots (`[filesystem] roots`) shown in the file browser and the folder picker; `/` offers the whole machine, `~` the home directory
 - Per-user roots in `~/.config/roambench/roots.toml`, manageable from the folder picker (`/api/fs/roots`, add and remove)
 

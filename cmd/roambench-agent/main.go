@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/ianf339/roambench/internal/agentcfg"
 	"github.com/ianf339/roambench/internal/agentmem"
 )
 
@@ -39,6 +41,8 @@ func main() {
 		cmdRelease(os.Args[2:])
 	case "memory":
 		cmdMemory(os.Args[2:])
+	case "config":
+		cmdConfig(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("roambench-agent " + version)
 	case "help", "--help", "-h":
@@ -69,6 +73,11 @@ Commands:
                                   Replace the canonical project memory
   memory pointer --project <id> --file <path> [--file <path> ...]
                                   Write the shared-memory pointer into files
+  config show --agent <label>
+                                  Show where an agent currently points
+  config apply --agent <label> --base-url <url> [--auth-token <t>]
+                   [--model <id>] [--name <n>] [--codex-path <p>]
+                                  Point an agent at a gateway (keeps a backup)
   artifact --kind <k> --outcome <o> [--label <l>] [--value <v>] [--file <f>]
                                   Submit an artifact for the current phase
   checkpoint --reason <r>         Request human review
@@ -206,6 +215,86 @@ func cmdStatus() {
 	fmt.Printf("Phase:   %s\n", phase)
 	if nextStep != "" {
 		fmt.Printf("Next:    %s\n", nextStep)
+	}
+}
+
+// cmdConfig shows and applies the model access point of a coding agent.
+//
+// Applying is deterministic: the CLI edits the agent configuration file
+// itself and keeps a backup, so no language model touches user configuration.
+func cmdConfig(args []string) {
+	action := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
+		action = args[0]
+		args = args[1:]
+	}
+	if action == "" {
+		action = "show"
+	}
+	label := flag(args, "--agent")
+	if label == "" {
+		fatal("--agent is required")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	switch action {
+	case "show":
+		path, ok := agentcfg.ConfigPath(label, home)
+		if !ok {
+			fatal("unsupported agent: " + label)
+		}
+		fmt.Printf("%s: %s\n", label, path)
+		current := agentcfg.Current(label, home)
+		if len(current) == 0 {
+			fmt.Println("(no configuration yet)")
+			return
+		}
+		keys := make([]string, 0, len(current))
+		for key := range current {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Printf("  %s = %s\n", key, current[key])
+		}
+	case "apply":
+		profile := agentcfg.Profile{
+			Name:      flag(args, "--name"),
+			BaseURL:   flag(args, "--base-url"),
+			AuthToken: flag(args, "--auth-token"),
+			Model:     flag(args, "--model"),
+			CodexPath: flag(args, "--codex-path"),
+		}
+		if profile.BaseURL == "" {
+			fatal("--base-url is required")
+		}
+		result, err := agentcfg.Apply(label, home, profile)
+		if err != nil {
+			fatal(err.Error())
+		}
+		if !result.Changed {
+			fmt.Printf("%s already points at this profile\n", label)
+			return
+		}
+		fmt.Printf("%s updated: %s\n", label, result.Plan.Path)
+		if result.BackupPath != "" {
+			fmt.Printf("backup: %s\n", result.BackupPath)
+		}
+		for _, change := range result.Plan.Changes {
+			if change.Action == "none" {
+				continue
+			}
+			before := change.Before
+			if before == "" {
+				before = "(unset)"
+			}
+			fmt.Printf("  %s: %s -> %s\n", change.Key, before, change.After)
+		}
+	default:
+		fatal("unknown config action: " + action)
 	}
 }
 

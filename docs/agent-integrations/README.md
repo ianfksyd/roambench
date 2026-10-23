@@ -28,6 +28,8 @@ roambench-agent notify --title "Done" --body "Task complete"
 - [Generic (any agent)](generic.md)
 - [Shared project memory](shared-memory.md) — one canonical memory per project,
   read through `roambench-agent memory` instead of one private copy per agent
+- [Agent setup wizard](agent-setup.md) — move the installed agents onto one
+  gateway, with a preview, a backup and the manual steps left to the user
 
 ## How It Works
 
