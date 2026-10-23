@@ -26,13 +26,16 @@ type agentConfigProfileRequest struct {
 
 // agentConfigReport is one agent row of the wizard.
 type agentConfigReport struct {
-	Label      string            `json:"label"`
-	Installed  bool              `json:"installed"`
-	Version    string            `json:"version,omitempty"`
-	ConfigPath string            `json:"configPath,omitempty"`
-	Supported  bool              `json:"supported"`
-	Current    map[string]string `json:"current,omitempty"`
-	Plan       *agentcfg.Plan    `json:"plan,omitempty"`
+	Label      string `json:"label"`
+	Installed  bool   `json:"installed"`
+	Version    string `json:"version,omitempty"`
+	ConfigPath string `json:"configPath,omitempty"`
+	Supported  bool   `json:"supported"`
+	// Reason explains an unsupported agent: "worker_only" = the CLI has no
+	// configuration surface for a custom model endpoint.
+	Reason  string            `json:"reason,omitempty"`
+	Current map[string]string `json:"current,omitempty"`
+	Plan    *agentcfg.Plan    `json:"plan,omitempty"`
 }
 
 // agentConfigOverview is the whole wizard state.
@@ -91,17 +94,17 @@ func (s *Server) agentConfigOverview(username string, profile agentcfg.Profile) 
 		overview.Agents = append(overview.Agents, report)
 	}
 	// Agents that are installed but have no adapter still show up, so the
-	// user sees that they will not be moved automatically.
+	// user sees that they will not be moved automatically. kiro-cli has no
+	// gateway configuration surface at all: it is a worker, not a candidate.
 	for _, agent := range snapshot.Agents {
 		if agentcfg.Supports(agent.AgentLabel) || !agent.Installed {
 			continue
 		}
-		overview.Agents = append(overview.Agents, agentConfigReport{
-			Label:     agent.AgentLabel,
-			Installed: true,
-			Version:   agent.Version,
-			Supported: false,
-		})
+		report := agentConfigReport{Label: agent.AgentLabel, Installed: true, Version: agent.Version, Supported: false}
+		if agentcfg.GatewayUnsupported(agent.AgentLabel) {
+			report.Reason = "worker_only"
+		}
+		overview.Agents = append(overview.Agents, report)
 	}
 	return overview
 }

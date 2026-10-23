@@ -72,6 +72,21 @@ func Guide(label string, profile Profile) []Step {
 			})
 		}
 		return steps
+	case "hermes":
+		steps := []Step{
+			{Title: "确认 hermes 可用", Command: "hermes --version", Note: "已安装则跳过"},
+		}
+		if gateway != "" {
+			steps = append(steps, Step{
+				Title:    "确认已指向网关",
+				Command:  "roambench-agent config show --agent hermes",
+				Note:     "向导在 ~/.hermes/config.yaml 里加一个 provider 并切换 model.provider;网关凭据经 key_cmd 提供,无需登录",
+				Optional: true,
+			})
+		}
+		return steps
+	case "kiro-cli":
+		return []Step{{Title: "Kiro 没有自定义模型端点", Note: "kiro-cli 的模型来自 Kiro 自身登录,没有指向网关的配置面;向导只把它当 worker 使用(领任务/交证据),模型流量不走网关"}}
 	default:
 		return []Step{{Title: "手动接入 " + label, Note: "该 agent 没有内置适配器,请参照其官方文档配置模型接入点"}}
 	}

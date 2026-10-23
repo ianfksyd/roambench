@@ -2129,7 +2129,9 @@
                     });
                 }
                 var pending = (agent.plan && agent.plan.changes || []).filter(function(change) { return change.action !== 'none'; });
-                var state = !agent.installed ? as('missing') : (agent.supported ? as('installed') : as('noAdapter'));
+                var state = !agent.installed ? as('missing')
+                    : agent.reason === 'worker_only' ? as('workerOnly')
+                    : (agent.supported ? as('installed') : as('noAdapter'));
                 row.innerHTML = '<td><strong>' + escapeHTML(agent.label) + '</strong><span class="setup-state">' + escapeHTML(state) + '</span></td>'
                     + '<td class="setup-current">' + escapeHTML(current || '—') + '</td>'
                     + '<td>' + escapeHTML(pending.length ? pending.length + ' ' + as('changes') : as('noChanges')) + '</td>'

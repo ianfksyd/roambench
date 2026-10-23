@@ -127,6 +127,12 @@ var adapters = map[string]Adapter{
 		Apply:      applyOpenCode,
 		Current:    currentOpenCode,
 	},
+	"hermes": {
+		Label:      "hermes",
+		ConfigPath: filepath.Join(".hermes", "config.yaml"),
+		Apply:      applyHermes,
+		Current:    currentHermes,
+	},
 }
 
 // targetsFor returns the configuration keys a profile touches per agent.
@@ -154,6 +160,13 @@ func targetsFor(label string, profile Profile) []string {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
+		return keys
+	case "hermes":
+		key := hermesProviderKey(profile)
+		keys := []string{"providers." + key + ".base_url", "model.provider"}
+		if profile.Model != "" {
+			keys = append(keys, "model.default")
+		}
 		return keys
 	default:
 		return nil

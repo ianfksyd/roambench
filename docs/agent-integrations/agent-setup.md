@@ -49,6 +49,16 @@ on another path than the Anthropic one.
 | Claude Code | `~/.claude/settings.json` | `env.ANTHROPIC_BASE_URL`, `env.ANTHROPIC_AUTH_TOKEN`, `env.ANTHROPIC_DEFAULT_*_MODEL` |
 | Codex | `~/.codex/config.toml` | `openai_base_url`, `model` |
 | OpenCode | `~/.config/opencode/opencode.json` | `provider.<name>.baseURL`, `provider.<name>.model` |
+| Hermes | `~/.hermes/config.yaml` | `providers.<name>.base_url/api_mode/key_cmd/discover_models`, `model.provider`, `model.default` |
+
+The hermes edit is surgical on the YAML tree: every other provider, model
+entry and key survives untouched, and the gateway credential rides on
+`key_cmd` (a command that prints the key), so no login and no env plumbing.
+
+`kiro-cli` is listed as **worker only**: its CLI has no configuration
+surface for a custom model endpoint, so no adapter can ever point it at a
+gateway. It still claims tasks and submits evidence through
+`roambench-agent`; its models come from its own login.
 
 Unrelated settings in those files are preserved: the JSON adapters keep every
 other key, and the TOML adapter edits line by line so comments survive.

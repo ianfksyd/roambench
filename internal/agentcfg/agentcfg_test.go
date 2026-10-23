@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func testProfile() Profile {
@@ -237,5 +239,153 @@ func TestCurrentForShowsOnlyRelevantKeys(t *testing.T) {
 	}
 	if len(current) != 1 {
 		t.Fatalf("expected only the base url, got %+v", current)
+	}
+}
+
+// The hermes fixture mirrors the shape of a real ~/.hermes/config.yaml.
+const hermesFixture = `model:
+  default: glm-5.3-flash
+  provider: opencode-console
+providers:
+  opencode-console:
+    name: OpenCode Console
+    base_url: https://opencode.ai/inference/openai/v1
+    api_mode: chat_completions
+    key_cmd: opencode auth token
+  bigmodel-anthropic:
+    base_url: https://open.bigmodel.cn/api/anthropic
+    api_mode: anthropic_messages
+    key_env: BIGMODEL_KEY
+`
+
+func TestApplyHermesAddsGatewayProviderAndSwitches(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".hermes", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(hermesFixture), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Apply("hermes", home, testProfile())
+	if err != nil {
+		t.Fatalf("Apply error: %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("expected a change")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+
+	var cfg map[string]interface{}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("result is not valid YAML: %v\n%s", err, content)
+	}
+	model := cfg["model"].(map[string]interface{})
+	if model["provider"] != "magpie" {
+		t.Errorf("model.provider = %v, want magpie", model["provider"])
+	}
+	if model["default"] != "auto/glm-5" {
+		t.Errorf("model.default = %v, want auto/glm-5", model["default"])
+	}
+	providers := cfg["providers"].(map[string]interface{})
+	gateway := providers["magpie"].(map[string]interface{})
+	if gateway["base_url"] != "http://127.0.0.1:3425" {
+		t.Errorf("base_url = %v", gateway["base_url"])
+	}
+	if gateway["api_mode"] != "anthropic_messages" {
+		t.Errorf("api_mode = %v", gateway["api_mode"])
+	}
+	if gateway["key_cmd"] != "echo magpie" {
+		t.Errorf("key_cmd = %v", gateway["key_cmd"])
+	}
+	if gateway["discover_models"] != true {
+		t.Errorf("discover_models = %v, want true", gateway["discover_models"])
+	}
+	// The untouched provider survives.
+	if _, ok := providers["opencode-console"]; !ok {
+		t.Errorf("existing provider lost:\n%s", content)
+	}
+	if !strings.Contains(content, "https://opencode.ai/inference/openai/v1") {
+		t.Errorf("existing provider base_url lost:\n%s", content)
+	}
+
+	// Second apply is a no-op.
+	second, err := Apply("hermes", home, testProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Changed {
+		t.Fatal("second apply should not change anything")
+	}
+}
+
+func TestApplyHermesCreatesConfigFromNothing(t *testing.T) {
+	home := t.TempDir()
+	if _, err := Apply("hermes", home, Profile{Name: "magpie", BaseURL: "http://127.0.0.1:3425"}); err != nil {
+		t.Fatalf("Apply error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".hermes", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]interface{}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("invalid YAML: %v", err)
+	}
+	if cfg["model"].(map[string]interface{})["provider"] != "magpie" {
+		t.Errorf("model.provider not set:\n%s", data)
+	}
+}
+
+func TestApplyHermesSwitchesBackForthWithoutLosingProviders(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".hermes", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(hermesFixture), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply("hermes", home, testProfile()); err != nil {
+		t.Fatal(err)
+	}
+	// A different gateway profile replaces the first provider entry.
+	other := testProfile()
+	other.Name = "other-gw"
+	if _, err := Apply("hermes", home, other); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]interface{}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	providers := cfg["providers"].(map[string]interface{})
+	for _, want := range []string{"opencode-console", "bigmodel-anthropic", "magpie", "other-gw"} {
+		if _, ok := providers[want]; !ok {
+			t.Errorf("provider %q lost", want)
+		}
+	}
+	if cfg["model"].(map[string]interface{})["provider"] != "other-gw" {
+		t.Errorf("model.provider not switched to other-gw")
+	}
+}
+
+func TestGatewayUnsupportedKiroOnly(t *testing.T) {
+	if !GatewayUnsupported("kiro-cli") {
+		t.Error("kiro-cli should be gateway-unsupported")
+	}
+	for _, label := range Adapters() {
+		if GatewayUnsupported(label) {
+			t.Errorf("adapter %s must not be gateway-unsupported", label)
+		}
 	}
 }
