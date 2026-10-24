@@ -5126,6 +5126,8 @@ button.tab-action:focus-visible {
 .board-v3 .board-task-quick-btn { width: 24px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-size: 12px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .board-v3 .board-task-quick-btn:hover { background: var(--hover); border-color: var(--muted); }
 .board-v3 .board-task-quick-btn:last-child:hover { color: #f48771; border-color: #f48771; }
+.board-v3 .task-terminal-link { margin: 10px 0 4px; }
+.board-v3 .board-task-quick-btn[data-board-task-terminal]:hover { color: #4fc1ff; border-color: #4fc1ff; }
 .board-task-open {
     display: block;
     width: 100%;

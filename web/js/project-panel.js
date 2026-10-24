@@ -1469,6 +1469,10 @@
             + '<span class="pill">' + escapeHTML(humanizePhase(phase)) + '</span>'
             + (workstream ? '<span class="pill">' + escapeHTML(workstream.title) + '</span>' : '')
             + '</div>';
+        var terminalIds = taskTerminalIds(task);
+        var terminalLink = terminalIds.length && app() && app().attachTerminal
+            ? '<div class="task-terminal-link"><button type="button" class="project-inline-btn primary" data-task-open-terminal="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.watchTerminal', '▶ Watch in terminal')) + '</button></div>'
+            : '';
         var info = '<section class="info-card"><h3>' + escapeHTML(tr('project.taskInfoTitle', 'Task info')) + '</h3><dl>'
             + def(tr('project.taskInfoState', 'State'), escapeHTML(humanizeTaskState(task.state)))
             + def(tr('project.currentPhase', 'Current phase'), escapeHTML(humanizePhase(phase)))
@@ -1495,6 +1499,7 @@
         var evidenceBlock = artifacts.length ? evidence : '';
         var activityBlock = audit.length ? activity : '';
         return summary
+            + terminalLink
             + info
             + renderTaskApprovalStatusCard(task)
             + evidenceBlock
@@ -1808,7 +1813,9 @@
                             + '<span class="board-task-name">' + escapeHTML(task.title || task.id) + '</span></span>'
                             + '<span class="board-task-meta"><span class="board-task-state">' + escapeHTML(row.label + ' · ' + rel) + '</span></span>'
                             + '</button>'
-                            + (quick.length ? '<div class="board-task-quick">' + quick.map(function(action) {
+                            + ((quick.length || boardTerminalButton(task)) ? '<div class="board-task-quick">'
+                                + (boardTerminalButton(task) || '')
+                                + quick.map(function(action) {
                                 return '<button type="button" class="board-task-quick-btn" data-board-task-action="' + action.action + '" data-board-task-id="' + escapeHTML(task.id) + '"'
                                     + ' title="' + escapeHTML(action.label) + '" aria-label="' + escapeHTML(action.label) + '">' + escapeHTML(action.icon) + '</button>';
                             }).join('') + '</div>' : '')
@@ -1822,6 +1829,36 @@
             + (rows.length ? '<footer class="board-footer"><p>' + escapeHTML(itemCountText(tab === 'wall' ? visible.length : timelineCount)) + '</p></footer>' : '')
             + '</section>';
     }
+    // taskTerminalIds extracts the live terminal ids of a task from its
+    // "session-live-<id>" session references.
+    function taskTerminalIds(task) {
+        var ids = [];
+        (task && task.sessionIds || []).forEach(function(sessionId) {
+            var match = /^session-live-(.+)$/.exec(String(sessionId || ''));
+            if (match) {
+                ids.push(match[1]);
+            }
+        });
+        return ids;
+    }
+
+    // openTaskTerminal jumps to the task's execution terminal in the app's
+    // terminal workspace.
+    function openTaskTerminal(taskId) {
+        var task = findById(tasks(), taskId);
+        var ids = taskTerminalIds(task);
+        var bridge = app();
+        for (var i = ids.length - 1; i >= 0; i--) {
+            if (bridge && bridge.attachTerminal && bridge.attachTerminal(ids[i])) {
+                if (bridge.setMode) { bridge.setMode('terminal'); }
+                return true;
+            }
+        }
+        state.boardError = tr('project.terminalNotFound', 'Terminal session not found — open the Terminal tab to find it.');
+        render();
+        return false;
+    }
+
     // boardQuickActions picks the fast controls for one board cell: start,
     // pause/resume and cancel, by the task's current state.
     function boardQuickActions(task) {
@@ -1846,6 +1883,17 @@
         }
         actions.push({ action: 'cancel_task', icon: '✕', label: tr('project.quickCancel', 'Cancel') });
         return actions;
+    }
+
+    // boardTerminalButton is the "watch it work" control shown on tasks with
+    // a live execution terminal.
+    function boardTerminalButton(task) {
+        var ids = taskTerminalIds(task);
+        if (!ids.length) {
+            return '';
+        }
+        return '<button type="button" class="board-task-quick-btn" data-board-task-terminal="' + escapeHTML(task.id) + '"'
+            + ' title="' + escapeHTML(tr('project.quickWatch', 'Watch in terminal')) + '" aria-label="' + escapeHTML(tr('project.quickWatch', 'Watch in terminal')) + '">👁</button>';
     }
 
     function applyBoardTaskAction(taskId, action) {
@@ -2436,6 +2484,11 @@
                 openTask(node.getAttribute('data-task-id'));
             });
         });
+        panel.querySelectorAll('[data-task-open-terminal]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                openTaskTerminal(node.getAttribute('data-task-open-terminal'));
+            });
+        });
         panel.querySelectorAll('[data-open-approvals]').forEach(function(node) {
             node.addEventListener('click', openApprovals);
         });
@@ -2462,6 +2515,12 @@
             node.addEventListener('click', function(event) {
                 event.stopPropagation();
                 applyBoardTaskAction(node.getAttribute('data-board-task-id'), node.getAttribute('data-board-task-action'));
+            });
+        });
+        panel.querySelectorAll('[data-board-task-terminal]').forEach(function(node) {
+            node.addEventListener('click', function(event) {
+                event.stopPropagation();
+                openTaskTerminal(node.getAttribute('data-board-task-terminal'));
             });
         });
         panel.querySelectorAll('[data-start-phase-task]').forEach(function(node) {
