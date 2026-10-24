@@ -84,6 +84,9 @@ type TelegramConfig struct {
 // coding agents installed on the machine.
 type AgentConfig struct {
 	Gateway GatewayConfig `toml:"gateway"`
+	// Worker configures the local runtime that claims tasks and runs them in
+	// a visible terminal.
+	Worker WorkerConfig `toml:"worker"`
 	// WorkspaceMemoryPointer inserts the shared memory pointer into the
 	// agent memory files that already exist in the workspace of a new
 	// project, so its agents read the canonical memory. Detection only:
@@ -99,6 +102,53 @@ type AgentConfig struct {
 	// ~/.codex/AGENTS.md). Off by default: a global memory file is the
 	// user's own instruction sheet.
 	GlobalMemoryPointer bool `toml:"global_memory_pointer"`
+}
+
+// WorkerConfig describes the local task worker.
+type WorkerConfig struct {
+	// Enabled gates whether the UI offers starting the worker.
+	Enabled bool `toml:"enabled"`
+	// Executor is the coding agent CLI the worker runs, e.g. "claude".
+	Executor string `toml:"executor"`
+	// ExecutorArgs are extra flags passed to the executor before the prompt.
+	ExecutorArgs []string `toml:"executor_args"`
+	// Model is an optional model override passed as --model <model> when set.
+	Model string `toml:"model"`
+	// PollInterval is how often the worker asks for a claimable task.
+	PollInterval string `toml:"poll_interval"`
+	// MaxTaskRuntime bounds one task execution; "0" means unlimited.
+	MaxTaskRuntime string `toml:"max_task_runtime"`
+}
+
+// GetWorkerExecutor returns the configured executor CLI, defaulting to claude.
+func (c WorkerConfig) GetWorkerExecutor() string {
+	executor := strings.TrimSpace(c.Executor)
+	if executor == "" {
+		return "claude"
+	}
+	return executor
+}
+
+// GetWorkerPollInterval parses the poll interval, defaulting to 15s.
+func (c WorkerConfig) GetWorkerPollInterval() time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(c.PollInterval))
+	if err != nil || d <= 0 {
+		return 15 * time.Second
+	}
+	return d
+}
+
+// GetWorkerMaxTaskRuntime parses the task runtime bound; 0 means unlimited.
+func (c WorkerConfig) GetWorkerMaxTaskRuntime() time.Duration {
+	raw := strings.TrimSpace(c.MaxTaskRuntime)
+	if raw == "" || raw == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0
+	}
+	return d
 }
 
 // GatewayConfig describes one model gateway, typically a local proxy that
@@ -165,6 +215,11 @@ func Defaults() *Config {
 			AllowUserRoots: true,
 		},
 		Agent: AgentConfig{
+			Worker: WorkerConfig{
+				Executor:       "claude",
+				PollInterval:   "15s",
+				MaxTaskRuntime: "2h",
+			},
 			WorkspaceMemoryPointer:   true,
 			CreateMissingMemoryFiles: false,
 			GlobalMemoryPointer:      false,

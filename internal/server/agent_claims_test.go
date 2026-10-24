@@ -80,6 +80,7 @@ func TestAgentClaimTaskEndToEnd(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 	agentToken := agentTokenFor(t, srv, token)
+	muteSeedTasks(t, srv)
 
 	setTaskDispatchState(t, srv, token, "task-e2e-1", "ready")
 
@@ -151,12 +152,13 @@ func TestAgentClaimNoReadyTasksReturns204(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 	agentToken := agentTokenFor(t, srv, token)
+	muteSeedTasks(t, srv)
 
 	setTaskDispatchState(t, srv, token, "task-awaiting", "awaiting_approval")
 
 	rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"runtime-1","agentLabel":"hermes"}`)
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("claim status = %d, want 204 (awaiting_approval is not claimable)", rec.Code)
+		t.Fatalf("claim status = %d, want 204 (awaiting_approval is not claimable): %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -164,6 +166,7 @@ func TestCheckpointApprovalGatesClaimability(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 	agentToken := agentTokenFor(t, srv, token)
+	muteSeedTasks(t, srv)
 
 	// Simulate a freshly created task waiting for a dispatch checkpoint.
 	setTaskDispatchState(t, srv, token, "task-gate-1", "awaiting_approval")
@@ -210,6 +213,7 @@ func TestAgentClaimConcurrentOnlyOneWins(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 	agentToken := agentTokenFor(t, srv, token)
+	muteSeedTasks(t, srv)
 
 	setTaskDispatchState(t, srv, token, "task-race-1", "ready")
 
@@ -247,6 +251,7 @@ func TestAgentLeaseExpiryReturnsTaskToReady(t *testing.T) {
 	srv, token, sessions := testProjectControlServer(t)
 	defer sessions.Stop()
 	agentToken := agentTokenFor(t, srv, token)
+	muteSeedTasks(t, srv)
 
 	// Freeze the injected claim clock.
 	base := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)

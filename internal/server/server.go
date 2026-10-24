@@ -218,6 +218,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/agent/v1/claim", s.tokenRequired(s.handleAgentClaim))
 	s.mux.HandleFunc("/api/agent/v1/heartbeat", s.tokenRequired(s.handleAgentHeartbeat))
 	s.mux.HandleFunc("/api/agent/v1/memory", s.tokenRequired(s.handleAgentProjectMemory))
+	s.mux.HandleFunc("/api/agent/v1/terminal", s.tokenRequired(s.handleAgentTerminal))
 	s.mux.HandleFunc("/api/project-control/memory", authRequired(s.sessions, s.handleProjectControlMemory))
 	s.mux.HandleFunc("/api/project-control/agent-config", authRequired(s.sessions, s.handleAgentConfig))
 	s.mux.HandleFunc("/api/project-control/memory/pointers", authRequired(s.sessions, s.handleProjectPointers))

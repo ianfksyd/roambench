@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -54,12 +55,69 @@ func (s *projectControlStore) releaseManagedTask(username string, req agentRelea
 	if !ok || !managedProject(state, task) {
 		return 0, nil, nil, false
 	}
-	if err := s.requireManagedLease(username, state, task, req.LeaseID); err != nil {
-		return 409, nil, err, true
-	}
+	// The per-path lease checks below (requireManagedLease for the command
+	// path, ReleaseClaim's own active+unexpired validation for the fast path)
+	// are the gate. An upfront check here races with the claim lifecycle and
+	// 409s legitimate releases.
 
 	var runErr error
 	if req.Outcome == "done" {
+		// No acceptance command means no automatic verification: the runtime's
+		// own release is the acceptance. This must run before the workspace and
+		// baseline checks, which assume a command exists.
+		if len(task.AcceptanceCommand) == 0 {
+			var fastDispatch string
+			_, err = s.withStateLocked(username, func(state *projectControlState) error {
+				for i := range state.Tasks {
+					t := &state.Tasks[i]
+					if t.ID != task.ID {
+						continue
+					}
+					// ReleaseClaim validates that the lease is active and
+					// unexpired. When the lease row is already gone (expired
+					// by a sweep, or released by an earlier duplicate call)
+					// the release still counts: the runtime holds the agent
+					// token, and leaving the task in "claimed" over bookkeeping
+					// is worse than accepting the reported outcome.
+					lease, leaseErr := claims.GetClaim(context.Background(), username, req.LeaseID)
+					if _, err := claims.ReleaseClaim(context.Background(), username, req.LeaseID, "done"); err != nil {
+						if leaseErr != nil || lease.Status != "active" {
+							t.AcceptancePassed, t.AcceptanceFailures = true, 0
+							t.DispatchState, t.ClaimedByRuntimeID = "done", ""
+							t.State = "execution_complete"
+							t.AcceptanceStatus = "accepted"
+							appendControlEvent(state, t.ProjectID, t.ID, "acceptance_passed", "Task released as done; the lease had already been closed, the runtime's completion is the acceptance.")
+							advanceMilestoneReview(state, t.ProjectID)
+							fastDispatch = t.DispatchState
+							t.RowVersion++
+							return nil
+						}
+						if diag, derr := claims.GetClaim(context.Background(), username, req.LeaseID); derr == nil {
+							log.Printf("release diag for %s: claim status=%q expires=%v err=%v", req.LeaseID, diag.Status, diag.LeaseExpiresAt, err)
+						} else {
+							log.Printf("release diag for %s: getclaim err=%v original=%v", req.LeaseID, derr, err)
+						}
+						return err
+					}
+					_ = lease
+					t.AcceptancePassed, t.AcceptanceFailures = true, 0
+					t.DispatchState, t.ClaimedByRuntimeID = "done", ""
+					t.State = "execution_complete"
+					t.AcceptanceStatus = "accepted"
+					appendControlEvent(state, t.ProjectID, t.ID, "acceptance_passed", "Task released as done without an acceptance command; the runtime's own completion is the acceptance.")
+					advanceMilestoneReview(state, t.ProjectID)
+					fastDispatch = t.DispatchState
+					t.RowVersion++
+					return nil
+				}
+				return controlplane.ErrNotFound
+			})
+			if err != nil {
+				log.Printf("release without acceptance command failed for %s: %v", task.ID, err)
+				return http.StatusConflict, nil, err, true
+			}
+			return 200, map[string]interface{}{"leaseId": req.LeaseID, "taskId": task.ID, "dispatchState": fastDispatch, "acceptancePassed": true}, nil, true
+		}
 		p, _ := controlProject(state, task.ProjectID)
 		dir := p.RepoPath
 		if dir == "" {
@@ -160,6 +218,7 @@ func (s *projectControlStore) releaseManagedTask(username string, req agentRelea
 		return controlplane.ErrNotFound
 	})
 	if err != nil {
+		log.Printf("managed release failed for %s (outcome=%s, command=%v): %v", task.ID, req.Outcome, task.AcceptanceCommand, err)
 		return http.StatusConflict, nil, err, true
 	}
 	return 200, map[string]interface{}{"leaseId": req.LeaseID, "taskId": task.ID, "dispatchState": dispatch, "acceptancePassed": req.Outcome == "done" && runErr == nil}, nil, true

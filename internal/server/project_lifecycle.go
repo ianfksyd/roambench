@@ -179,9 +179,16 @@ func taskClaimAllowed(state projectControlState, task projectControlTask) bool {
 	// A task raised by a human is dispatched automatically and may be claimed
 	// regardless of the project's takeover mode: the person who asked for the
 	// work is the decision maker, and the project may legitimately stay in
-	// manual mode for everything else. Safety checks still apply.
+	// manual mode for everything else. Terminal states, risk and dependency
+	// checks still apply; an acceptance command is optional — without one the
+	// task is accepted on the runtime's own release.
 	if task.Origin != "agent" {
-		if len(task.AcceptanceCommand) == 0 || isHighRisk(task.RiskLevel) {
+		switch normalizeProjectControlTaskState(task.State) {
+		case "planned", "queued", "running", "waiting_review", "waiting_human", "blocked", "failed":
+		default:
+			return false // execution_complete/archived/cancelled are not claimable
+		}
+		if isHighRisk(task.RiskLevel) {
 			return false
 		}
 		return taskDependenciesPassed(state, task)
@@ -231,7 +238,12 @@ func (s *projectControlStore) requireManagedLease(username string, state project
 	}
 	claim, err := claims.GetClaim(context.Background(), username, leaseID)
 	if err != nil || claim.TaskID != task.ID || claim.Status != "active" || !claim.LeaseExpiresAt.After(projectControlClaimNow()) {
-		return errors.New("active task lease required")
+		detail := fmt.Sprintf("getclaim_err=%v", err)
+		if err == nil {
+			detail = fmt.Sprintf("task_match=%v status=%q expires=%q now=%v",
+				claim.TaskID == task.ID, claim.Status, claim.LeaseExpiresAt.Format(time.RFC3339Nano), projectControlClaimNow().Format(time.RFC3339Nano))
+		}
+		return fmt.Errorf("active task lease required (%s)", detail)
 	}
 	return nil
 }

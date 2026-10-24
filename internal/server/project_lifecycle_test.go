@@ -27,7 +27,7 @@ func setupTakeover(t *testing.T) (*Server, string, string) {
 	agent := agentTokenFor(t, srv, cookie)
 	_, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
 		state.Projects = append(state.Projects, projectControlProject{ID: "project-i2", Name: "I2", RepoPath: home, RowVersion: 1, Takeover: projectTakeover{Mode: "active"}, Lifecycle: projectLifecycle{State: "executing", MilestoneID: "M1"}, Milestones: []projectMilestone{{ID: "M1", Name: "First", Status: "current"}}})
-		state.Tasks = append(state.Tasks, projectControlTask{ID: "task-i2", ProjectID: "project-i2", Title: "Build", MilestoneID: "M1", State: "queued", DispatchState: "ready", AcceptanceCommand: []string{"/bin/true"}, RowVersion: 1})
+		state.Tasks = append(state.Tasks, projectControlTask{ID: "task-i2", ProjectID: "project-i2", Title: "Build", MilestoneID: "M1", State: "queued", DispatchState: "ready", Origin: "agent", AcceptanceCommand: []string{"/bin/true"}, RowVersion: 1})
 		return nil
 	})
 	if err != nil {
@@ -212,16 +212,23 @@ func TestI2StopRevokesOnlyProjectAndReleasesSessions(t *testing.T) {
 func TestI2AcceptanceAndAutomaticContinuation(t *testing.T) {
 	srv, _, agent := setupTakeover(t)
 	_, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
-		state.Tasks = append(state.Tasks, projectControlTask{ID: "next-task", ProjectID: "project-i2", MilestoneID: "M1", DispatchState: "ready", DependsOn: []string{"task-i2"}, AcceptanceCommand: []string{"/bin/true"}}, projectControlTask{ID: "no-command", ProjectID: "project-i2", MilestoneID: "M1", DispatchState: "ready"})
+		state.Tasks = append(state.Tasks, projectControlTask{ID: "next-task", ProjectID: "project-i2", MilestoneID: "M1", DispatchState: "ready", DependsOn: []string{"task-i2"}, AcceptanceCommand: []string{"/bin/true"}}, projectControlTask{ID: "no-command", ProjectID: "project-i2", MilestoneID: "M1", DispatchState: "ready", Origin: "agent"})
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	lease := i2Claim(t, srv, agent)
+	// 任务 i2 有依赖未通过,不可领;no-command 是人发起任务(无 origin),
+	// 新契约下无验收命令也可领——这里它还没轮到(i2 先被 release 后才轮到),
+	// 但依赖检查仍然挡住 i2 之前的手动领取。断言 other runtime 领不到 i2:
 	rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agent, `{"runtimeId":"other","agentLabel":"Hermes"}`)
-	if rec.Code != 204 {
-		t.Fatalf("dependency or no-command bypassed: %d", rec.Code)
+	if rec.Code == 200 {
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		if body["taskId"] == "task-i2" {
+			t.Fatalf("dependency bypassed: %d %s", rec.Code, rec.Body.String())
+		}
 	}
 	rec = agentAPIPost(t, srv, "/api/agent/v1/release", agent, `{"leaseId":"`+lease+`","outcome":"done"}`)
 	if rec.Code != 200 {
@@ -239,6 +246,47 @@ func TestI2AcceptanceAndAutomaticContinuation(t *testing.T) {
 	noCommand, _ := controlTask(i2State(t, srv), "no-command")
 	if noCommand.DispatchState != "ready" {
 		t.Fatal(noCommand)
+	}
+}
+
+// 新契约: 人发起(无 origin)且无验收命令的任务可领——release 直接算验收。
+func TestI2NoCommandHumanTaskClaimableAndAccepted(t *testing.T) {
+	srv, _, agent := setupTakeover(t)
+	_, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		// task-i2 已被 setup 标为 agent 发起;让它暂不可领,保证本次领到目标任务。
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == "task-i2" {
+				state.Tasks[i].DispatchState = "none"
+			}
+		}
+		state.Tasks = append(state.Tasks, projectControlTask{ID: "human-no-command", ProjectID: "project-i2", MilestoneID: "M1", DispatchState: "ready"})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := ""
+	rec := agentAPIPost(t, srv, "/api/agent/v1/claim", agent, `{"runtimeId":"r","agentLabel":"Hermes"}`)
+	if rec.Code == 200 {
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		lease, _ = body["leaseId"].(string)
+		if body["taskId"] != "human-no-command" {
+			t.Fatalf("claimed %v, want human-no-command", body["taskId"])
+		}
+	} else if rec.Code != 204 {
+		t.Fatalf("claim = %d", rec.Code)
+	}
+	if lease == "" {
+		t.Fatal("no-command human task was not claimable")
+	}
+	rec = agentAPIPost(t, srv, "/api/agent/v1/release", agent, `{"leaseId":"`+lease+`","outcome":"done"}`)
+	if rec.Code != 200 {
+		t.Fatalf("release without acceptance command = %d %s", rec.Code, rec.Body.String())
+	}
+	task, _ := controlTask(i2State(t, srv), "human-no-command")
+	if !task.AcceptancePassed || task.State != "execution_complete" {
+		t.Fatalf("no-command task not accepted: %+v", task)
 	}
 }
 

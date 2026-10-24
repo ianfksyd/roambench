@@ -372,19 +372,26 @@ func (s *projectControlStore) agentTaskPayloadForTaskID(username, taskID string)
 		if p, ok := findProjectControlRunbookPhase(runbook, task.CurrentPhase); ok {
 			phase = p
 		}
+		// The workspace is where the runtime should do the work: the
+		// project's repo path, resolved like every other consumer does.
+		workspace := ""
+		if dir, err := s.controlledProjectDir(state, task); err == nil {
+			workspace = dir
+		}
 		return map[string]interface{}{
 			"title":              task.Title,
 			"acceptanceCommand":  task.AcceptanceCommand,
 			"resumeCheckpointId": task.ResumeCheckpointID,
 			"resumeCheckpoint":   checkpointPayload(state, task.ResumeCheckpointID),
 			"restart":            task.Restart,
-			"goal":               task.Goal,
-			"state":              task.State,
-			"currentPhase":       task.CurrentPhase,
-			"runbookState":       task.RunbookState,
-			"requiredArtifacts":  phase.RequiredArtifacts,
-			"missingEvidence":    task.MissingEvidence,
-			"nextStep":           task.NextStep,
+			"goal":               task.Goal, "state": task.State,
+			"currentPhase":      task.CurrentPhase,
+			"runbookState":      task.RunbookState,
+			"requiredArtifacts": phase.RequiredArtifacts,
+			"missingEvidence":   task.MissingEvidence,
+			"nextStep":          task.NextStep,
+			"workspace":         workspace,
+			"projectId":         task.ProjectID,
 			// The canonical project memory travels with the task, so an agent
 			// reads the shared facts instead of re-deriving them.
 			"projectMemory": projectMemoryPayload(state, task.ProjectID),

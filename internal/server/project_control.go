@@ -2327,7 +2327,9 @@ func projectControlTaskOrigin(origin string) string {
 
 // projectControlTaskClaimable reports whether a task may be picked up by an
 // agent runtime. A task raised by a human is dispatched automatically, so a
-// dispatch gate left over from an earlier policy does not block it.
+// dispatch gate left over from an earlier policy does not block it. An empty
+// or "none" dispatch state is NOT claimable: tasks that never entered the
+// dispatch pipeline must go through it (sync) first.
 func projectControlTaskClaimable(state projectControlState, task projectControlTask) bool {
 	if task.DispatchState == controlplane.DispatchStateReady {
 		return true
@@ -2335,8 +2337,7 @@ func projectControlTaskClaimable(state projectControlState, task projectControlT
 	if projectControlTaskNeedsDispatchApproval(task) {
 		return false
 	}
-	return task.DispatchState == "" || task.DispatchState == controlplane.DispatchStateNone ||
-		task.DispatchState == controlplane.DispatchStateAwaitingApproval
+	return task.DispatchState == controlplane.DispatchStateAwaitingApproval
 }
 
 // projectControlTaskNeedsDispatchApproval reports whether a task waits for a
@@ -4532,6 +4533,67 @@ func projectControlCompactState(state *projectControlState) {
 	projectControlStripDerivedTaskFields(state)
 }
 
+// resolveStaleDispatchGatesLocked auto-approves pending dispatch checkpoints
+// of human-raised tasks and reports whether anything changed. It runs after
+// hydration, so a gate persisted before automatic dispatch existed is cleared
+// from the state and the control plane on the next load.
+func (s *projectControlStore) resolveStaleDispatchGatesLocked(username string, state *projectControlState) bool {
+	originByTask := map[string]string{}
+	for i := range state.Tasks {
+		originByTask[state.Tasks[i].ID] = strings.TrimSpace(state.Tasks[i].Origin)
+	}
+	changed := false
+	now := time.Now().UTC().Format(time.RFC3339)
+	for i := range state.Checkpoints {
+		checkpoint := &state.Checkpoints[i]
+		if checkpoint.Kind != "dispatch" || checkpoint.Status != "pending" {
+			continue
+		}
+		if originByTask[checkpoint.TaskID] == "agent" {
+			continue // agent-raised: the gate is real, leave it pending
+		}
+		checkpoint.Status = "approved"
+		checkpoint.AllowedActions = []string{}
+		checkpoint.DecisionSummary = "Dispatch approved automatically (task raised by a human)."
+		checkpoint.RowVersion++
+		changed = true
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "checkpoint-auto-approved-dispatch"),
+			Timestamp:    now,
+			Actor:        "policy_engine",
+			Action:       "checkpoint_approved",
+			Detail:       "Dispatch approval granted automatically because the task was raised by a human.",
+			TaskID:       checkpoint.TaskID,
+			CheckpointID: checkpoint.ID,
+		})
+		if s.controlPlane != nil {
+			// Resolve the persisted interaction too, so hydration cannot
+			// resurrect the pending gate on the next load. Best effort: the
+			// in-memory resolution above already unblocks claiming.
+			if interaction, err := s.controlPlane.GetInteraction(context.Background(), username, checkpoint.ID); err == nil && interaction.Status == "pending" {
+				_, _, _ = s.controlPlane.Respond(context.Background(), username, checkpoint.ID, controlplane.RespondInput{
+					Action: "approve", Actor: "policy_engine", DeviceID: "policy",
+					ExpectedRowVersion: interaction.RowVersion, InputHash: interaction.InputHash,
+					IdempotencyKey: "auto-dispatch-" + checkpoint.ID,
+				})
+			}
+		}
+	}
+	for i := range state.Tasks {
+		task := &state.Tasks[i]
+		if originByTask[task.ID] == "agent" {
+			continue
+		}
+		if task.DispatchState != controlplane.DispatchStateAwaitingApproval {
+			continue
+		}
+		task.DispatchState = controlplane.DispatchStateReady
+		task.RowVersion++
+		changed = true
+	}
+	return changed
+}
+
 func (s *projectControlStore) loadOrSeed(username string) (projectControlState, error) {
 	if strings.TrimSpace(username) == "" {
 		return projectControlState{}, errors.New("missing username")
@@ -4547,6 +4609,14 @@ func (s *projectControlStore) loadOrSeed(username string) (projectControlState, 
 	if exists {
 		if err := s.hydrateApprovalsLocked(username, &state); err != nil {
 			return projectControlState{}, err
+		}
+		// Dispatch policy on load: a gate left over from before the task was
+		// classified (or before automatic dispatch existed) is resolved here,
+		// so a human-raised task never shows a stale "awaiting approval".
+		if resolved := s.resolveStaleDispatchGatesLocked(username, &state); resolved {
+			if err := s.saveLocked(username, state); err != nil {
+				return projectControlState{}, err
+			}
 		}
 		return state, nil
 	}
