@@ -93,6 +93,23 @@ The plan and apply requests take the profile in the body:
 An empty profile falls back to `[agent.gateway]` from the instance
 configuration.
 
+## Local task worker
+
+The setup wizard configures the executor; the **local worker** is what
+actually runs tasks:
+
+```bash
+export ROAMBENCH_URL=http://localhost:3000
+export ROAMBENCH_TOKEN=<agent-token>
+roambench-worker                      # executor from config, default claude
+```
+
+Each claimed task runs in a terminal session created through the server, so
+the web UI can attach to it and show exactly what the executor is doing.
+Flags: `-executor`, `-model`, `-poll`, `-max-runtime`, `-executor-args`
+(off by default — permission bypass flags are the operator's explicit
+choice).
+
 ## What it deliberately does not do
 
 - It does not install an agent. The wizard prints the command; the user runs
