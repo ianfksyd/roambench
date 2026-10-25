@@ -1,4 +1,4 @@
-.PHONY: build build-pam build-agent run clean hash-password release-packages
+.PHONY: build build-pam build-agent build-worker run clean hash-password release-packages
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
 LDFLAGS ?= -X main.version=$(VERSION)
@@ -8,6 +8,9 @@ build:
 
 build-agent:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o roambench-agent ./cmd/roambench-agent
+
+build-worker:
+	go build -trimpath -ldflags "$(LDFLAGS)" -o roambench-worker ./cmd/roambench-worker
 
 build-all: build build-agent
 
