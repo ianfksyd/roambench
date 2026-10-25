@@ -152,7 +152,13 @@ func validateTaskContract(state projectControlState, task projectControlTask) er
 func taskDependenciesPassed(state projectControlState, task projectControlTask) bool {
 	for _, id := range task.DependsOn {
 		dep, ok := controlTask(state, id)
-		if !ok || dep.DispatchState != "done" || !dep.AcceptancePassed || dep.PauseReason != "" {
+		if !ok || dep.PauseReason != "" || dep.DispatchState != "done" {
+			return false
+		}
+		// A dependency without an acceptance command is accepted on the
+		// runtime's own release (execution done is the gate). A dependency
+		// WITH a command must have actually passed verification.
+		if len(dep.AcceptanceCommand) > 0 && !dep.AcceptancePassed {
 			return false
 		}
 	}
@@ -456,8 +462,7 @@ func (s *projectControlStore) revokeClosedClaims(username string, state projectC
 		return nil
 	}
 	for _, t := range state.Tasks {
-		p, _ := controlProject(state, t.ProjectID)
-		if t.PauseReason == "" && p.Takeover.Mode != "manual" && p.Takeover.Mode != "paused" {
+		if !projectControlExecutionClosed(state, t) {
 			continue
 		}
 		if err := claims.RevokeTaskClaims(context.Background(), username, t.ID); err != nil {
@@ -465,6 +470,27 @@ func (s *projectControlStore) revokeClosedClaims(username string, state projectC
 		}
 	}
 	return nil
+}
+
+// projectControlExecutionClosed reports whether a task's execution entrance
+// is closed and its lease must be revoked. A human-raised task stays live in
+// a manual project — manual mode alone must not revoke the lease that the
+// auto-dispatch policy just granted (P0a: this predicate previously revoked
+// every lease in manual projects, breaking claiming inside the same request).
+func projectControlExecutionClosed(state projectControlState, t projectControlTask) bool {
+	if t.PauseReason != "" {
+		return true
+	}
+	if t.DispatchState == "released" || t.State == "cancelled" {
+		return true
+	}
+	p, _ := controlProject(state, t.ProjectID)
+	if p.Takeover.Mode == "manual" || p.Takeover.Mode == "paused" {
+		// Only agent-raised tasks are gated behind manual mode; human-raised
+		// ones were dispatched automatically and stay live.
+		return projectControlTaskNeedsDispatchApproval(t)
+	}
+	return false
 }
 
 var errProjectNotUnderTakeover = errors.New("project is not under takeover")

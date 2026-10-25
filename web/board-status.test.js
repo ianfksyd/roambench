@@ -6,23 +6,25 @@ const at = minute => new Date(Date.UTC(2026, 9, 17, 9, minute)).toISOString();
 
 test('task states map to the eight labels and existing color tones', () => {
     const cases = [
-        [{state:'planned'}, 'planning', 'neutral'],
-        [{state:'waiting_review'}, 'approval', 'warning'],
-        [{state:'queued',dispatchState:'ready'}, 'ready', 'neutral'],
-        [{state:'running'}, 'running', 'info'],
-        [{state:'running',pauseReason:'human decision'}, 'paused', 'warning'],
-        [{state:'execution_complete'}, 'completed', 'success'],
-        [{state:'blocked'}, 'blocked', 'danger'],
-        [{state:'failed'}, 'failed', 'danger']
+        [{state:'planned'}, 'planning', 'neutral', 0],
+        [{state:'waiting_review'}, 'approval', 'warning', 1],
+        [{state:'queued',dispatchState:'ready'}, 'ready', 'neutral', 2],
+        [{state:'running'}, 'running', 'info', 3],
+        [{state:'running',pauseReason:'human decision'}, 'paused', 'warning', 4],
+        [{state:'running',dispatchState:'unverified'}, 'unverified', 'warning', 5],
+        [{state:'cancelled'}, 'cancelled', 'neutral', 6],
+        [{state:'execution_complete'}, 'completed', 'success', 7],
+        [{state:'blocked'}, 'blocked', 'danger', 8],
+        [{state:'failed'}, 'failed', 'danger', 9]
     ];
-    cases.forEach(([task,status,tone],index) => {
+    cases.forEach(([task,status,tone,rank]) => {
         assert.equal(board.taskStatus(task), status);
         assert.equal(board.taskStatusTone(status), tone);
-        assert.equal(board.taskStatusRank(status), index);
+        assert.equal(board.taskStatusRank(status), rank);
     });
     assert.equal(board.taskStatus(null), 'unknown');
     assert.equal(board.taskStatusTone('unrecognized'), 'neutral');
-    assert.equal(board.taskStatusRank('unrecognized'), 8);
+    assert.equal(board.taskStatusRank('unrecognized'), 10);
 });
 
 test('planning, dispatch and approval signals do not mislabel a draftless task as a finished plan', () => {
@@ -45,7 +47,7 @@ test('human gates, pauses, failures and completion have explicit precedence', ()
     assert.equal(board.taskStatus({id:'t',state:'running',pauseReason:'stop'},snapshot), 'paused');
     assert.equal(board.taskStatus({id:'t',state:'failed',dispatchState:'claimed'},snapshot), 'failed');
     assert.equal(board.taskStatus({id:'t',state:'blocked',dispatchState:'ready'},snapshot), 'blocked');
-    assert.equal(board.taskStatus({state:'cancelled'}), 'paused');
+    assert.equal(board.taskStatus({state:'cancelled'}), 'cancelled');
 });
 
 test('task timestamps use real observations and ignore invalid and unrelated data', () => {

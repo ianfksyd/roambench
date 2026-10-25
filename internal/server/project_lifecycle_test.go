@@ -284,9 +284,13 @@ func TestI2NoCommandHumanTaskClaimableAndAccepted(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("release without acceptance command = %d %s", rec.Code, rec.Body.String())
 	}
+	// P0a 契约：无验收命令的完成 = 执行成功，验证未完成。
 	task, _ := controlTask(i2State(t, srv), "human-no-command")
-	if !task.AcceptancePassed || task.State != "execution_complete" {
-		t.Fatalf("no-command task not accepted: %+v", task)
+	if task.State != "execution_complete" || task.DispatchState != "done" {
+		t.Fatalf("no-command task execution incomplete: %+v", task)
+	}
+	if task.AcceptancePassed || task.AcceptanceStatus != "not_ready" {
+		t.Fatalf("no-command task must stay unverified: %+v", task)
 	}
 }
 

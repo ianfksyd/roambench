@@ -2852,7 +2852,25 @@ func (s *projectControlStore) snapshotForUser(username string, terminals *termin
 	if err != nil {
 		return projectControlSnapshot{}, err
 	}
-	return buildProjectControlSnapshot(state, username, terminals), nil
+	snapshot := buildProjectControlSnapshot(state, username, terminals)
+	// Snapshot-only projection: a task left in "claimed" whose lease has
+	// vanished (legacy data from before the claiming fixes) must not be
+	// presented as live execution. Not persisted, so no migration is needed.
+	if claims := s.claimStoreFor(); claims != nil {
+		ctx := context.Background()
+		for i := range snapshot.Tasks {
+			t := &snapshot.Tasks[i]
+			if t.DispatchState != "claimed" {
+				continue
+			}
+			claim, err := claims.ActiveClaimForTask(ctx, username, t.ID)
+			if err != nil || claim.Status != "active" {
+				t.DispatchState = "unverified"
+				t.RecentSummary = "执行状态待核验：租约已丢失（历史遗留数据）。"
+			}
+		}
+	}
+	return snapshot, nil
 }
 
 func (s *projectControlStore) createProject(username string, req projectControlProjectCreateRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {

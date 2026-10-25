@@ -62,9 +62,10 @@ func (s *projectControlStore) releaseManagedTask(username string, req agentRelea
 
 	var runErr error
 	if req.Outcome == "done" {
-		// No acceptance command means no automatic verification: the runtime's
-		// own release is the acceptance. This must run before the workspace and
-		// baseline checks, which assume a command exists.
+		// No acceptance command means no automatic verification: execution
+		// success and verification are tracked separately. The lease must be
+		// active and unexpired — ReleaseClaim enforces that and any failure
+		// (duplicate, stale, expired) is surfaced to the caller.
 		if len(task.AcceptanceCommand) == 0 {
 			var fastDispatch string
 			_, err = s.withStateLocked(username, func(state *projectControlState) error {
@@ -73,39 +74,18 @@ func (s *projectControlStore) releaseManagedTask(username string, req agentRelea
 					if t.ID != task.ID {
 						continue
 					}
-					// ReleaseClaim validates that the lease is active and
-					// unexpired. When the lease row is already gone (expired
-					// by a sweep, or released by an earlier duplicate call)
-					// the release still counts: the runtime holds the agent
-					// token, and leaving the task in "claimed" over bookkeeping
-					// is worse than accepting the reported outcome.
-					lease, leaseErr := claims.GetClaim(context.Background(), username, req.LeaseID)
 					if _, err := claims.ReleaseClaim(context.Background(), username, req.LeaseID, "done"); err != nil {
-						if leaseErr != nil || lease.Status != "active" {
-							t.AcceptancePassed, t.AcceptanceFailures = true, 0
-							t.DispatchState, t.ClaimedByRuntimeID = "done", ""
-							t.State = "execution_complete"
-							t.AcceptanceStatus = "accepted"
-							appendControlEvent(state, t.ProjectID, t.ID, "acceptance_passed", "Task released as done; the lease had already been closed, the runtime's completion is the acceptance.")
-							advanceMilestoneReview(state, t.ProjectID)
-							fastDispatch = t.DispatchState
-							t.RowVersion++
-							return nil
-						}
-						if diag, derr := claims.GetClaim(context.Background(), username, req.LeaseID); derr == nil {
-							log.Printf("release diag for %s: claim status=%q expires=%v err=%v", req.LeaseID, diag.Status, diag.LeaseExpiresAt, err)
-						} else {
-							log.Printf("release diag for %s: getclaim err=%v original=%v", req.LeaseID, derr, err)
+						if errors.Is(err, controlplane.ErrNotFound) {
+							return fmt.Errorf("%w: lease not found, released or expired", controlplane.ErrNotFound)
 						}
 						return err
 					}
-					_ = lease
-					t.AcceptancePassed, t.AcceptanceFailures = true, 0
+					// Execution success only: without an acceptance command the
+					// task is NOT marked verified (AcceptancePassed stays false).
 					t.DispatchState, t.ClaimedByRuntimeID = "done", ""
 					t.State = "execution_complete"
-					t.AcceptanceStatus = "accepted"
-					appendControlEvent(state, t.ProjectID, t.ID, "acceptance_passed", "Task released as done without an acceptance command; the runtime's own completion is the acceptance.")
-					advanceMilestoneReview(state, t.ProjectID)
+					t.AcceptanceStatus = "not_ready"
+					appendControlEvent(state, t.ProjectID, t.ID, "execution_released_done", "Task released as done without an acceptance command; execution succeeded, verification is pending.")
 					fastDispatch = t.DispatchState
 					t.RowVersion++
 					return nil
@@ -113,10 +93,13 @@ func (s *projectControlStore) releaseManagedTask(username string, req agentRelea
 				return controlplane.ErrNotFound
 			})
 			if err != nil {
+				if errors.Is(err, controlplane.ErrNotFound) {
+					return http.StatusNotFound, nil, errors.New("lease not found, released or expired"), true
+				}
 				log.Printf("release without acceptance command failed for %s: %v", task.ID, err)
 				return http.StatusConflict, nil, err, true
 			}
-			return 200, map[string]interface{}{"leaseId": req.LeaseID, "taskId": task.ID, "dispatchState": fastDispatch, "acceptancePassed": true}, nil, true
+			return 200, map[string]interface{}{"leaseId": req.LeaseID, "taskId": task.ID, "dispatchState": fastDispatch, "acceptancePassed": false, "verified": false}, nil, true
 		}
 		p, _ := controlProject(state, task.ProjectID)
 		dir := p.RepoPath

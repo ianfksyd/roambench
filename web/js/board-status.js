@@ -17,6 +17,8 @@
     function taskStatus(task, snapshot) {
         task = task || {}; snapshot = snapshot || {};
         if (task.state === 'failed') return 'failed';
+        if (task.state === 'cancelled') return 'cancelled';
+        if (task.dispatchState === 'unverified') return 'unverified';
         if (task.state === 'blocked') return 'blocked';
         if (task.state === 'archived' || task.state === 'completed') return 'completed';
         if (task.pauseReason || task.state === 'paused' || task.state === 'cancelled') return 'paused';
@@ -36,13 +38,14 @@
     }
 
     function taskStatusRank(status) {
-        var index = ['planning', 'approval', 'ready', 'running', 'paused', 'completed', 'blocked', 'failed'].indexOf(status);
-        return index < 0 ? 8 : index;
+        var index = ['planning', 'approval', 'ready', 'running', 'paused', 'unverified', 'cancelled', 'completed', 'blocked', 'failed'].indexOf(status);
+        return index < 0 ? 10 : index;
     }
 
     function taskStatusTone(status) {
         return { planning: 'neutral', approval: 'warning', ready: 'neutral', running: 'info',
-            paused: 'warning', completed: 'success', blocked: 'danger', failed: 'danger' }[status] || 'neutral';
+            paused: 'warning', unverified: 'warning', cancelled: 'neutral', completed: 'success',
+            blocked: 'danger', failed: 'danger' }[status] || 'neutral';
     }
 
     // Legacy tasks lack createdAt/updatedAt. Use timestamped task observations,
