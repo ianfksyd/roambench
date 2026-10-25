@@ -1,7 +1,7 @@
 # 任务工作台：审查结论与实施方案
 
 日期：2026-10-25  
-状态：P0a、P0b 核心、P1 进展卡、P2 面板回答、P3 分支/综合、P4 受控并发+流程视图已实施。终端→Panel 自动交接（P1 terminal handoff，方案见 /data/roambench-terminal-review-handoff-8040131.md）已实施：复制/粘贴行为自动建审查卡并补 reviews 来源关系、未登记来源终端自动补登记、来源关系展示与事后撤销（任务详情 + GET /api/source-links + DELETE /api/source-links/{id}）、流程视图关系列表；不做确认弹窗，不打断输入。worktree 自动隔离未做（同 repo 写互斥由 sharedDirectoryConflict 保护）；拖线编辑未做；流程图为关系列表而非 SVG 连线。——`internal/localruntime`（Claude `-p --output-format stream-json` 适配器：真实退出码完成判定、事件解析、进程组 Stop、观察窗转写）替代 send-keys/pane-guess 路径；worker 心跳丢失即停执行器；`permission_mode` 可配（默认 acceptEdits，绕过参数须部署者显式选择）。P0b 其余（execution 表、重启对账、暂停协议）与 P1–P4 未实施。
+状态：P0a、P0b 核心、P1 进展卡、P2 面板回答、P3 分支/综合、P4 受控并发+流程视图已实施。终端→Panel 自动交接（P1 terminal handoff，方案见 /data/roambench-terminal-review-handoff-8040131.md）已实施（e569f73 复核后重做提交边界）：复制记录来源，粘贴只记 pending 交接不建卡；已验证的提交事件（agent register-task）建目标卡并把 pending 提升为 reviews 来源关系；未登记来源终端在关系写入前持久补登记；来源/目标终端实时校验；粘贴不伪造复制、同终端不匹配、并发粘贴按 (用户,目标终端,内容) 唯一去重、同来源新选区覆盖快照；来源关系展示与事后撤销（任务详情 + GET /api/source-links + DELETE /api/source-links/{id}）、流程视图关系列表；不做确认弹窗，不打断输入。worktree 自动隔离未做（同 repo 写互斥由 sharedDirectoryConflict 保护）；拖线编辑未做；流程图为关系列表而非 SVG 连线。——`internal/localruntime`（Claude `-p --output-format stream-json` 适配器：真实退出码完成判定、事件解析、进程组 Stop、观察窗转写）替代 send-keys/pane-guess 路径；worker 心跳丢失即停执行器；`permission_mode` 可配（默认 acceptEdits，绕过参数须部署者显式选择）。P0b 其余（execution 表、重启对账、暂停协议）与 P1–P4 未实施。
 
 ## 1. 产品目标与审查结论
 

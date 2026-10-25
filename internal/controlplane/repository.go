@@ -312,6 +312,40 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, CURRENT_
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS pending_handoffs (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  source_task_id TEXT NOT NULL DEFAULT '',
+  source_terminal TEXT NOT NULL DEFAULT '',
+  target_terminal TEXT NOT NULL DEFAULT '',
+  fingerprint TEXT NOT NULL,
+  snapshot TEXT NOT NULL DEFAULT '',
+  copy_id TEXT NOT NULL DEFAULT '',
+  promoted_task_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS pending_handoffs_target_idx ON pending_handoffs(username, target_terminal, promoted_task_id);
+-- One active pending handoff per (user, target terminal, content): a
+-- repeated paste never multiplies the provenance. Promoted rows keep their
+-- history, so the constraint only covers not-yet-promoted rows.
+DELETE FROM pending_handoffs WHERE promoted_task_id='' AND id NOT IN (
+  SELECT id FROM (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY username, target_terminal, fingerprint ORDER BY created_at DESC) AS rn
+    FROM pending_handoffs WHERE promoted_task_id=''
+  ) WHERE rn = 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pending_handoffs_active_uniq
+  ON pending_handoffs(username, target_terminal, fingerprint) WHERE promoted_task_id='';
+-- The (target, source, relation) pair must be unique; drop historical
+-- duplicates (newest wins) before the unique index can be created.
+DELETE FROM task_source_refs WHERE id NOT IN (
+  SELECT id FROM (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY username, target_task_id, source_task_id, relation ORDER BY created_at DESC) AS rn
+    FROM task_source_refs
+  ) WHERE rn = 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS task_source_refs_pair_uniq ON task_source_refs(username, target_task_id, source_task_id, relation);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, CURRENT_TIMESTAMP);
 `
 
 func Open(path string) (*Repository, error) {
@@ -342,11 +376,31 @@ func Open(path string) (*Repository, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := migrateHandoffColumns(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if err := os.Chmod(path, 0600); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &Repository{db: db}, nil
+}
+
+// migrateHandoffColumns adds columns that cannot live in the idempotent
+// schema blob because ALTER TABLE has no IF NOT EXISTS form.
+func migrateHandoffColumns(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('task_source_refs') WHERE name='copy_id'`).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err := db.Exec(`ALTER TABLE task_source_refs ADD COLUMN copy_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *Repository) Close() error {

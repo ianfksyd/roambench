@@ -3314,6 +3314,16 @@
     }
 
     // Resolve the terminal session id for a terminal record or xterm instance.
+    var handoffReportChain = Promise.resolve();
+
+    // Serialize handoff reports: the copy report of a selection must reach
+    // the server before the paste report that matches it.
+    function queueHandoffReport(run) {
+        var next = handoffReportChain.then(run, run);
+        handoffReportChain = next.catch(function() {});
+        return next;
+    }
+
     function terminalIdOf(record, term) {
         for (var id in state.terminals) {
             var entry = state.terminals[id];
@@ -3325,19 +3335,26 @@
     }
 
     function reportHandoffCopy(terminalId, text) {
-        fetchJSON('/api/terminal-handoff/copy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ terminalId: terminalId, text: text })
+        queueHandoffReport(function() {
+            return fetchJSON('/api/terminal-handoff/copy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ terminalId: terminalId, text: text })
+            });
         }).catch(function() { /* best-effort */ });
     }
 
     function reportHandoffPaste(terminal, text) {
-        return fetchJSON('/api/terminal-handoff/paste', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ terminalId: terminalIdOf(terminal, terminal && terminal.term), text: text })
+        return queueHandoffReport(function() {
+            return fetchJSON('/api/terminal-handoff/paste', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ terminalId: terminalIdOf(terminal, terminal && terminal.term), text: text })
+            });
         }).then(function(data) {
+            // A paste alone never opens a card: provenance is stored, and the
+            // card appears when the goal is actually submitted. A supplement
+            // onto an already-running task is surfaced immediately.
             if (data && data.matched && data.taskId) {
                 document.dispatchEvent(new CustomEvent('roambench:handoff', {
                     detail: { taskId: data.taskId, sourceTaskId: data.sourceTaskId || '' }
@@ -3429,6 +3446,7 @@
 
         event.preventDefault();
         event.clipboardData.setData('text/plain', selection);
+        reportHandoffCopy(terminalIdOf(terminal, terminal.term), selection);
         if (terminal.term && typeof terminal.term.clearSelection === 'function') {
             terminal.term.clearSelection();
         }
@@ -3456,6 +3474,9 @@
 
         event.preventDefault();
         sendTerminalSequence(terminal, text);
+        if (text.trim()) {
+            reportHandoffPaste(terminal, text);
+        }
     }
 
     function handleGlobalTerminalClipboardShortcut(event) {

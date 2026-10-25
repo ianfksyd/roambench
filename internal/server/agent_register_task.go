@@ -106,6 +106,12 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	// A validated submission event: promote handoffs pasted onto this
+	// terminal while it had no task of its own.
+	if live != nil {
+		s.promotePendingHandoffs(r.Context(), username, live.ID, created.ID)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"taskId":     created.ID,
 		"projectId":  created.ProjectID,

@@ -1,23 +1,32 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/ianf339/roambench/internal/controlplane"
+	"github.com/ianf339/roambench/internal/terminal"
 )
 
-// Terminal handoff: automatic cross-terminal task registration driven by
-// copy/paste behaviour. No confirmation dialogs, no extra clicks — the
-// operator copies from one agent terminal, pastes into another and submits
-// the goal; the review card and its source link appear on the board.
+// Terminal handoff: automatic cross-terminal provenance driven by
+// copy/paste behaviour. No confirmation dialogs, no extra clicks — but
+// also no fabricated work: a copy records provenance, a paste records a
+// pending handoff, and only a validated submission event (agent
+// register-task on the target terminal) creates the task card and promotes
+// the pending handoff to a source relationship. Mistakes are correctable
+// after the fact via the source-links delete endpoint.
 //
-// Boundaries: copy alone records provenance only; paste alone matches and
-// links; the review task is created at most once per source+target pair and
-// never as a running execution. Mistakes are correctable after the fact via
-// the source-links delete endpoint.
+// Boundaries enforced here:
+//   - terminalId must be a live session of the requesting user (source and
+//     target alike); unknown terminals are rejected, never invented.
+//   - an unmatched paste records nothing — a paste cannot forge a copy, so
+//     repeated pastes of external text never acquire a phantom source.
+//   - a paste from the same terminal never matches its own copy.
+//   - a paste onto a terminal without a task changes nothing visible until
+//     the operator actually submits the goal on that terminal.
 
 // pasteMatchLookback bounds how far back a paste can match a copy.
 const pasteMatchLookback = 30 * time.Minute
@@ -32,6 +41,24 @@ type handoffCopyRequest struct {
 type handoffPasteRequest struct {
 	TerminalID string `json:"terminalId"`
 	Text       string `json:"text"`
+}
+
+// handoffTerminal resolves a terminal the user actually owns. A missing or
+// foreign session is an error, never a silently accepted guess.
+func (s *Server) handoffTerminal(username, terminalID string) (terminal.SessionInfo, int, string) {
+	terminalID = strings.TrimSpace(terminalID)
+	if terminalID == "" {
+		return terminal.SessionInfo{}, http.StatusBadRequest, "terminalId is required"
+	}
+	if s.terminals == nil {
+		return terminal.SessionInfo{}, http.StatusServiceUnavailable, "terminal runtime unavailable"
+	}
+	for _, info := range s.terminals.ListSessions(username) {
+		if info.ID == terminalID {
+			return info, http.StatusOK, ""
+		}
+	}
+	return terminal.SessionInfo{}, http.StatusNotFound, "terminal not found"
 }
 
 // handleHandoffCopy records a copy event with source attribution.
@@ -51,6 +78,11 @@ func (s *Server) handleHandoffCopy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "text is required"})
 		return
 	}
+	live, status, message := s.handoffTerminal(username, req.TerminalID)
+	if status != http.StatusOK {
+		writeJSON(w, status, map[string]string{"error": message})
+		return
+	}
 
 	// Resolve the task bound to the source terminal (if any).
 	state, err := s.projectControl.loadOrSeed(username)
@@ -58,10 +90,9 @@ func (s *Server) handleHandoffCopy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	sourceTaskID := taskIDForTerminalInState(state, strings.TrimSpace(req.TerminalID))
+	sourceTaskID := taskIDForTerminalInState(state, live.ID)
 
-	copyRecord, err := s.controlPlane.RecordTerminalCopy(r.Context(), username,
-		strings.TrimSpace(req.TerminalID), sourceTaskID, req.Text)
+	copyRecord, err := s.controlPlane.RecordTerminalCopy(r.Context(), username, live.ID, sourceTaskID, req.Text)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -72,8 +103,10 @@ func (s *Server) handleHandoffCopy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleHandoffPaste matches a paste against recent copies and creates or
-// links the review task.
+// handleHandoffPaste matches a paste against recent copies and records the
+// provenance — a source reference on an already-registered target task, or
+// a pending handoff that a later submission event will promote. It never
+// creates a task card by itself.
 func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -90,53 +123,59 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "text is required"})
 		return
 	}
-
-	state, err := s.projectControl.loadOrSeed(username)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	live, status, message := s.handoffTerminal(username, req.TerminalID)
+	if status != http.StatusOK {
+		writeJSON(w, status, map[string]string{"error": message})
 		return
 	}
-	targetTerminal := strings.TrimSpace(req.TerminalID)
-	targetTaskID := taskIDForTerminalInState(state, targetTerminal)
 
-	match, matched, err := s.controlPlane.MatchTerminalPaste(r.Context(), username, req.Text, pasteMatchLookback)
+	match, matched, err := s.controlPlane.MatchTerminalPaste(r.Context(), username, req.Text, pasteMatchLookback, live.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	if !matched {
-		// Unmatched text (external or old clipboard): record the paste as a
-		// copy from this terminal so a later submission can still link it.
-		copyRecord, copyErr := s.controlPlane.RecordTerminalCopy(r.Context(), username,
-			targetTerminal, taskIDForTerminalInState(state, targetTerminal), req.Text)
-		if copyErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": copyErr.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"matched": false,
-			"copyId":  copyRecord.ID,
-		})
+		// External or stale text: nothing to link, and nothing to record —
+		// a paste must never impersonate a copy event.
+		writeJSON(w, http.StatusOK, map[string]interface{}{"matched": false})
 		return
 	}
 
 	sourceTaskID := match.TaskID
 	if sourceTaskID == "" {
-		// The source terminal was never registered as a task: register it now
-		// so the target is not an orphan card.
-		sourceTaskID = registerTaskForTerminalState(username, &state, match.TerminalID, match.CreatedAt)
+		// The copy came from a terminal that never became a task: register it
+		// now, persistently, so the relationship never points at a phantom.
+		sourceTaskID = s.registerTaskForTerminalPersisted(username, match.TerminalID)
+		if sourceTaskID == "" {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "source terminal no longer available; no source registered"})
+			return
+		}
 	}
 
-	// Target already has a task → supplement the source reference, never
-	// create a duplicate card per paste.
-	if targetTaskID != "" {
+	// The source task must actually exist in the persisted state before any
+	// relationship is written.
+	state, err := s.projectControl.loadOrSeed(username)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if _, ok := controlTask(state, sourceTaskID); !ok {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "source task does not exist"})
+		return
+	}
+
+	// Target already has a task → supplement the source reference with the
+	// newest referenced content; never create a duplicate card per paste.
+	if targetTaskID := taskIDForTerminalInState(state, live.ID); targetTaskID != "" {
 		ref, refErr := s.controlPlane.AddSourceRef(r.Context(), username, controlplane.SourceRef{
 			TargetTaskID:   targetTaskID,
 			SourceTaskID:   sourceTaskID,
 			Relation:       "reviews",
 			Snapshot:       match.Snapshot,
 			SourceTerminal: match.TerminalID,
-			TargetTerminal: targetTerminal,
+			TargetTerminal: live.ID,
+			CopyID:         match.ID,
 		})
 		if refErr != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": refErr.Error()})
@@ -152,46 +191,128 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No task on the target terminal yet: create the review card (planned,
-	// origin agent → waits in the approvals inbox; never auto-running).
-	sourceTitle := taskTitleInState(state, sourceTaskID)
-	createReq := projectControlTaskCreateRequest{
-		ProjectID:    projectIDOfTask(state, sourceTaskID),
-		WorkstreamID: workstreamIDOfTask(state, sourceTaskID),
-		Title:        "审查: " + firstNonEmpty(sourceTitle, sourceTaskID),
-		Goal:         "审查来自 " + firstNonEmpty(sourceTitle, sourceTaskID) + " 的内容快照",
-		Origin:       "agent",
-	}
-	snapshot, err := s.projectControl.createTask(username, createReq, s.terminals)
+	// No task on the target terminal yet: record the pending handoff. It
+	// becomes a source relationship when the goal is actually submitted.
+	pending, err := s.controlPlane.RecordPendingHandoff(r.Context(), username, controlplane.PendingHandoff{
+		SourceTaskID:   sourceTaskID,
+		SourceTerminal: match.TerminalID,
+		TargetTerminal: live.ID,
+		Fingerprint:    match.Fingerprint,
+		Snapshot:       match.Snapshot,
+		CopyID:         match.ID,
+	})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	targetTaskID = snapshot.CreatedTaskID
-	ref, refErr := s.controlPlane.AddSourceRef(r.Context(), username, controlplane.SourceRef{
-		TargetTaskID:   targetTaskID,
-		SourceTaskID:   sourceTaskID,
-		Relation:       "reviews",
-		Snapshot:       match.Snapshot,
-		SourceTerminal: match.TerminalID,
-		TargetTerminal: targetTerminal,
-	})
-	if refErr != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": refErr.Error()})
-		return
-	}
-	// Bind the paste target terminal to the new review task so the panel can
-	// attach to it.
-	if targetTerminal != "" {
-		s.projectControl.bindTaskTerminal(username, targetTaskID, targetTerminal, projectIDOfTask(state, sourceTaskID))
-	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"matched":      true,
-		"taskId":       targetTaskID,
+		"pending":      true,
 		"sourceTaskId": sourceTaskID,
-		"relation":     "reviews",
-		"refId":        ref.ID,
+		"copyId":       pending.CopyID,
 	})
+}
+
+// promotePendingHandoffs attaches every waiting handoff of a target
+// terminal to the task a validated submission event just confirmed, as
+// reviews source relationships. Best-effort: ref insertion is idempotent
+// and promotion is resumable, so a crash between the two writes retries
+// cleanly at the next submission.
+func (s *Server) promotePendingHandoffs(ctx context.Context, username, targetTerminal, targetTaskID string) {
+	if username == "" || targetTerminal == "" || targetTaskID == "" {
+		return
+	}
+	pendings, err := s.controlPlane.ListPendingHandoffs(ctx, username, targetTerminal)
+	if err != nil {
+		return
+	}
+	for _, pending := range pendings {
+		if pending.SourceTaskID == "" {
+			continue
+		}
+		if _, err := s.controlPlane.AddSourceRef(ctx, username, controlplane.SourceRef{
+			TargetTaskID:   targetTaskID,
+			SourceTaskID:   pending.SourceTaskID,
+			Relation:       "reviews",
+			Snapshot:       pending.Snapshot,
+			SourceTerminal: pending.SourceTerminal,
+			TargetTerminal: pending.TargetTerminal,
+			CopyID:         pending.CopyID,
+		}); err != nil {
+			continue
+		}
+		_ = s.controlPlane.MarkHandoffPromoted(ctx, username, pending.ID, targetTaskID)
+	}
+}
+
+// registerTaskForTerminalPersisted registers a live terminal as a planned
+// task in the persisted project state (the source side of a handoff whose
+// origin terminal was never registered). If the terminal already maps to a
+// task, that task is returned. Returns "" when the terminal is gone or has
+// no project context — the caller must then fail instead of inventing a
+// source.
+func (s *Server) registerTaskForTerminalPersisted(username, terminalID string) string {
+	if strings.TrimSpace(terminalID) == "" {
+		return ""
+	}
+	if _, status, _ := s.handoffTerminal(username, terminalID); status != http.StatusOK {
+		return ""
+	}
+	created := ""
+	_, err := s.projectControl.withStateLocked(username, func(state *projectControlState) error {
+		if existing := taskIDForTerminalInState(*state, terminalID); existing != "" {
+			created = existing
+			return nil
+		}
+		projectID := state.ActiveProjectID
+		workstreamID := ""
+		for _, ws := range state.Workstreams {
+			if ws.ProjectID == projectID {
+				workstreamID = ws.ID
+				break
+			}
+		}
+		if projectID == "" || workstreamID == "" {
+			return nil
+		}
+		title := "终端工作: " + terminalID
+		task := projectControlTask{
+			ID:               projectControlID("task", title),
+			ProjectID:        projectID,
+			WorkstreamID:     workstreamID,
+			Title:            title,
+			State:            "planned",
+			AcceptanceStatus: "not_ready",
+			Origin:           "agent",
+			SessionIDs:       []string{"session-live-" + terminalID},
+			CurrentPhase:     "plan",
+			MissingEvidence:  []string{},
+			FilesChanged:     []string{},
+			Timeline:         []projectControlEvent{},
+			Evidence:         []projectControlEvidence{},
+			Audit:            []projectControlAuditItem{},
+			RowVersion:       1,
+		}
+		if err := validateTaskContract(*state, task); err != nil {
+			return err
+		}
+		state.Tasks = append(state.Tasks, task)
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:        projectControlID("event", "terminal-registered"),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Actor:     "runtime",
+			Action:    "terminal_registered",
+			Detail:    "Terminal " + terminalID + " registered as a task (handoff source).",
+			ProjectID: projectID,
+			TaskID:    task.ID,
+		})
+		created = task.ID
+		return nil
+	})
+	if err != nil {
+		return ""
+	}
+	return created
 }
 
 // handleSourceLinksList lists the source relationships of a task.
@@ -228,39 +349,6 @@ func taskIDForTerminalInState(state projectControlState, terminalID string) stri
 	return ""
 }
 
-func taskTitleInState(state projectControlState, taskID string) string {
-	task, ok := controlTask(state, taskID)
-	if !ok {
-		return ""
-	}
-	return task.Title
-}
-
-func projectIDOfTask(state projectControlState, taskID string) string {
-	task, ok := controlTask(state, taskID)
-	if !ok {
-		return ""
-	}
-	return task.ProjectID
-}
-
-func workstreamIDOfTask(state projectControlState, taskID string) string {
-	task, ok := controlTask(state, taskID)
-	if !ok {
-		return ""
-	}
-	return task.WorkstreamID
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 // handleSourceLinkRoutes dispatches /api/source-links/{id} delete.
 func (s *Server) handleSourceLinkRoutes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
@@ -291,56 +379,4 @@ func (s *Server) handleSourceLinksListAll(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"refs": refs})
-}
-
-// registerTaskForTerminal registers the source terminal as a task when the
-// operator started work in a terminal that was never registered (P1 review:
-// the target must not become an orphan card). The source terminal keeps its
-// own binding; the created task stays planned until explicitly dispatched.
-func registerTaskForTerminalState(username string, state *projectControlState, terminalID, createdAt string) string {
-	// Resolve the active project and a workstream in it.
-	projectID := state.ActiveProjectID
-	workstreamID := ""
-	for _, ws := range state.Workstreams {
-		if ws.ProjectID == projectID {
-			workstreamID = ws.ID
-			break
-		}
-	}
-	if projectID == "" || workstreamID == "" {
-		return ""
-	}
-	terminalID = strings.TrimSpace(terminalID)
-	title := "终端工作: " + terminalID
-	task := projectControlTask{
-		ID:               projectControlID("task", title),
-		ProjectID:        projectID,
-		WorkstreamID:     workstreamID,
-		Title:            title,
-		State:            "planned",
-		AcceptanceStatus: "not_ready",
-		Origin:           "agent",
-		SessionIDs:       []string{"session-live-" + terminalID},
-		CurrentPhase:     "plan",
-		MissingEvidence:  []string{},
-		FilesChanged:     []string{},
-		Timeline:         []projectControlEvent{},
-		Evidence:         []projectControlEvidence{},
-		Audit:            []projectControlAuditItem{},
-		RowVersion:       1,
-	}
-	if err := validateTaskContract(*state, task); err != nil {
-		return ""
-	}
-	state.Tasks = append(state.Tasks, task)
-	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
-		ID:        projectControlID("event", "terminal-registered"),
-		Timestamp: createdAt,
-		Actor:     "runtime",
-		Action:    "terminal_registered",
-		Detail:    "Terminal " + terminalID + " registered as a task (auto handoff).",
-		ProjectID: projectID,
-		TaskID:    task.ID,
-	})
-	return task.ID
 }

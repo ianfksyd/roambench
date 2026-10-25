@@ -797,6 +797,12 @@
                 html += '</ul>';
                 section.innerHTML = html;
                 body.appendChild(section);
+                Array.prototype.forEach.call(section.querySelectorAll('[data-open-task]'), function(el) {
+                    var refTaskId = el.getAttribute('data-open-task');
+                    if (!refTaskId) return;
+                    el.style.cursor = 'pointer';
+                    el.onclick = function() { openTask(refTaskId); };
+                });
                 Array.prototype.forEach.call(section.querySelectorAll('[data-source-ref-delete]'), function(btn) {
                     btn.onclick = function() {
                         fetchJSON('/api/source-links/' + encodeURIComponent(btn.getAttribute('data-source-ref-delete')), { method: 'DELETE' })
