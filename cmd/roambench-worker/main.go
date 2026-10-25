@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -150,6 +151,10 @@ func runTask(o options, task *claimedTask) {
 		return
 	}
 
+	// Progress reporting: executor events go to the server's task progress
+	// feed (best-effort, batched, never blocks the executor reader).
+	progress := newProgressReporter(task.TaskID)
+
 	observer := localruntime.ObserverFunc(func(line string) {
 		_ = exec.Command("tmux", "send-keys", "-t", terminalID, "-l", line).Run()
 		_ = exec.Command("tmux", "send-keys", "-t", terminalID, "Enter").Run()
@@ -179,7 +184,10 @@ func runTask(o options, task *claimedTask) {
 		PermissionMode: o.permissionMode,
 		Prompt:         buildPrompt(task),
 		Workspace:      task.Workspace,
-		Observer:       observer,
+		Observer: localruntime.ObserverFunc(func(line string) {
+			observer(line)
+			progress.add(line)
+		}),
 	})
 	if err != nil {
 		fmt.Printf("executor start failed: %v\n", err)
@@ -219,6 +227,39 @@ func runTask(o options, task *claimedTask) {
 	} else {
 		fmt.Printf("released %s (%s)\n", task.TaskID, outcome)
 	}
+}
+
+// progressReporter batches executor events and reports them to the task
+// progress feed. Reports are best-effort: failures are counted, never
+// propagated, and the reporter never blocks the executor reader.
+type progressReporter struct {
+	taskID string
+	seq    int
+	mu     sync.Mutex
+	flush  func(seq int, kind, text string)
+}
+
+func newProgressReporter(taskID string) *progressReporter {
+	p := &progressReporter{taskID: taskID}
+	p.flush = func(seq int, kind, text string) {
+		_ = cli("progress", "--task", p.taskID, "--seq", fmt.Sprint(seq),
+			"--kind", kind, "--text", text)
+	}
+	return p
+}
+
+// add records one readable line, flushing on blank lines (paragraph ends)
+// so reports arrive as complete thoughts.
+func (p *progressReporter) add(line string) {
+	if strings.TrimSpace(line) == "" {
+		return
+	}
+	p.mu.Lock()
+	p.seq++
+	seq := p.seq
+	text := line
+	p.mu.Unlock()
+	go p.flush(seq, "assistant", text)
 }
 
 // summarizeEvents renders the last assistant/result text as the artifact value.

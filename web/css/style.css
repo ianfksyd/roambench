@@ -5127,6 +5127,9 @@ button.tab-action:focus-visible {
 .board-v3 .board-task-quick-btn:hover { background: var(--hover); border-color: var(--muted); }
 .board-v3 .board-task-quick-btn:last-child:hover { color: #f48771; border-color: #f48771; }
 .board-v3 .task-terminal-link { margin: 10px 0 4px; }
+.progress-card .progress-text { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 40vh; overflow-y: auto; scrollbar-width: none; }
+.progress-card .progress-text::-webkit-scrollbar { display: none; }
+.progress-card .progress-meta { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .board-v3 .board-task-quick-btn[data-board-task-terminal]:hover { color: #4fc1ff; border-color: #4fc1ff; }
 .board-task-open {
     display: block;

@@ -743,6 +743,7 @@
     var taskDialog = null;
 
     function closeTaskDialog() {
+        stopProgressPolling();
         if (taskDialog) {
             taskDialog.close();
             taskDialog.remove();
@@ -764,6 +765,59 @@
         dialog.querySelector('#board-task-dialog-subtitle').textContent =
             (project ? project.name : task.projectId || '') + ' · ' + label + ' · ' + boardRelative(stamp);
         bindInteractions(dialog);
+        startProgressPolling(task.id);
+    }
+
+    // The progress card refreshes while the task dialog is open; a 5s cadence
+    // keeps the card live without burdening the server.
+    var progressTimer = null;
+    function startProgressPolling(taskId) {
+        stopProgressPolling();
+        fetchTaskProgress(taskId);
+        progressTimer = setInterval(function() { fetchTaskProgress(taskId); }, 5000);
+    }
+    function stopProgressPolling() {
+        if (progressTimer) {
+            clearInterval(progressTimer);
+            progressTimer = null;
+        }
+    }
+    function fetchTaskProgress(taskId) {
+        var body = document.querySelector('[data-task-progress="' + taskId + '"]');
+        if (!body || !dialog.isConnected) {
+            return;
+        }
+        fetchJSON('/api/project-control/tasks/' + encodeURIComponent(taskId) + '/progress')
+            .then(function(data) {
+                if (!body.isConnected) return;
+                var events = data.events || [];
+                if (!events.length) {
+                    body.innerHTML = '<p class="muted">' + escapeHTML(tr('project.progressEmpty', 'No progress reported yet.')) + '</p>';
+                    return;
+                }
+                var newest = events[0];
+                var lines = newest.text.split('\n');
+                var shown = lines.slice(0, 5).join('\n');
+                var truncated = lines.length > 5 || newest.text.length > 600;
+                var expanded = body.dataset.expanded === '1';
+                var content = expanded ? newest.text : shown;
+                var html = '<pre class="progress-text">' + escapeHTML(content) + '</pre>';
+                if (truncated) {
+                    html += expanded
+                        ? '<button type="button" class="project-inline-btn" data-progress-collapse>' + escapeHTML(tr('project.progressCollapse', 'Show less')) + '</button>'
+                        : '<button type="button" class="project-inline-btn" data-progress-expand>' + escapeHTML(tr('project.progressExpand', 'Show more')) + '</button>';
+                }
+                html += '<span class="progress-meta">' + escapeHTML(tr('project.progressSource.' + (data.source || 'none'), data.source || '')) + ' · ' + escapeHTML(newest.createdAt || '') + '</span>';
+                body.innerHTML = html;
+                var toggle = body.querySelector('[data-progress-expand], [data-progress-collapse]');
+                if (toggle) {
+                    toggle.onclick = function() {
+                        body.dataset.expanded = expanded ? '' : '1';
+                        fetchTaskProgress(taskId);
+                    };
+                }
+            })
+            .catch(function() { /* keep the previous content on transient errors */ });
     }
 
     function openTask(taskId) {
@@ -1473,6 +1527,8 @@
         var terminalLink = terminalIds.length && app() && app().attachTerminal
             ? '<div class="task-terminal-link"><button type="button" class="project-inline-btn primary" data-task-open-terminal="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.watchTerminal', '▶ Watch in terminal')) + '</button></div>'
             : '';
+        var progressCard = '<section class="info-card progress-card"><h3>' + escapeHTML(tr('project.progressTitle', 'Latest progress')) + '</h3>'
+            + '<div class="progress-body" data-task-progress="' + escapeHTML(task.id) + '"><p class="muted">' + escapeHTML(tr('project.progressLoading', 'Loading…')) + '</p></div></section>';
         var info = '<section class="info-card"><h3>' + escapeHTML(tr('project.taskInfoTitle', 'Task info')) + '</h3><dl>'
             + def(tr('project.taskInfoState', 'State'), escapeHTML(humanizeTaskState(task.state)))
             + def(tr('project.currentPhase', 'Current phase'), escapeHTML(humanizePhase(phase)))
@@ -1499,6 +1555,7 @@
         var evidenceBlock = artifacts.length ? evidence : '';
         var activityBlock = audit.length ? activity : '';
         return summary
+            + progressCard
             + terminalLink
             + info
             + renderTaskApprovalStatusCard(task)

@@ -43,6 +43,8 @@ func main() {
 		cmdMemory(os.Args[2:])
 	case "config":
 		cmdConfig(os.Args[2:])
+	case "progress":
+		cmdProgress(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("roambench-agent " + version)
 	case "help", "--help", "-h":
@@ -73,6 +75,8 @@ Commands:
                                   Replace the canonical project memory
   memory pointer --project <id> --file <path> [--file <path> ...]
                                   Write the shared-memory pointer into files
+  progress --task <id> --seq <n> --kind <k> --text <text> [--file <f>]
+                                  Report one execution progress event
   config show --agent <label>
                                   Show where an agent currently points
   config apply --agent <label> --base-url <url> [--auth-token <t>]
@@ -216,6 +220,52 @@ func cmdStatus() {
 	if nextStep != "" {
 		fmt.Printf("Next:    %s\n", nextStep)
 	}
+}
+
+// cmdProgress reports one execution progress event for a running task.
+func cmdProgress(args []string) {
+	taskID := flag(args, "--task")
+	seqRaw := flag(args, "--seq")
+	kind := flag(args, "--kind")
+	text := flag(args, "--text")
+	file := flag(args, "--file")
+
+	if taskID == "" {
+		fatal("--task is required")
+	}
+	if file != "" && text == "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			fatal(err.Error())
+		}
+		text = string(data)
+	}
+	seq := 0
+	for _, ch := range seqRaw {
+		if ch < '0' || ch > '9' {
+			fatal("--seq must be a number")
+		}
+		seq = seq*10 + int(ch-'0')
+	}
+	if seq < 1 {
+		fatal("--seq must be >= 1")
+	}
+	if strings.TrimSpace(text) == "" {
+		fatal("--text or --file is required")
+	}
+	if strings.TrimSpace(kind) == "" {
+		kind = "assistant"
+	}
+	_, err := apiPost("/api/agent/v1/progress", map[string]interface{}{
+		"taskId": taskID,
+		"seq":    seq,
+		"kind":   kind,
+		"text":   strings.TrimRight(text, "\n"),
+	})
+	if err != nil {
+		fatal(err.Error())
+	}
+	fmt.Println("progress reported")
 }
 
 // cmdConfig shows and applies the model access point of a coding agent.
