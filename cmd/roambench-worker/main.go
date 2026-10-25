@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -195,9 +196,22 @@ func runTask(o options, task *claimedTask) {
 	// feed (best-effort, batched, never blocks the executor reader).
 	progress := newProgressReporter(task.TaskID)
 
+	// Observation window: model output is written to a 0600 log file and the
+	// terminal runs a FIXED tail command on it (composed by the worker, no
+	// model text passes through send-keys). This removes the injection path
+	// where displayed text was executed as commands in the pane shell.
+	logPath := filepath.Join(task.Workspace, ".roambench-execution.log")
+	_ = os.WriteFile(logPath, []byte(""), 0600)
+	_ = exec.Command("tmux", "send-keys", "-t", terminalID,
+		"-l", "tail -n 40 -f "+shellQuote(logPath), "Enter").Run()
+	time.Sleep(300 * time.Millisecond)
 	observer := localruntime.ObserverFunc(func(line string) {
-		_ = exec.Command("tmux", "send-keys", "-t", terminalID, "-l", line).Run()
-		_ = exec.Command("tmux", "send-keys", "-t", terminalID, "Enter").Run()
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		_, _ = f.WriteString(line + "\n")
 	})
 
 	runCtx, cancelRun := context.WithCancel(context.Background())
@@ -236,7 +250,10 @@ func runTask(o options, task *claimedTask) {
 		return
 	}
 
-	// Wait for executor exit, runtime bound, or lease loss.
+	// Wait for executor exit, runtime bound, or lease loss. The executor
+	// handle's own Done channel closes only AFTER its exit code and error
+	// have been recorded, so the outcome below never races the wait.
+	var timedOut bool
 	execDone := make(chan struct{})
 	go func() {
 		handle.Wait(runCtx)
@@ -246,11 +263,16 @@ func runTask(o options, task *claimedTask) {
 	case <-execDone:
 	case <-lostLease:
 		handle.Stop()
-		<-execDone
+		<-handle.Done()
+	case <-runCtx.Done():
+		// Runtime bound hit (max-runtime timeout): the context kill has been
+		// requested; wait for the real exit then report failure.
+		timedOut = true
+		<-handle.Done()
 	}
 
 	outcome := "done"
-	failed := handle.Err != nil || handle.ExitCode != 0
+	failed := timedOut || handle.Err != nil || handle.ExitCode != 0
 	if failed {
 		outcome = "failed"
 	}
@@ -450,6 +472,10 @@ func hostname() string {
 		return "local"
 	}
 	return strings.ReplaceAll(strings.ToLower(h), ".", "-")
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 func firstLine(s string) string {

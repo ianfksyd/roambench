@@ -95,3 +95,11 @@ func (r *Repository) ListTaskProgress(ctx context.Context, username, taskID stri
 }
 
 func clockNowUTC() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") }
+
+// ClearTaskProgress removes every stored event of a task (used when a new
+// execution claims the task, so the panel never shows stale output).
+func (r *Repository) ClearTaskProgress(ctx context.Context, username, taskID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM task_progress WHERE username=? AND task_id=?`, username, taskID)
+	return err
+}

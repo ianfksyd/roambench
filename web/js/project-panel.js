@@ -768,6 +768,35 @@
         startProgressPolling(task.id);
     }
 
+    function openBranchesDialog(taskId) {
+        var task = findById(tasks(), taskId);
+        if (!task) return;
+        var dialog = showBoardDialog(tr('project.deriveTitle', 'Derive branches'), '<form data-branches-form><fieldset>'
+            + '<label class="field"><span>' + escapeHTML(tr('project.deriveTitles', 'Branch titles (one per line)')) + '</span>'
+            + '<textarea name="titles" rows="4" required></textarea></label>'
+            + '<p class="form-hint">' + escapeHTML(task.state === 'running' || task.state === 'claimed'
+                ? tr('project.deriveHint.parallel', 'Branches start immediately and run alongside this task.')
+                : tr('project.deriveHint.after', 'Branches start after this task finishes.')) + '</p>'
+            + '</fieldset><p class="form-error" role="alert"></p>'
+            + '<footer class="dialog-footer"><button type="submit" class="btn primary">' + escapeHTML(tr('project.deriveSubmit', 'Create branches')) + '</button></footer></form>');
+        var form = dialog.querySelector('form');
+        form.onsubmit = function(event) {
+            event.preventDefault();
+            var titles = form.elements.titles.value.split('\n').map(function(t) { return t.trim(); }).filter(Boolean);
+            if (!titles.length) return;
+            var branches = titles.map(function(title) { return { title: title }; });
+            fetchJSON('/api/project-control/tasks/' + encodeURIComponent(taskId) + '/branches', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ branches: branches })
+            }).then(function() {
+                closeTaskDialog();
+                openBoard();
+            }).catch(function(err) {
+                form.querySelector('.form-error').textContent = err.message;
+            });
+        };
+    }
+
     // The progress card refreshes while the task dialog is open; a 5s cadence
     // keeps the card live without burdening the server.
     var progressTimer = null;
@@ -1527,6 +1556,9 @@
         var terminalLink = terminalIds.length && app() && app().attachTerminal
             ? '<div class="task-terminal-link"><button type="button" class="project-inline-btn primary" data-task-open-terminal="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.watchTerminal', '▶ Watch in terminal')) + '</button></div>'
             : '';
+        var branchLink = task.state === 'running' || task.state === 'claimed'
+            ? '<div class="task-terminal-link"><button type="button" class="project-inline-btn" data-task-branches="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.deriveBranches', 'Derive branches')) + '</button></div>'
+            : '';
         var progressCard = '<section class="info-card progress-card"><h3>' + escapeHTML(tr('project.progressTitle', 'Latest progress')) + '</h3>'
             + '<div class="progress-body" data-task-progress="' + escapeHTML(task.id) + '"><p class="muted">' + escapeHTML(tr('project.progressLoading', 'Loading…')) + '</p></div></section>';
         var info = '<section class="info-card"><h3>' + escapeHTML(tr('project.taskInfoTitle', 'Task info')) + '</h3><dl>'
@@ -1557,6 +1589,7 @@
         return summary
             + progressCard
             + terminalLink
+            + branchLink
             + info
             + renderTaskApprovalStatusCard(task)
             + evidenceBlock
@@ -2610,6 +2643,11 @@
         panel.querySelectorAll('[data-task-id]').forEach(function(node) {
             node.addEventListener('click', function() {
                 openTask(node.getAttribute('data-task-id'));
+            });
+        });
+        panel.querySelectorAll('[data-task-branches]').forEach(function(node) {
+            node.addEventListener('click', function() {
+                openBranchesDialog(node.getAttribute('data-task-branches'));
             });
         });
         panel.querySelectorAll('[data-task-open-terminal]').forEach(function(node) {

@@ -112,6 +112,9 @@ type projectControlWorkstream struct {
 }
 
 type projectControlTask struct {
+	// Description records provenance for synthesized tasks (P3).
+	Description string `json:"description,omitempty"`
+	// Description records provenance for synthesized tasks (P3).
 	MilestoneID          string   `json:"milestoneId,omitempty"`
 	DependsOn            []string `json:"dependsOn,omitempty"`
 	AcceptanceCommand    []string `json:"acceptanceCommand,omitempty"`
@@ -425,6 +428,7 @@ type projectControlTaskCreateRequest struct {
 	// Origin is "human" (default) or "agent". Human-raised tasks are
 	// dispatched automatically; agent-raised ones wait for a decision.
 	Origin            string   `json:"origin,omitempty"`
+	Description       string   `json:"description,omitempty"`
 	MilestoneID       string   `json:"milestoneId"`
 	DependsOn         []string `json:"dependsOn"`
 	AcceptanceCommand []string `json:"acceptanceCommand"`
@@ -3089,6 +3093,7 @@ func (s *projectControlStore) createTaskInState(username string, state *projectC
 	task := projectControlTask{
 		MilestoneID: req.MilestoneID, DependsOn: req.DependsOn, AcceptanceCommand: req.AcceptanceCommand,
 		Origin:           projectControlTaskOrigin(req.Origin),
+		Description:      strings.TrimSpace(req.Description),
 		ID:               projectControlID("task", title),
 		ProjectID:        projectID,
 		WorkstreamID:     workstreamID,
@@ -5275,56 +5280,41 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 		tasks[taskIndex].SessionIDs = appendUniqueString(tasks[taskIndex].SessionIDs, phaseSession.ID)
 		sessions = append(sessions, phaseSession)
 	}
-	unlinkedLiveIndex := 0
-	for _, live := range liveTerminalSessions {
-		if linkedTerminalIDs[live.ID] {
-			continue
-		}
-		pcSession := projectControlSession{
-			ID:             projectControlSessionIDForTerminal(live.ID),
-			TerminalID:     live.ID,
-			Name:           live.Name,
-			AgentType:      "worker",
-			RuntimeID:      projectControlRuntimeID,
-			State:          "active",
-			ExecutionRole:  "implement",
-			SystemRole:     "worker",
-			DurationLabel:  humanizeSince(live.CreatedAt, now),
-			StartedAt:      live.CreatedAt.UTC().Format(time.RFC3339),
-			Summary:        "Live terminal session surfaced through the Project Panel so the operator can attach back into Terminal mode.",
-			Claims:         []string{"Interactive execution still in progress."},
-			Artifacts:      []string{"Terminal transcript available in live session", "Existing workspace + shell context"},
-			SupportsAttach: terminals != nil,
-		}
-		targetTaskIndex := 1
-		if unlinkedLiveIndex == 1 {
-			targetTaskIndex = 2
-		} else if unlinkedLiveIndex >= 2 {
-			targetTaskIndex = 3
-			pcSession.ExecutionRole = "verify"
-		}
-		unlinkedLiveIndex += 1
-		if targetTaskIndex < len(tasks) {
-			pcSession.TaskID = tasks[targetTaskIndex].ID
-			tasks[targetTaskIndex].SessionIDs = appendUniqueString(tasks[targetTaskIndex].SessionIDs, pcSession.ID)
-			// Only promote task state if it hasn't already been decided via approvals.
-			// Tasks that were accepted, rejected, or rerouted keep their persisted state.
-			if tasks[targetTaskIndex].AcceptanceStatus == "not_ready" {
-				switch targetTaskIndex {
-				case 1:
-					tasks[targetTaskIndex].State = "running"
-					tasks[targetTaskIndex].RecentSummary = "A live implementation session is attached to the Project Panel shell task."
-				case 2:
-					tasks[targetTaskIndex].State = "running"
-					tasks[targetTaskIndex].RecentSummary = "A second live session is available to validate capability-gated attach behavior."
-				case 3:
-					tasks[targetTaskIndex].State = "waiting_review"
-					tasks[targetTaskIndex].RecentSummary = "Additional live session detected; the approvals flow can use it as a verification lane."
-				}
+	// Live terminals explicitly bound to a task (createTaskInState dispatch,
+	// worker terminal API) are surfaced as that task's sessions. Unbound live
+	// terminals are listed without a task: they must never be attached to
+	// unrelated tasks (P1 fix — demo-era hardcoding attached them to the
+	// first sample tasks and forced their state to running).
+	for _, task := range tasks {
+		for _, sessionID := range task.SessionIDs {
+			terminalID := projectControlTerminalIDFromSessionID(sessionID)
+			if terminalID == "" {
+				continue
 			}
-			tasks[targetTaskIndex].Timeline = append(tasks[targetTaskIndex].Timeline, projectControlEvent{Timestamp: live.CreatedAt.UTC().Format(time.RFC3339), Actor: "worker", Action: "session_started", Detail: "Live terminal session became visible in the Project Panel."})
+			live, hasLive := liveTerminalByID[terminalID]
+			if !hasLive {
+				continue
+			}
+			linkedTerminalIDs[terminalID] = true
+			pcSession := projectControlSession{
+				ID:             projectControlSessionIDForTerminal(live.ID),
+				TerminalID:     live.ID,
+				Name:           live.Name,
+				TaskID:         task.ID,
+				AgentType:      "worker",
+				RuntimeID:      projectControlRuntimeID,
+				State:          "active",
+				ExecutionRole:  "implement",
+				SystemRole:     "worker",
+				DurationLabel:  humanizeSince(live.CreatedAt, now),
+				StartedAt:      live.CreatedAt.UTC().Format(time.RFC3339),
+				Summary:        "Execution terminal bound to this task by the local worker.",
+				Claims:         []string{"Executor running in this terminal."},
+				Artifacts:      []string{"Terminal transcript available in live session"},
+				SupportsAttach: terminals != nil,
+			}
+			sessions = append(sessions, pcSession)
 		}
-		sessions = append(sessions, pcSession)
 	}
 
 	dashboard := buildProjectControlDashboard(workstreams, tasks, checkpoints, runtimes, events)

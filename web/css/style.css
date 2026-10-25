@@ -5138,6 +5138,7 @@ button.tab-action:focus-visible {
 .board-graph-arrow { align-self: center; color: var(--muted); font-size: 16px; }
 .progress-card .progress-text { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 40vh; overflow-y: auto; scrollbar-width: none; }
 .progress-card .progress-text::-webkit-scrollbar { display: none; }
+.board-v3 .task-terminal-link .project-inline-btn { margin-right: 8px; }
 .progress-card .progress-meta { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .board-v3 .board-task-quick-btn[data-board-task-terminal]:hover { color: #4fc1ff; border-color: #4fc1ff; }
 .board-task-open {

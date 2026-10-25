@@ -109,6 +109,11 @@ func (s *projectControlStore) agentClaimTask(username string, req agentClaimRequ
 			task.DispatchState, task.ClaimedByRuntimeID = "claimed", claim.RuntimeID
 			task.RowVersion++
 			appendControlEvent(state, task.ProjectID, task.ID, "task_dispatch_state_changed", "Task claimed with lease "+claim.ClaimID+".")
+			// New execution: clear the previous run's progress feed so the
+			// panel never shows stale output from an earlier attempt.
+			if s.controlPlane != nil {
+				_ = s.controlPlane.ClearTaskProgress(context.Background(), username, task.ID)
+			}
 			break
 		}
 		return nil

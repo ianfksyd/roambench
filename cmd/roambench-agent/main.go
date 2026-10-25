@@ -49,6 +49,8 @@ func main() {
 		cmdProgress(os.Args[2:])
 	case "ask":
 		cmdAsk(os.Args[2:])
+	case "register-task":
+		cmdRegisterTask(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("roambench-agent " + version)
 	case "help", "--help", "-h":
@@ -84,6 +86,9 @@ Commands:
   ask --task <id> --question "..." [--options yes,no] [--wait 10m]
                                   Ask a human a question and block for the
                                   answer (prints JSON: action/feedback)
+  register-task --title "..." [--terminal <tmux-id>] [--goal "..."]
+                                  Create a task card on the board, optionally
+                                  bound to the current tmux session
   config show --agent <label>
                                   Show where an agent currently points
   config apply --agent <label> --base-url <url> [--auth-token <t>]
@@ -343,7 +348,66 @@ func cmdAsk(args []string) {
 	if resp.StatusCode != http.StatusOK {
 		fatal(fmt.Sprintf("wait HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
-	fmt.Println(string(body))
+	var answer struct {
+		Status   string   `json:"status"`
+		Answered bool     `json:"answered"`
+		Action   string   `json:"action"`
+		Feedback string   `json:"feedback"`
+		Options  []string `json:"selectedOptionIds"`
+	}
+	if err := json.Unmarshal(body, &answer); err != nil {
+		fatal(fmt.Sprintf("invalid answer JSON: %v (%s)", err, strings.TrimSpace(string(body))))
+	}
+	// An unanswered question (timeout or expiry) is NOT a success: the caller
+	// must be able to distinguish "human said yes" from "nobody answered".
+	if !answer.Answered {
+		fatal(fmt.Sprintf("question was not answered (status=%s)", answer.Status))
+	}
+	out := map[string]interface{}{
+		"action":   answer.Action,
+		"feedback": answer.Feedback,
+	}
+	if len(answer.Options) > 0 {
+		out["selectedOptionIds"] = answer.Options
+	}
+	result, _ := json.Marshal(out)
+	fmt.Println(string(result))
+}
+
+// cmdRegisterTask creates a task card on the board, optionally bound to the
+// current tmux session so the panel can attach back to it.
+func cmdRegisterTask(args []string) {
+	title := flag(args, "--title")
+	goal := flag(args, "--goal")
+	terminalID := flag(args, "--terminal")
+
+	if title == "" {
+		fatal("--title is required")
+	}
+	body := map[string]interface{}{"title": title}
+	if goal != "" {
+		body["goal"] = goal
+	}
+	if terminalID != "" {
+		body["terminalId"] = terminalID
+	}
+	data, _ := json.Marshal(body)
+	req, err := http.NewRequest(http.MethodPost, claimBaseURL(parseOverrides(args))+"/api/agent/v1/register-task", bytes.NewReader(data))
+	if err != nil {
+		fatal(err.Error())
+	}
+	req.Header.Set("Authorization", "Bearer "+claimToken(parseOverrides(args)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		fatal(err.Error())
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		fatal(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))))
+	}
+	fmt.Println(strings.TrimSpace(string(respBody)))
 }
 
 // cmdProgress reports one execution progress event for a running task.

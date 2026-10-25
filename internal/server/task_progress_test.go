@@ -48,10 +48,20 @@ func TestAgentProgressWriteAndPanelRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// worker 上报两条事件。
+	// worker 上报两条事件（P1: 先领取拿租约）。
+	rec0 := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"prog-rt","agentLabel":"claude"}`)
+	if rec0.Code != http.StatusOK {
+		t.Fatalf("claim = %d: %s", rec0.Code, rec0.Body.String())
+	}
+	var claimed struct {
+		LeaseID string `json:"leaseId"`
+	}
+	if err := json.Unmarshal(rec0.Body.Bytes(), &claimed); err != nil {
+		t.Fatal(err)
+	}
 	for i, text := range []string{"第一步：读取仓库", "第二步：完成任务"} {
 		req := httptest.NewRequest(http.MethodPost, "/api/agent/v1/progress",
-			strings.NewReader(`{"taskId":"`+taskID+`","seq":`+itoaStatic(i+1)+`,"kind":"assistant","text":"`+text+`"}`))
+			strings.NewReader(`{"taskId":"`+taskID+`","seq":`+itoaStatic(i+1)+`,"kind":"assistant","text":"`+text+`","leaseId":"`+claimed.LeaseID+`"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+agentToken)
 		rec := httptest.NewRecorder()
@@ -142,15 +152,27 @@ func TestProgressFeedPrunesToLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// P1 lease 校验后：先 claim 拿租约，再带 leaseId 上报。
+	rec0 := agentAPIPost(t, srv, "/api/agent/v1/claim", agentToken, `{"runtimeId":"prune-rt","agentLabel":"claude"}`)
+	if rec0.Code != http.StatusOK {
+		t.Fatalf("claim = %d: %s", rec0.Code, rec0.Body.String())
+	}
+	var claimed struct {
+		LeaseID string `json:"leaseId"`
+	}
+	if err := json.Unmarshal(rec0.Body.Bytes(), &claimed); err != nil {
+		t.Fatal(err)
+	}
+	leaseID := claimed.LeaseID
 	for i := 1; i <= 60; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/api/agent/v1/progress",
-			strings.NewReader(`{"taskId":"`+taskID+`","seq":`+itoaStatic(i)+`,"kind":"assistant","text":"e`+itoaStatic(i)+`"}`))
+			strings.NewReader(`{"taskId":"`+taskID+`","seq":`+itoaStatic(i)+`,"kind":"assistant","text":"e`+itoaStatic(i)+`","leaseId":"`+leaseID+`"}`))
 		req.Header.Set("Authorization", "Bearer "+agentToken)
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		srv.mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("write %d = %d", i, rec.Code)
+			t.Fatalf("write %d = %d: %s", i, rec.Code, rec.Body.String())
 		}
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/project-control/tasks/"+taskID+"/progress", nil)
@@ -192,4 +214,52 @@ func itoaStatic(v int) string {
 		b[i] = '-'
 	}
 	return string(b[i:])
+}
+
+// P3 补遗: tmux 侧任务登记入口——创建任务卡并绑定活终端。
+func TestAgentRegisterTaskBindsTerminal(t *testing.T) {
+	srv, _, sessions := testProjectControlServer(t)
+	defer sessions.Stop()
+	muteSeedTasks(t, srv)
+
+	if _, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		state.Tasks = append(state.Tasks, projectControlTask{
+			ID: "task-p3-ctx", ProjectID: "project-roambench-control",
+			Title: "上下文任务", State: "planned", DispatchState: "ready",
+			Timeline: []projectControlEvent{}, Audit: []projectControlAuditItem{},
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// active project 需存在
+	if _, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		state.ActiveProjectID = "project-roambench-control"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	agentToken, err := srv.projectControl.ensureAgentToken("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/v1/register-task",
+		strings.NewReader(`{"title":"tmux 里提出的新目标"}`))
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("register-task = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.TaskID == "" {
+		t.Fatal("no taskId in response")
+	}
 }

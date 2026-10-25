@@ -336,10 +336,19 @@ func checkpointPayload(state projectControlState, id string) *projectControlArti
 }
 
 func sharedDirectoryConflict(state projectControlState, task projectControlTask) bool {
-	// Snapshot/read phases may run concurrently; two writable phases may not
-	// hold the same project's shared worktree at once.
+	// Snapshot/review phases may run concurrently. Everything else — including
+	// default human-raised tasks with no runbook phase — is treated as
+	// potentially writing to the shared workspace, so two such executions may
+	// not hold the same project's workspace at once (P1 review fix: default
+	// tasks previously bypassed this mutual exclusion).
 	writable := func(t projectControlTask) bool {
-		return t.CurrentPhase == "implement" || t.CurrentPhase == "write" || t.CurrentPhase == "fix_or_replan"
+		switch t.CurrentPhase {
+		case "review", "final_validation":
+			return false // read-only lanes
+		default:
+			// Known write phases AND unclassified/default tasks (conservative).
+			return true
+		}
 	}
 	if !writable(task) {
 		return false

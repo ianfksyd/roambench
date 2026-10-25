@@ -237,3 +237,8 @@ func parseClaudeLine(line string) Event {
 // anything that would prompt, so a headless run cannot hang or silently
 // escalate. Full autonomy is an explicit operator setting.
 const DefaultPermissionMode = "acceptEdits"
+
+// Done closes after the executor exited AND its exit code and error have
+// been recorded. Waiting on this (instead of process exit) guarantees the
+// outcome fields are observable without a race.
+func (h *Handle) Done() <-chan struct{} { return h.done }
