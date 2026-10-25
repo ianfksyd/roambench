@@ -13,6 +13,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,20 +24,23 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/ianf339/roambench/internal/localruntime"
 )
 
 var version = "dev"
 
 type options struct {
-	server     string
-	token      string
-	runtimeID  string
-	agentLabel string
-	executor   string
-	execArgs   []string
-	model      string
-	poll       time.Duration
-	maxRuntime time.Duration
+	server         string
+	token          string
+	runtimeID      string
+	agentLabel     string
+	executor       string
+	execArgs       []string
+	model          string
+	permissionMode string
+	poll           time.Duration
+	maxRuntime     time.Duration
 }
 
 func main() {
@@ -47,6 +51,7 @@ func main() {
 	flag.StringVar(&o.runtimeID, "runtime-id", "worker-"+hostname(), "Runtime id used for claims")
 	flag.StringVar(&o.agentLabel, "agent-label", "claude", "Agent label reported with claims")
 	flag.StringVar(&o.executor, "executor", env("ROAMBENCH_WORKER_EXECUTOR", "claude"), "Executor CLI that runs claimed tasks")
+	flag.StringVar(&o.permissionMode, "permission-mode", env("ROAMBENCH_WORKER_PERMISSION_MODE", localruntime.DefaultPermissionMode), "Executor permission mode (e.g. acceptEdits; bypass flags are the operator's explicit choice)")
 	flag.StringVar(&o.model, "model", env("ROAMBENCH_WORKER_MODEL", ""), "Optional model override passed as --model")
 	poll := flag.Duration("poll", 15*time.Second, "Poll interval between claims")
 	maxRuntime := flag.Duration("max-runtime", 2*time.Hour, "Per-task runtime bound (0 = unlimited)")
@@ -108,82 +113,135 @@ func tryClaim(o options) *claimedTask {
 	return &task
 }
 
-// runTask executes one claimed task in a visible terminal and reports back.
+// runTask executes one claimed task through the local runtime and reports
+// back. The executor runs headless with structured output; readable lines
+// are mirrored into the task terminal so the web UI shows the same run.
 func runTask(o options, task *claimedTask) {
 	fmt.Printf("claimed %s (%s)\n", task.TaskID, firstLine(task.Title))
 
-	// Heartbeat loop keeps the lease alive while the executor works.
-	hbStop := make(chan struct{})
+	lostLease := make(chan struct{})
+	// Heartbeat loop keeps the lease alive while the executor works; losing
+	// the lease (expired/revoked) closes this execution's write access.
 	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
 		for {
 			select {
-			case <-hbStop:
+			case <-lostLease:
 				return
-			case <-time.After(60 * time.Second):
-				_ = cli("heartbeat", "--lease-id", task.LeaseID)
+			case <-ticker.C:
+				out := cli("heartbeat", "--lease-id", task.LeaseID)
+				if strings.Contains(out, "404") || strings.Contains(out, "not found") {
+					fmt.Println("lease lost; stopping executor")
+					close(lostLease)
+					return
+				}
 			}
 		}
 	}()
-	defer close(hbStop)
 
-	// The execution terminal is created through the server, so the web UI
-	// can attach to the very same session and watch the executor live.
 	trace("creating terminal")
 	terminalID := createTaskTerminal(o, task)
 	trace(fmt.Sprintf("terminal created: %q", terminalID))
-	prompt := buildPrompt(task)
-	args := append([]string{}, o.execArgs...)
-	if o.model != "" {
-		args = append(args, "--model", o.model)
-	}
-	args = append(args, prompt)
-
-	fmt.Fprintf(os.Stderr, "[worker] terminal=%q executor=%s args=%d\n", terminalID, o.executor, len(args))
-	trace(fmt.Sprintf("runTask enter terminal=%q", terminalID))
-	if terminalID != "" {
-		// Type the command into the task terminal so the user watches it live.
-		sendKeys(terminalID, o.executor+" "+shellQuoteAll(args))
-		trace("send-keys done, waiting for idle")
-		fmt.Fprintln(os.Stderr, "[worker] send-keys done, waiting for idle")
-	} else {
+	if terminalID == "" {
 		fmt.Println("no terminal session available; refusing to run headless (worker requires tmux)")
 		_ = cli("release", "--lease-id", task.LeaseID, "--outcome", "failed")
+		close(lostLease)
 		return
 	}
 
-	// Wait for the executor to return to a shell, bounded by max-runtime.
-	done := make(chan struct{})
-	var timedOut bool
+	observer := localruntime.ObserverFunc(func(line string) {
+		_ = exec.Command("tmux", "send-keys", "-t", terminalID, "-l", line).Run()
+		_ = exec.Command("tmux", "send-keys", "-t", terminalID, "Enter").Run()
+	})
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	// Losing the lease stops the executor.
 	go func() {
 		select {
-		case <-done:
-		case <-time.After(orZero(o.maxRuntime)):
-			timedOut = true
-			sendKeys(terminalID, "C-c")
-			select {
-			case <-done:
-			default:
-				close(done)
-			}
+		case <-lostLease:
+			cancelRun()
+		case <-runCtx.Done():
 		}
 	}()
-	waitTerminalIdle(terminalID, done)
-	if !timedOut {
-		select {
-		case <-done:
-		default:
-			close(done)
-		}
+
+	if o.maxRuntime > 0 {
+		runCtx, cancelRun = context.WithTimeout(runCtx, o.maxRuntime)
+	}
+	_ = cancelRun
+
+	fmt.Fprintf(os.Stderr, "[worker] terminal=%q executor=%s mode=%s\n", terminalID, o.executor, o.permissionMode)
+	handle, err := localruntime.Start(runCtx, localruntime.StartRequest{
+		Executor:       o.executor,
+		Args:           o.execArgs,
+		Model:          o.model,
+		PermissionMode: o.permissionMode,
+		Prompt:         buildPrompt(task),
+		Workspace:      task.Workspace,
+		Observer:       observer,
+	})
+	if err != nil {
+		fmt.Printf("executor start failed: %v\n", err)
+		_ = cli("release", "--lease-id", task.LeaseID, "--outcome", "failed")
+		close(lostLease)
+		return
 	}
 
-	trace("waitTerminalIdle returned; releasing")
-	outcome := "done"
-	if timedOut {
-		outcome = "failed"
-		fmt.Println("task timed out")
+	// Wait for executor exit, runtime bound, or lease loss.
+	execDone := make(chan struct{})
+	go func() {
+		handle.Wait(runCtx)
+		close(execDone)
+	}()
+	select {
+	case <-execDone:
+	case <-lostLease:
+		handle.Stop()
+		<-execDone
 	}
-	_ = cli("release", "--lease-id", task.LeaseID, "--outcome", outcome)
-	fmt.Printf("released %s (%s)\n", task.TaskID, outcome)
+
+	outcome := "done"
+	failed := handle.Err != nil || handle.ExitCode != 0
+	if failed {
+		outcome = "failed"
+	}
+	summary := summarizeEvents(handle.Events())
+	_ = cli("artifact", "--kind", "completion_check",
+		"--outcome", map[bool]string{true: "fail", false: "pass"}[failed],
+		"--label", "worker execution",
+		"--task", task.TaskID,
+		"--lease-id", task.LeaseID,
+		"--file", writeFileTemp(summary))
+	rel := cli("release", "--lease-id", task.LeaseID, "--outcome", outcome)
+	if strings.Contains(rel, "error:") {
+		fmt.Println("release failed:", rel)
+	} else {
+		fmt.Printf("released %s (%s)\n", task.TaskID, outcome)
+	}
+}
+
+// summarizeEvents renders the last assistant/result text as the artifact value.
+func summarizeEvents(events []localruntime.Event) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if (e.Kind == "assistant" || e.Kind == "result") && strings.TrimSpace(e.Text) != "" {
+			return e.Text
+		}
+	}
+	return "executor produced no structured output"
+}
+
+// writeFileTemp writes text to a temp file and returns its path, for
+// roambench-agent artifact --file.
+func writeFileTemp(text string) string {
+	f, err := os.CreateTemp("", "roambench-artifact-*.txt")
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	_, _ = f.WriteString(text)
+	return f.Name()
 }
 
 // buildPrompt renders the executor prompt from the claim payload.
@@ -228,35 +286,6 @@ func createTaskTerminal(o options, task *claimedTask) string {
 		return ""
 	}
 	return session.ID
-}
-
-// waitTerminalIdle blocks until the terminal's running command returns to a
-// shell prompt, polled through tmux. An unlimited runtime (0) waits forever.
-func waitTerminalIdle(terminalID string, done chan struct{}) {
-	if terminalID == "" {
-		return
-	}
-	for {
-		select {
-		case <-done:
-			return
-		case <-time.After(5 * time.Second):
-			cmd := exec.Command("tmux", "list-panes", "-t", terminalID, "-F", "#{pane_current_command}")
-			out, err := cmd.Output()
-			if err != nil {
-				return // session gone
-			}
-			switch strings.TrimSpace(string(out)) {
-			case "bash", "zsh", "sh", "fish":
-				return
-			}
-		}
-	}
-}
-
-// sendKeys types a command line into a tmux session and presses Enter.
-func sendKeys(terminalID, command string) {
-	_ = exec.Command("tmux", "send-keys", "-t", terminalID, command, "Enter").Run()
 }
 
 func cli(args ...string) string {

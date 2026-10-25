@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -79,6 +80,9 @@ func (s *projectControlStore) agentClaimTask(username string, req agentClaimRequ
 		for i := range state.Tasks {
 			task := &state.Tasks[i]
 			if !projectControlTaskClaimable(*state, *task) || !taskClaimAllowed(*state, *task) {
+				log.Printf("claim skip %s: claimable=%v allowed=%v state=%q dispatch=%q origin=%q",
+					task.ID, projectControlTaskClaimable(*state, *task), taskClaimAllowed(*state, *task),
+					task.State, task.DispatchState, task.Origin)
 				continue
 			}
 			if sharedDirectoryConflict(*state, *task) {
@@ -111,6 +115,7 @@ func (s *projectControlStore) agentClaimTask(username string, req agentClaimRequ
 	})
 	if err != nil {
 		if claim.ClaimID != "" {
+			log.Printf("claim rollback: revoking lease %s for task %s (withStateLocked error: %v)", claim.ClaimID, claim.TaskID, err)
 			_ = claims.RevokeTaskClaims(context.Background(), username, claim.TaskID)
 		}
 		return http.StatusInternalServerError, nil, err
