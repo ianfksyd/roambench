@@ -30,6 +30,16 @@ func (s *Server) handleProjectControlTaskRoutes(w http.ResponseWriter, r *http.R
 		s.handleTaskProgressGET(w, r, username, id)
 		return
 	}
+	if parts[1] == "branches" && r.Method == http.MethodPost {
+		username := GetUsername(r)
+		s.handleTaskBranches(w, r, username, id)
+		return
+	}
+	if parts[1] == "compose" && r.Method == http.MethodPost {
+		username := GetUsername(r)
+		s.handleTaskCompose(w, r, username, id)
+		return
+	}
 	// replay / PATCH / anything else: preserve the legacy handler's exact
 	// behaviour (including its 405 for unmatched methods).
 	s.handleProjectControlTaskReplay(w, r)

@@ -2960,95 +2960,52 @@ func (s *projectControlStore) createWorkstream(username string, req projectContr
 	return buildProjectControlSnapshot(state, username, terminals), nil
 }
 
-func (s *projectControlStore) createTask(username string, req projectControlTaskCreateRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
+// createTaskBranchRequest is one derived branch of a parent task.
+type createTaskBranchRequest struct {
+	Title string `json:"title"`
+	Goal  string `json:"goal,omitempty"`
+}
+
+// taskBranchesRequest creates derived branches of a parent task atomically.
+type taskBranchesRequest struct {
+	Branches []createTaskBranchRequest `json:"branches"`
+}
+
+// taskComposeRequest creates a new task that depends on all source tasks.
+type taskComposeRequest struct {
+	SourceTaskIDs []string `json:"sourceTaskIds"`
+	Title         string   `json:"title"`
+	Goal          string   `json:"goal,omitempty"`
+}
+
+// createTaskBranches atomically derives child tasks from a parent: every
+// branch depends on the parent, inherits its project and workstream, and is
+// created or none are (single withStateLocked transaction).
+func (s *projectControlStore) createTaskBranches(username string, parentID string, branches []createTaskBranchRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
+	if len(branches) == 0 {
+		return projectControlSnapshot{}, errors.New("at least one branch is required")
+	}
 	state, err := s.withStateLocked(username, func(state *projectControlState) error {
-		projectID := strings.TrimSpace(req.ProjectID)
-		workstreamID := strings.TrimSpace(req.WorkstreamID)
-		if projectID == "" || !projectControlProjectExists(*state, projectID) {
-			return errors.New("valid projectId is required")
+		parent, ok := controlTask(*state, parentID)
+		if !ok {
+			return errors.New("parent task not found")
 		}
-		if workstreamID == "" || !projectControlWorkstreamExists(*state, workstreamID, projectID) {
-			return errors.New("valid workstreamId is required")
-		}
-		title := strings.TrimSpace(req.Title)
-		if title == "" {
-			return errors.New("task title is required")
-		}
-		skill, runbook, err := validateProjectControlSkillRunbookSelection(req.SelectedSkill, req.RunbookID)
-		if err != nil {
-			return err
-		}
-		now := time.Now().UTC().Format(time.RFC3339)
-		task := projectControlTask{
-			MilestoneID: req.MilestoneID, DependsOn: req.DependsOn, AcceptanceCommand: req.AcceptanceCommand,
-			Origin:           projectControlTaskOrigin(req.Origin),
-			ID:               projectControlID("task", title),
-			ProjectID:        projectID,
-			WorkstreamID:     workstreamID,
-			Title:            title,
-			Goal:             strings.TrimSpace(req.Goal),
-			State:            "planned",
-			AcceptanceStatus: "not_ready",
-			RiskLevel:        normalizeProjectControlRisk(req.RiskLevel),
-			Priority:         normalizeProjectControlPriority(req.Priority),
-			AgentLabel:       "worker",
-			RuntimeID:        projectControlRuntimeID,
-			SelectedSkill:    skill.ID,
-			RunbookID:        runbook.ID,
-			CurrentPhase:     "plan",
-			RunbookState:     "not_started",
-			MissingEvidence:  []string{},
-			RecentSummary:    "Task created from the Project Panel and waiting to be scheduled.",
-			NextStep:         "Open a session or connect a runtime-backed workflow to start execution.",
-			FilesChanged:     []string{},
-			DiffSummary:      "",
-			SessionIDs:       []string{},
-			Timeline:         []projectControlEvent{},
-			Evidence:         []projectControlEvidence{},
-			Audit:            []projectControlAuditItem{},
-			RowVersion:       1,
-		}
-		if err := validateTaskContract(*state, task); err != nil {
-			return err
-		}
-		refreshProjectControlTaskRunbookFields(&task, state.Artifacts)
-		state.Tasks = append(state.Tasks, task)
-		state.ActiveProjectID = projectID
-		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
-			ID:           projectControlID("event", "task-created"),
-			Timestamp:    now,
-			Actor:        "human",
-			Action:       "task_created",
-			Detail:       "Created task " + task.Title + ".",
-			ProjectID:    task.ProjectID,
-			WorkstreamID: task.WorkstreamID,
-			TaskID:       task.ID,
-		})
-		// Dispatch pipeline (K4, WS-20261015-001): a task raised by a human is
-		// dispatched automatically — the requester is the decision maker. Only
-		// agent-raised tasks wait for a human decision in the approvals inbox.
-		if projectControlTaskNeedsDispatchApproval(task) {
-			syncProjectControlDispatchCheckpoint(state, task, now)
-		} else {
-			task.DispatchState = controlplane.DispatchStateReady
-			task.NextStep = "Task is ready for an agent runtime to claim."
-			task.RecentSummary = "Dispatched automatically; the task was raised by a human."
-			for i := range state.Tasks {
-				if state.Tasks[i].ID == task.ID {
-					state.Tasks[i] = task
-					break
-				}
+		for i, branch := range branches {
+			title := strings.TrimSpace(branch.Title)
+			if title == "" {
+				return fmt.Errorf("branch %d: title is required", i+1)
 			}
-			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
-				ID:           projectControlID("event", "dispatch-auto-approved"),
-				Timestamp:    now,
-				Actor:        "policy_engine",
-				Action:       "dispatch_auto_approved",
-				Detail:       "Task dispatched automatically because it was raised by a human.",
-				ProjectID:    projectID,
-				WorkstreamID: workstreamID,
-				TaskID:       task.ID,
-			})
+			if _, taskErr := s.createTaskInState(username, state, projectControlTaskCreateRequest{
+				ProjectID:    parent.ProjectID,
+				WorkstreamID: parent.WorkstreamID,
+				Title:        title,
+				Goal:         strings.TrimSpace(branch.Goal),
+				Origin:       "human",
+				Priority:     parent.Priority,
+				DependsOn:    []string{parentID},
+			}, terminals); taskErr != nil {
+				return fmt.Errorf("branch %d (%s): %w", i+1, title, taskErr)
+			}
 		}
 		return nil
 	})
@@ -3056,6 +3013,151 @@ func (s *projectControlStore) createTask(username string, req projectControlTask
 		return projectControlSnapshot{}, err
 	}
 	return buildProjectControlSnapshot(state, username, terminals), nil
+}
+
+// createComposedTask creates a synthesis task that depends on every source
+// task, inheriting their project and workstream. Sources are untouched.
+func (s *projectControlStore) createComposedTask(username string, sourceIDs []string, title, goal string, terminals *terminal.Manager) (projectControlSnapshot, error) {
+	if len(sourceIDs) == 0 {
+		return projectControlSnapshot{}, errors.New("at least one source task is required")
+	}
+	state, err := s.withStateLocked(username, func(state *projectControlState) error {
+		parent := projectControlTask{}
+		for _, id := range sourceIDs {
+			task, ok := controlTask(*state, id)
+			if !ok {
+				return fmt.Errorf("source task not found: %s", id)
+			}
+			if task.DispatchState != "done" {
+				return fmt.Errorf("source task %s is not done yet", id)
+			}
+			if parent.ProjectID == "" {
+				parent = task
+			} else if task.ProjectID != parent.ProjectID {
+				return errors.New("source tasks must belong to one project")
+			}
+		}
+		if _, taskErr := s.createTaskInState(username, state, projectControlTaskCreateRequest{
+			ProjectID:    parent.ProjectID,
+			WorkstreamID: parent.WorkstreamID,
+			Title:        title,
+			Goal:         goal,
+			Origin:       "human",
+			DependsOn:    sourceIDs,
+		}, terminals); taskErr != nil {
+			return taskErr
+		}
+		return nil
+	})
+	if err != nil {
+		return projectControlSnapshot{}, err
+	}
+	return buildProjectControlSnapshot(state, username, terminals), nil
+}
+
+func (s *projectControlStore) createTask(username string, req projectControlTaskCreateRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
+	state, err := s.withStateLocked(username, func(state *projectControlState) error {
+		_, taskErr := s.createTaskInState(username, state, req, terminals)
+		return taskErr
+	})
+	if err != nil {
+		return projectControlSnapshot{}, err
+	}
+	return buildProjectControlSnapshot(state, username, terminals), nil
+}
+
+// createTaskInState creates a task inside an already-locked state. The
+// caller owns persistence and snapshot building.
+func (s *projectControlStore) createTaskInState(username string, state *projectControlState, req projectControlTaskCreateRequest, terminals *terminal.Manager) (projectControlTask, error) {
+	projectID := strings.TrimSpace(req.ProjectID)
+	workstreamID := strings.TrimSpace(req.WorkstreamID)
+	if projectID == "" || !projectControlProjectExists(*state, projectID) {
+		return projectControlTask{}, errors.New("valid projectId is required")
+	}
+	if workstreamID == "" || !projectControlWorkstreamExists(*state, workstreamID, projectID) {
+		return projectControlTask{}, errors.New("valid workstreamId is required")
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		return projectControlTask{}, errors.New("task title is required")
+	}
+	skill, runbook, err := validateProjectControlSkillRunbookSelection(req.SelectedSkill, req.RunbookID)
+	if err != nil {
+		return projectControlTask{}, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	task := projectControlTask{
+		MilestoneID: req.MilestoneID, DependsOn: req.DependsOn, AcceptanceCommand: req.AcceptanceCommand,
+		Origin:           projectControlTaskOrigin(req.Origin),
+		ID:               projectControlID("task", title),
+		ProjectID:        projectID,
+		WorkstreamID:     workstreamID,
+		Title:            title,
+		Goal:             strings.TrimSpace(req.Goal),
+		State:            "planned",
+		AcceptanceStatus: "not_ready",
+		RiskLevel:        normalizeProjectControlRisk(req.RiskLevel),
+		Priority:         normalizeProjectControlPriority(req.Priority),
+		AgentLabel:       "worker",
+		RuntimeID:        projectControlRuntimeID,
+		SelectedSkill:    skill.ID,
+		RunbookID:        runbook.ID,
+		CurrentPhase:     "plan",
+		RunbookState:     "not_started",
+		MissingEvidence:  []string{},
+		RecentSummary:    "Task created from the Project Panel and waiting to be scheduled.",
+		NextStep:         "Open a session or connect a runtime-backed workflow to start execution.",
+		FilesChanged:     []string{},
+		DiffSummary:      "",
+		SessionIDs:       []string{},
+		Timeline:         []projectControlEvent{},
+		Evidence:         []projectControlEvidence{},
+		Audit:            []projectControlAuditItem{},
+		RowVersion:       1,
+	}
+	if err := validateTaskContract(*state, task); err != nil {
+		return projectControlTask{}, err
+	}
+	refreshProjectControlTaskRunbookFields(&task, state.Artifacts)
+	state.Tasks = append(state.Tasks, task)
+	state.ActiveProjectID = projectID
+	projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+		ID:           projectControlID("event", "task-created"),
+		Timestamp:    now,
+		Actor:        "human",
+		Action:       "task_created",
+		Detail:       "Created task " + task.Title + ".",
+		ProjectID:    task.ProjectID,
+		WorkstreamID: task.WorkstreamID,
+		TaskID:       task.ID,
+	})
+	// Dispatch pipeline (K4, WS-20261015-001): a task raised by a human is
+	// dispatched automatically — the requester is the decision maker. Only
+	// agent-raised tasks wait for a human decision in the approvals inbox.
+	if projectControlTaskNeedsDispatchApproval(task) {
+		syncProjectControlDispatchCheckpoint(state, task, now)
+	} else {
+		task.DispatchState = controlplane.DispatchStateReady
+		task.NextStep = "Task is ready for an agent runtime to claim."
+		task.RecentSummary = "Dispatched automatically; the task was raised by a human."
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == task.ID {
+				state.Tasks[i] = task
+				break
+			}
+		}
+		projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+			ID:           projectControlID("event", "dispatch-auto-approved"),
+			Timestamp:    now,
+			Actor:        "policy_engine",
+			Action:       "dispatch_auto_approved",
+			Detail:       "Task dispatched automatically because it was raised by a human.",
+			ProjectID:    projectID,
+			WorkstreamID: workstreamID,
+			TaskID:       task.ID,
+		})
+	}
+	return task, nil
 }
 
 func (s *projectControlStore) updateWorkstream(username, workstreamID string, req projectControlWorkstreamUpdateRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
