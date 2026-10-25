@@ -21,7 +21,9 @@
         boardTab: 'wall',
         boardRange: 'all',
 
-        boardTimer: null
+        boardTimer: null,
+
+        sourceRefs: []
     };
 
     var TOOL_RUN_REFRESH_INTERVAL_MS = 1200;
@@ -766,6 +768,44 @@
             (project ? project.name : task.projectId || '') + ' · ' + label + ' · ' + boardRelative(stamp);
         bindInteractions(dialog);
         startProgressPolling(task.id);
+        renderTaskSourceLinks(dialog, task);
+    }
+
+    // P4 handoff: 来源关系（reviews 等）展示与事后撤销，不新增确认步骤。
+    function renderTaskSourceLinks(dialog, task) {
+        var body = dialog.querySelector('#board-task-dialog-body');
+        if (!body) return;
+        fetchJSON('/api/project-control/tasks/' + encodeURIComponent(task.id) + '/source-links')
+            .then(function(data) {
+                var previous = body.querySelector('[data-source-links]');
+                if (previous) previous.remove();
+                if (!dialog.isConnected || taskDialog !== dialog) return;
+                var refs = data && Array.isArray(data.refs) ? data.refs : [];
+                if (!refs.length) return;
+                var section = document.createElement('section');
+                section.setAttribute('data-source-links', '1');
+                section.style.cssText = 'margin-top:12px;font-size:12px;opacity:.9';
+                var html = '<h3 style="margin:0 0 4px;font-size:12px">' + escapeHTML(tr('project.sourceLinks', 'Source')) + '</h3><ul style="margin:0;padding-left:16px">';
+                refs.forEach(function(ref) {
+                    var src = findById(tasks(), ref.sourceTaskId);
+                    var label = (src && src.title) ? src.title : (ref.sourceTaskId || ref.sourceTerminal || '?');
+                    html += '<li style="margin-top:2px"><span data-open-task="' + escapeHTML(ref.sourceTaskId || '') + '">'
+                        + escapeHTML((ref.relation || 'reviews') + ' · ' + label)
+                        + '</span> <button type="button" class="btn small" data-source-ref-delete="' + escapeHTML(ref.id)
+                        + '" title="' + escapeHTML(tr('project.sourceUnlink', 'Remove link')) + '">✕</button></li>';
+                });
+                html += '</ul>';
+                section.innerHTML = html;
+                body.appendChild(section);
+                Array.prototype.forEach.call(section.querySelectorAll('[data-source-ref-delete]'), function(btn) {
+                    btn.onclick = function() {
+                        fetchJSON('/api/source-links/' + encodeURIComponent(btn.getAttribute('data-source-ref-delete')), { method: 'DELETE' })
+                            .then(function() { renderTaskSourceLinks(dialog, task); })
+                            .catch(function() {});
+                    };
+                });
+            })
+            .catch(function() { /* source links are optional decoration */ });
     }
 
     function openBranchesDialog(taskId) {
@@ -1696,6 +1736,23 @@
                 html += '<div class="board-graph-arrow" aria-hidden="true">→</div>';
             }
         }
+        // P4 handoff: reviews 等来源关系在流程视图中独立于 DependsOn 呈现。
+        var refs = (Array.isArray(state.sourceRefs) ? state.sourceRefs : []).filter(function(ref) {
+            return ref && inSet(ref.targetTaskId) && inSet(ref.sourceTaskId);
+        });
+        if (refs.length) {
+            html += '<ul style="margin:12px 0 0;padding:0;list-style:none;font-size:12px;opacity:.9">';
+            refs.forEach(function(ref) {
+                var target = byId[ref.targetTaskId] ? (byId[ref.targetTaskId].task.title || ref.targetTaskId) : ref.targetTaskId;
+                var source = byId[ref.sourceTaskId] ? (byId[ref.sourceTaskId].task.title || ref.sourceTaskId) : ref.sourceTaskId;
+                html += '<li style="margin-top:4px"><span aria-hidden="true">↗ </span>'
+                    + '<button type="button" data-task-id="' + escapeHTML(ref.targetTaskId) + '">' + escapeHTML(target) + '</button>'
+                    + ' ' + escapeHTML(ref.relation || 'reviews') + ' '
+                    + '<button type="button" data-task-id="' + escapeHTML(ref.sourceTaskId) + '">' + escapeHTML(source) + '</button>'
+                    + '</li>';
+            });
+            html += '</ul>';
+        }
         html += '</div></div></section>';
         return html;
     }
@@ -2509,9 +2566,14 @@
         if (!options.silent) render();
         // The current board endpoint has project summaries only. The snapshot
         // supplies full tasks, approval gates and evidence for task details.
-        return Promise.all([fetchJSON('/api/project-control/board'), fetchJSON('/api/project-control')]).then(function(results) {
+        return Promise.all([
+            fetchJSON('/api/project-control/board'),
+            fetchJSON('/api/project-control'),
+            fetchJSON('/api/source-links').catch(function() { return { refs: [] }; })
+        ]).then(function(results) {
             if (!state.authenticated || epoch !== state.boardEpoch) return null;
             var board = results[0], snapshot = results[1];
+            state.sourceRefs = (results[2] && Array.isArray(results[2].refs)) ? results[2].refs : [];
             if (!board || !Array.isArray(board.projects) || !snapshot || !Array.isArray(snapshot.tasks)) throw new Error(tr('project.loadFailed', 'Failed to load tasks'));
             state.snapshot = Object.assign({}, snapshot, {
                 tasks: Array.isArray(board.tasks) ? board.tasks : snapshot.tasks,
@@ -2846,6 +2908,22 @@
         });
         document.addEventListener('roambench:auth', handleAuth);
         document.addEventListener('roambench:modechange', handleModeChange);
+        document.addEventListener('roambench:handoff', function(event) {
+            var detail = event && event.detail ? event.detail : {};
+            if (state.authenticated && !state.boardLoading) loadBoard({ silent: true });
+            var taskId = detail.taskId || '';
+            if (!taskId || !detail.open) return;
+            var tryOpen = function() {
+                if (findById(tasks(), taskId)) { openTask(taskId); return true; }
+                return false;
+            };
+            if (tryOpen()) return;
+            var attempts = 0;
+            var timer = setInterval(function() {
+                attempts += 1;
+                if (tryOpen() || attempts > 20) clearInterval(timer);
+            }, 500);
+        });
         if (app() && app().getUsername && app().getUsername()) {
             state.authenticated = true;
             if (app().getMode() === 'project') openBoard();

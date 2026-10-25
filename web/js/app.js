@@ -3302,10 +3302,76 @@
         if (!writeClipboardText(selection)) {
             return false;
         }
+        // P4 handoff: record provenance (source terminal + selection) so a
+        // later paste into another agent terminal can link back. Best-effort.
+        if (selection && selection.trim()) {
+            reportHandoffCopy(terminalIdOf(null, term), selection);
+        }
         if (term && typeof term.clearSelection === 'function') {
             term.clearSelection();
         }
         return true;
+    }
+
+    // Resolve the terminal session id for a terminal record or xterm instance.
+    function terminalIdOf(record, term) {
+        for (var id in state.terminals) {
+            var entry = state.terminals[id];
+            if (!entry) continue;
+            if (record && entry === record) return id;
+            if (term && entry.term === term) return id;
+        }
+        return '';
+    }
+
+    function reportHandoffCopy(terminalId, text) {
+        fetchJSON('/api/terminal-handoff/copy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ terminalId: terminalId, text: text })
+        }).catch(function() { /* best-effort */ });
+    }
+
+    function reportHandoffPaste(terminal, text) {
+        return fetchJSON('/api/terminal-handoff/paste', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ terminalId: terminalIdOf(terminal, terminal && terminal.term), text: text })
+        }).then(function(data) {
+            if (data && data.matched && data.taskId) {
+                document.dispatchEvent(new CustomEvent('roambench:handoff', {
+                    detail: { taskId: data.taskId, sourceTaskId: data.sourceTaskId || '' }
+                }));
+                showHandoffToast(data.taskId, data.sourceTaskId || '');
+            }
+            return data;
+        }).catch(function() { return null; });
+    }
+
+    // Lightweight non-blocking hint for the automatic review-card handoff.
+    function showHandoffToast(taskId, sourceTaskId) {
+        var labels = {
+            en: 'Review task created — click to open',
+            'zh-CN': '已创建审查任务，点击打开',
+            ja: 'レビュータスクを作成しました — クリックで開く'
+        };
+        var toast = document.createElement('button');
+        toast.type = 'button';
+        toast.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:10000;'
+            + 'max-width:320px;padding:10px 14px;border:1px solid rgba(128,128,128,.5);'
+            + 'border-radius:8px;background:#1e1e1e;color:#eee;'
+            + 'font:13px/1.4 system-ui,sans-serif;text-align:left;cursor:pointer;'
+            + 'box-shadow:0 4px 16px rgba(0,0,0,.25)';
+        toast.textContent = labels[state.language] || labels.en;
+        toast.onclick = function() {
+            toast.remove();
+            setAppMode('project');
+            document.dispatchEvent(new CustomEvent('roambench:handoff', {
+                detail: { taskId: taskId, sourceTaskId: sourceTaskId, open: true }
+            }));
+        };
+        document.body.appendChild(toast);
+        setTimeout(function() { if (toast.isConnected) toast.remove(); }, 8000);
     }
 
     function fallbackCopyText(text) {
@@ -3328,6 +3394,9 @@
                 .then(function(text) {
                     if (text) {
                         sendTerminalSequence(terminal, text);
+                        if (text.trim()) {
+                            reportHandoffPaste(terminal, text);
+                        }
                     }
                 })
                 .catch(function() {

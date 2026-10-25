@@ -25,6 +25,8 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 - Browsing is no longer confined to the home directory: the file browser, the folder picker and the project `repoPath` contract accept any absolute path the service account can reach
 - A project `repoPath` only has to be an absolute path to an existing directory; symlinks resolve to the real directory
 
+- Terminal review handoff: copying a selection from one agent terminal and pasting it into another automatically records provenance, links the paste back to its source task (registering never-registered source terminals), and creates one planned review card per source-target pair with a `reviews` source relationship — no confirmation dialogs; the task detail dialog lists source links with an undo button, and the task flow view lists review relations independently of `DependsOn`
+
 ### Fixed
 
 - Worker progress carries `--lease-id` through the agent CLI; pending progress writes finish before the worker releases its lease

@@ -30,6 +30,16 @@ func (s *Server) handleProjectControlTaskRoutes(w http.ResponseWriter, r *http.R
 		s.handleTaskProgressGET(w, r, username, id)
 		return
 	}
+	if parts[1] == "source-links" && r.Method == http.MethodGet {
+		username := GetUsername(r)
+		refs, err := s.controlPlane.ListSourceRefs(r.Context(), username, id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"refs": refs})
+		return
+	}
 	if parts[1] == "branches" && r.Method == http.MethodPost {
 		username := GetUsername(r)
 		s.handleTaskBranches(w, r, username, id)

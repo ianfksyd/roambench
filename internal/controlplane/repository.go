@@ -283,7 +283,31 @@ CREATE TABLE IF NOT EXISTS task_progress (
   created_at TEXT NOT NULL,
   PRIMARY KEY(username, task_id, seq)
 );
+CREATE TABLE IF NOT EXISTS terminal_copies (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  terminal_id TEXT NOT NULL,
+  task_id TEXT NOT NULL DEFAULT '',
+  fingerprint TEXT NOT NULL,
+  snapshot TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS terminal_copies_user_fp_idx ON terminal_copies(username, fingerprint, created_at);
+CREATE TABLE IF NOT EXISTS task_source_refs (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  target_task_id TEXT NOT NULL,
+  source_task_id TEXT NOT NULL DEFAULT '',
+  relation TEXT NOT NULL,
+  snapshot TEXT NOT NULL DEFAULT '',
+  source_terminal TEXT NOT NULL DEFAULT '',
+  target_terminal TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_source_refs_target_idx ON task_source_refs(username, target_task_id);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, CURRENT_TIMESTAMP);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (6, CURRENT_TIMESTAMP);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, CURRENT_TIMESTAMP);
