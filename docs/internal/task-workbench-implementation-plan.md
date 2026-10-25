@@ -1,7 +1,7 @@
 # 任务工作台：审查结论与实施方案
 
 日期：2026-10-25  
-状态：P0a、P0b 核心、P1 进展卡、P3 分支/综合接口已实施（P4 流程视图未做）——`internal/localruntime`（Claude `-p --output-format stream-json` 适配器：真实退出码完成判定、事件解析、进程组 Stop、观察窗转写）替代 send-keys/pane-guess 路径；worker 心跳丢失即停执行器；`permission_mode` 可配（默认 acceptEdits，绕过参数须部署者显式选择）。P0b 其余（execution 表、重启对账、暂停协议）与 P1–P4 未实施。
+状态：P0a、P0b 核心、P1 进展卡、P2 面板回答、P3 分支/综合、P4 受控并发+流程视图已实施。worktree 自动隔离未做（同 repo 写互斥由 sharedDirectoryConflict 保护）；拖线编辑未做。——`internal/localruntime`（Claude `-p --output-format stream-json` 适配器：真实退出码完成判定、事件解析、进程组 Stop、观察窗转写）替代 send-keys/pane-guess 路径；worker 心跳丢失即停执行器；`permission_mode` 可配（默认 acceptEdits，绕过参数须部署者显式选择）。P0b 其余（execution 表、重启对账、暂停协议）与 P1–P4 未实施。
 
 ## 1. 产品目标与审查结论
 
