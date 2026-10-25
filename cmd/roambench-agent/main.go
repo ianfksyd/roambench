@@ -81,7 +81,7 @@ Commands:
                                   Replace the canonical project memory
   memory pointer --project <id> --file <path> [--file <path> ...]
                                   Write the shared-memory pointer into files
-  progress --task <id> --seq <n> --kind <k> --text <text> [--file <f>]
+  progress --task <id> --lease-id <id> --seq <n> --kind <k> --text <text> [--file <f>]
                                   Report one execution progress event
   ask --task <id> --question "..." [--options yes,no] [--wait 10m]
                                   Ask a human a question and block for the
@@ -276,7 +276,7 @@ func cmdAsk(args []string) {
 	}
 
 	schema := map[string]interface{}{"type": "action"}
-	if len(options) > 2 || options[0] != "approve" || options[1] != "reject" {
+	if len(options) != 2 || options[0] != "approve" || options[1] != "reject" {
 		var choiceOptions []map[string]string
 		for _, option := range options {
 			choiceOptions = append(choiceOptions, map[string]string{"id": option, "label": option})
@@ -333,24 +333,9 @@ func cmdAsk(args []string) {
 
 	waitCtx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
-	req, err = http.NewRequestWithContext(waitCtx, http.MethodGet,
-		claimBaseURL(o)+"/api/agent/v1/interactions/"+created.RequestID+"/wait", nil)
-	if err != nil {
-		fatal(err.Error())
-	}
-	req.Header.Set("Authorization", "Bearer "+claimToken(o))
-	resp, err = (&http.Client{}).Do(req)
-	if err != nil {
-		fatal(err.Error())
-	}
-	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		fatal(fmt.Sprintf("wait HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
-	}
-	// The wait endpoint returns the interaction with an optional embedded
-	// response. A pending/expired question is NOT a success: the caller must
-	// distinguish "human said yes" from "nobody answered".
+	// Each server long poll lasts at most 30 seconds. A pending response
+	// starts another poll within the same overall deadline.
+	client := &http.Client{}
 	var result struct {
 		Status   string `json:"status"`
 		Response *struct {
@@ -359,11 +344,45 @@ func cmdAsk(args []string) {
 			SelectedOptionIDs []string `json:"selectedOptionIds"`
 		} `json:"response"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		fatal(fmt.Sprintf("invalid answer JSON: %v (%s)", err, strings.TrimSpace(string(body))))
-	}
-	if result.Status != "resolved" || result.Response == nil {
-		fatal(fmt.Sprintf("question was not answered (status=%s)", result.Status))
+	for {
+		req, err = http.NewRequestWithContext(waitCtx, http.MethodGet,
+			claimBaseURL(o)+"/api/agent/v1/interactions/"+url.PathEscape(created.RequestID)+"/wait", nil)
+		if err != nil {
+			fatal(err.Error())
+		}
+		req.Header.Set("Authorization", "Bearer "+claimToken(o))
+		resp, err = client.Do(req)
+		if err != nil {
+			fatal(err.Error())
+		}
+		body, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			fatal(err.Error())
+		}
+		if resp.StatusCode != http.StatusOK {
+			fatal(fmt.Sprintf("wait HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+		}
+		result.Response = nil
+		result.Status = ""
+		if err := json.Unmarshal(body, &result); err != nil {
+			fatal(fmt.Sprintf("invalid answer JSON: %v (%s)", err, strings.TrimSpace(string(body))))
+		}
+		if result.Status == "pending" {
+			// Bound request frequency if a server/proxy returns pending early.
+			delay := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-waitCtx.Done():
+				delay.Stop()
+				fatal(waitCtx.Err().Error())
+			case <-delay.C:
+			}
+			continue
+		}
+		if result.Status != "resolved" || result.Response == nil {
+			fatal(fmt.Sprintf("question was not answered (status=%s)", result.Status))
+		}
+		break
 	}
 	out := map[string]interface{}{
 		"status":   result.Status,
@@ -416,6 +435,7 @@ func cmdRegisterTask(args []string) {
 // cmdProgress reports one execution progress event for a running task.
 func cmdProgress(args []string) {
 	taskID := flag(args, "--task")
+	leaseID := strings.TrimSpace(flag(args, "--lease-id"))
 	seqRaw := flag(args, "--seq")
 	kind := flag(args, "--kind")
 	text := flag(args, "--text")
@@ -423,6 +443,9 @@ func cmdProgress(args []string) {
 
 	if taskID == "" {
 		fatal("--task is required")
+	}
+	if leaseID == "" {
+		fatal("--lease-id is required")
 	}
 	if file != "" && text == "" {
 		data, err := os.ReadFile(file)
@@ -447,14 +470,18 @@ func cmdProgress(args []string) {
 	if strings.TrimSpace(kind) == "" {
 		kind = "assistant"
 	}
-	_, err := apiPost("/api/agent/v1/progress", map[string]interface{}{
-		"taskId": taskID,
-		"seq":    seq,
-		"kind":   kind,
-		"text":   strings.TrimRight(text, "\n"),
+	status, body, err := claimAPIPost(parseOverrides(args), "/api/agent/v1/progress", map[string]interface{}{
+		"taskId":  taskID,
+		"leaseId": leaseID,
+		"seq":     seq,
+		"kind":    kind,
+		"text":    strings.TrimRight(text, "\n"),
 	})
 	if err != nil {
 		fatal(err.Error())
+	}
+	if status != http.StatusOK {
+		fatal(fmt.Sprintf("HTTP %d: %s", status, strings.TrimSpace(string(body))))
 	}
 	fmt.Println("progress reported")
 }
@@ -689,6 +716,7 @@ func cmdArtifact() {
 
 	payload := map[string]string{
 		"taskId":       taskID,
+		"leaseId":      flag(args, "--lease-id"),
 		"phaseId":      phaseID,
 		"artifactKind": kind,
 		"outcome":      outcome,

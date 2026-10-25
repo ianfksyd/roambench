@@ -25,6 +25,14 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 - Browsing is no longer confined to the home directory: the file browser, the folder picker and the project `repoPath` contract accept any absolute path the service account can reach
 - A project `repoPath` only has to be an absolute path to an existing directory; symlinks resolve to the real directory
 
+### Fixed
+
+- Worker progress carries `--lease-id` through the agent CLI; pending progress writes finish before the worker releases its lease
+- Worker cancellation waits for the executor's recorded exit and stops its process group without sharing a mutable execution context between goroutines
+- Terminal task registration validates ownership and preserves the terminal's project and workstream; the card and session binding are persisted together, and invalid terminals leave no task behind
+- `roambench-agent ask --wait` continues across pending long polls until an answer, a terminal question status, or the overall deadline, preserving custom choices and feedback
+- Composed tasks record all source task IDs in their persisted description
+
 ## [0.5.0] - 2026-09-01
 
 ### Added

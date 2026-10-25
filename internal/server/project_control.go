@@ -116,8 +116,7 @@ type projectControlWorkstream struct {
 
 type projectControlTask struct {
 	// Description records provenance for synthesized tasks (P3).
-	Description string `json:"description,omitempty"`
-	// Description records provenance for synthesized tasks (P3).
+	Description          string   `json:"description,omitempty"`
 	MilestoneID          string   `json:"milestoneId,omitempty"`
 	DependsOn            []string `json:"dependsOn,omitempty"`
 	AcceptanceCommand    []string `json:"acceptanceCommand,omitempty"`
@@ -3056,6 +3055,7 @@ func (s *projectControlStore) createComposedTask(username string, sourceIDs []st
 			Goal:         goal,
 			Origin:       "human",
 			DependsOn:    sourceIDs,
+			Description:  "Synthesized from: [" + strings.Join(sourceIDs, ", ") + "]",
 		}, terminals); taskErr != nil {
 			return taskErr
 		}

@@ -162,6 +162,8 @@ func runTask(o options, task *claimedTask) {
 	fmt.Printf("claimed %s (%s)\n", task.TaskID, firstLine(task.Title))
 
 	lostLease := make(chan struct{})
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
+	defer stopHeartbeat()
 	// Heartbeat loop keeps the lease alive while the executor works; losing
 	// the lease (expired/revoked) closes this execution's write access.
 	go func() {
@@ -169,7 +171,7 @@ func runTask(o options, task *claimedTask) {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-lostLease:
+			case <-heartbeatCtx.Done():
 				return
 			case <-ticker.C:
 				out := cli("heartbeat", "--lease-id", task.LeaseID)
@@ -188,7 +190,6 @@ func runTask(o options, task *claimedTask) {
 	if terminalID == "" {
 		fmt.Println("no terminal session available; refusing to run headless (worker requires tmux)")
 		_ = cli("release", "--lease-id", task.LeaseID, "--outcome", "failed")
-		close(lostLease)
 		return
 	}
 
@@ -217,21 +218,14 @@ func runTask(o options, task *claimedTask) {
 		_, _ = f.WriteString(line + "\n")
 	})
 
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	// Losing the lease stops the executor.
-	go func() {
-		select {
-		case <-lostLease:
-			cancelRun()
-		case <-runCtx.Done():
-		}
-	}()
-
+	var runCtx context.Context
+	var cancelRun context.CancelFunc
 	if o.maxRuntime > 0 {
-		runCtx, cancelRun = context.WithTimeout(runCtx, o.maxRuntime)
+		runCtx, cancelRun = context.WithTimeout(context.Background(), o.maxRuntime)
+	} else {
+		runCtx, cancelRun = context.WithCancel(context.Background())
 	}
-	_ = cancelRun
+	defer cancelRun()
 
 	fmt.Fprintf(os.Stderr, "[worker] terminal=%q executor=%s mode=%s\n", terminalID, o.executor, o.permissionMode)
 	handle, err := localruntime.Start(runCtx, localruntime.StartRequest{
@@ -249,48 +243,47 @@ func runTask(o options, task *claimedTask) {
 	if err != nil {
 		fmt.Printf("executor start failed: %v\n", err)
 		_ = cli("release", "--lease-id", task.LeaseID, "--outcome", "failed")
-		close(lostLease)
 		return
 	}
 
 	// Wait for executor exit, runtime bound, or lease loss. The executor
 	// handle's own Done channel closes only AFTER its exit code and error
 	// have been recorded, so the outcome below never races the wait.
-	var timedOut bool
-	execDone := make(chan struct{})
-	go func() {
-		handle.Wait(runCtx)
-		close(execDone)
-	}()
+	var interrupted bool
 	select {
-	case <-execDone:
+	case <-handle.Done():
 	case <-lostLease:
 		// Lease gone: kill the whole process group, wait for the exit to be
 		// recorded, then report failure.
 		handle.Stop()
 		<-handle.Done()
-		timedOut = true
+		interrupted = true
 	case <-runCtx.Done():
 		// Runtime bound hit: kill the process group (children of the
 		// executor would otherwise hold the pipe and stall the wait), then
 		// record the real exit before reporting.
-		timedOut = true
+		interrupted = true
 		handle.Stop()
 		<-handle.Done()
 	}
-
 	outcome := "done"
-	failed := timedOut || handle.Err != nil || handle.ExitCode != 0
+	failed := interrupted || runCtx.Err() != nil || handle.Err != nil || handle.ExitCode != 0
 	if failed {
 		outcome = "failed"
 	}
+	// Complete telemetry while the lease is still active. In particular,
+	// the final assistant/result events must arrive before release. Slow
+	// delivery must not change the execution outcome already recorded above.
+	progress.wait()
 	summary := summarizeEvents(handle.Events())
+	artifactFile := writeFileTemp(summary)
+	defer os.Remove(artifactFile)
 	_ = cli("artifact", "--kind", "completion_check",
 		"--outcome", map[bool]string{true: "fail", false: "pass"}[failed],
 		"--label", "worker execution",
 		"--task", task.TaskID,
 		"--lease-id", task.LeaseID,
-		"--file", writeFileTemp(summary))
+		"--file", artifactFile)
 	rel := cli("release", "--lease-id", task.LeaseID, "--outcome", outcome)
 	if strings.Contains(rel, "error:") {
 		fmt.Println("release failed:", rel)
@@ -307,6 +300,7 @@ type progressReporter struct {
 	leaseID string
 	seq     int
 	mu      sync.Mutex
+	pending sync.WaitGroup
 	flush   func(seq int, kind, text, leaseID string)
 }
 
@@ -330,8 +324,14 @@ func (p *progressReporter) add(line string) {
 	seq := p.seq
 	text := line
 	p.mu.Unlock()
-	go p.flush(seq, "assistant", text, p.leaseID)
+	p.pending.Add(1)
+	go func() {
+		defer p.pending.Done()
+		p.flush(seq, "assistant", text, p.leaseID)
+	}()
 }
+
+func (p *progressReporter) wait() { p.pending.Wait() }
 
 // summarizeEvents renders the last assistant/result text as the artifact value.
 func summarizeEvents(events []localruntime.Event) string {

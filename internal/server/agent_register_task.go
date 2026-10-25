@@ -2,8 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/ianf339/roambench/internal/terminal"
 )
 
 // registerTaskRequest is the payload for registering a new task from a
@@ -36,64 +40,127 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Locate the project: prefer the terminal's bound task's project, else
-	// the active project.
-	state, err := s.projectControl.loadOrSeed(username)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	projectID := state.ActiveProjectID
-	workstreamID := ""
-	for _, ws := range state.Workstreams {
-		if ws.ProjectID == projectID {
-			workstreamID = ws.ID
-			break
-		}
-	}
-	if workstreamID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no workstream available in the active project"})
-		return
-	}
-
-	// Origin "agent": the task waits for a human decision in the approvals
-	// inbox instead of entering the worker queue — registering work observed
-	// in a terminal must not silently start another executor on it.
-	// The created task id is taken from the dedicated task record (matching
-	// by title would return a pre-existing task of the same name).
-	createReq := projectControlTaskCreateRequest{
-		ProjectID:    projectID,
-		WorkstreamID: workstreamID,
-		Title:        title,
-		Goal:         strings.TrimSpace(req.Goal),
-		Origin:       "agent",
-	}
-	snapshot, err := s.projectControl.createTask(username, createReq, s.terminals)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	createdID := snapshot.CreatedTaskID
-
-	// Bind the tmux session when provided: it must exist and be owned by the
-	// same user, so a caller cannot hijack another session's identity.
+	// Validate ownership before creating anything. An invalid terminal must
+	// not leave an unbound task behind or be echoed back as a successful bind.
 	terminalID := strings.TrimSpace(req.TerminalID)
-	if terminalID != "" && s.terminals != nil {
-		found := false
-		for _, live := range s.terminals.ListSessions(username) {
-			if live.ID == terminalID {
-				found = true
+	var live *terminal.SessionInfo
+	if terminalID != "" {
+		if s.terminals == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "terminal runtime unavailable"})
+			return
+		}
+		for _, info := range s.terminals.ListSessions(username) {
+			if info.ID == terminalID {
+				live = &info
 				break
 			}
 		}
-		if found {
-			s.projectControl.bindTaskTerminal(username, createdID, terminalID, projectID)
+		if live == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "terminal not found"})
+			return
 		}
 	}
 
+	// Persist the new card and its binding together. Origin=agent preserves
+	// the approval gate, so registration cannot start a duplicate executor.
+	var created projectControlTask
+	var requestErr error
+	_, err := s.projectControl.withStateLocked(username, func(state *projectControlState) error {
+		projectID, workstreamID, contextErr := registrationContext(*state, live)
+		if contextErr != nil {
+			requestErr = contextErr
+			return contextErr
+		}
+		var createErr error
+		created, createErr = s.projectControl.createTaskInState(username, state, projectControlTaskCreateRequest{
+			ProjectID: projectID, WorkstreamID: workstreamID, Title: title,
+			Goal: strings.TrimSpace(req.Goal), Origin: "agent",
+		}, s.terminals)
+		if createErr != nil {
+			requestErr = createErr
+			return createErr
+		}
+		if live != nil {
+			sessionID := projectControlSessionIDForTerminal(live.ID)
+			for i := range state.Tasks {
+				if state.Tasks[i].ID == created.ID {
+					state.Tasks[i].SessionIDs = appendUniqueString(state.Tasks[i].SessionIDs, sessionID)
+					break
+				}
+			}
+			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
+				ID:        projectControlID("event", "task-terminal-linked"),
+				Timestamp: time.Now().UTC().Format(time.RFC3339), Actor: "agent",
+				Action: "task_terminal_linked", Detail: "Registered terminal " + sessionID + ".",
+				ProjectID: projectID, WorkstreamID: workstreamID, TaskID: created.ID,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if requestErr != nil {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"taskId":     createdID,
-		"projectId":  projectID,
+		"taskId":     created.ID,
+		"projectId":  created.ProjectID,
 		"terminalId": terminalID,
 	})
+}
+
+// Use the terminal's explicit task/project binding before the active UI
+// project. Legacy bindings stored only in task.sessionIds are also valid.
+func registrationContext(state projectControlState, live *terminal.SessionInfo) (string, string, error) {
+	projectID, workstreamID := state.ActiveProjectID, ""
+	if live != nil {
+		if live.ProjectID != "" {
+			projectID = live.ProjectID
+		}
+		var boundTask *projectControlTask
+		if live.TaskID != "" {
+			task, ok := controlTask(state, live.TaskID)
+			if !ok {
+				return "", "", errors.New("terminal task not found")
+			}
+			boundTask = &task
+		} else {
+			for _, task := range state.Tasks {
+				for _, sessionID := range task.SessionIDs {
+					if sessionID == projectControlSessionIDForTerminal(live.ID) {
+						if boundTask != nil && (boundTask.ProjectID != task.ProjectID || boundTask.WorkstreamID != task.WorkstreamID) {
+							return "", "", errors.New("terminal has conflicting task bindings")
+						}
+						matched := task
+						boundTask = &matched
+					}
+				}
+			}
+		}
+		if boundTask != nil {
+			if live.ProjectID != "" && live.ProjectID != boundTask.ProjectID {
+				return "", "", errors.New("terminal project does not match its task")
+			}
+			projectID, workstreamID = boundTask.ProjectID, boundTask.WorkstreamID
+		}
+	}
+	if !projectControlProjectExists(state, projectID) {
+		return "", "", errors.New("terminal or active project not found")
+	}
+	if workstreamID != "" {
+		if !projectControlWorkstreamExists(state, workstreamID, projectID) {
+			return "", "", errors.New("terminal workstream does not belong to its project")
+		}
+		return projectID, workstreamID, nil
+	}
+	for _, ws := range state.Workstreams {
+		if ws.ProjectID == projectID {
+			return projectID, ws.ID, nil
+		}
+	}
+	return "", "", errors.New("no workstream available in the terminal or active project")
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -156,6 +157,45 @@ func TestP3ComposeRejectsUndoneSource(t *testing.T) {
 	if rec.Code == http.StatusOK {
 		t.Fatal("compose from a running source must fail")
 	}
+}
+
+func TestComposedTaskPersistsAllSourceDescriptions(t *testing.T) {
+	srv, token, sessions := progressServer(t)
+	defer sessions.Stop()
+	muteSeedTasks(t, srv)
+	ids := []string{seedP3Task(t, srv, token, "first source"), seedP3Task(t, srv, token, "second source")}
+	_, err := srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == ids[0] || state.Tasks[i].ID == ids[1] {
+				state.Tasks[i].DispatchState = "done"
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(taskComposeRequest{SourceTaskIDs: ids, Title: "combined result"})
+	req := httptest.NewRequest(http.MethodPost, "/api/project-control/tasks/"+ids[0]+"/compose", strings.NewReader(string(body)))
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("compose: %d %s", rec.Code, rec.Body.String())
+	}
+	state, err := srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range state.Tasks {
+		if task.Title == "combined result" {
+			if task.Description != "Synthesized from: ["+strings.Join(ids, ", ")+"]" || len(task.DependsOn) != 2 {
+				t.Fatalf("provenance lost: %+v", task)
+			}
+			return
+		}
+	}
+	t.Fatal("composed task not persisted")
 }
 
 // 依赖 PATCH 不得制造循环：A 依赖 B 时，把 B 改为依赖 A 必须被拒绝。
