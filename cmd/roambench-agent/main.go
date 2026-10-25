@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,6 +47,8 @@ func main() {
 		cmdConfig(os.Args[2:])
 	case "progress":
 		cmdProgress(os.Args[2:])
+	case "ask":
+		cmdAsk(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("roambench-agent " + version)
 	case "help", "--help", "-h":
@@ -77,6 +81,9 @@ Commands:
                                   Write the shared-memory pointer into files
   progress --task <id> --seq <n> --kind <k> --text <text> [--file <f>]
                                   Report one execution progress event
+  ask --task <id> --question "..." [--options yes,no] [--wait 10m]
+                                  Ask a human a question and block for the
+                                  answer (prints JSON: action/feedback)
   config show --agent <label>
                                   Show where an agent currently points
   config apply --agent <label> --base-url <url> [--auth-token <t>]
@@ -220,6 +227,123 @@ func cmdStatus() {
 	if nextStep != "" {
 		fmt.Printf("Next:    %s\n", nextStep)
 	}
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// cmdAsk asks a human a question and blocks until they answer. The question
+// appears in the approvals inbox; the answer returns as JSON on stdout.
+func cmdAsk(args []string) {
+	o := parseOverrides(args)
+	taskID := flag(args, "--task")
+	question := flag(args, "--question")
+	optionsRaw := flag(args, "--options")
+	waitRaw := flag(args, "--wait")
+
+	if taskID == "" {
+		fatal("--task is required")
+	}
+	if strings.TrimSpace(question) == "" {
+		fatal("--question is required")
+	}
+	var options []string
+	for _, option := range strings.Split(optionsRaw, ",") {
+		if trimmed := strings.TrimSpace(option); trimmed != "" {
+			options = append(options, trimmed)
+		}
+	}
+	if len(options) == 0 {
+		options = []string{"approve", "reject"}
+	}
+	wait := 10 * time.Minute
+	if waitRaw != "" {
+		parsed, err := time.ParseDuration(waitRaw)
+		if err != nil || parsed <= 0 {
+			fatal("invalid --wait duration")
+		}
+		wait = parsed
+	}
+
+	schema := map[string]interface{}{"type": "action"}
+	if len(options) > 2 || options[0] != "approve" || options[1] != "reject" {
+		var choiceOptions []map[string]string
+		for _, option := range options {
+			choiceOptions = append(choiceOptions, map[string]string{"id": option, "label": option})
+		}
+		schema = map[string]interface{}{
+			"type":    "single_choice",
+			"options": choiceOptions,
+		}
+	}
+	schemaJSON, _ := json.Marshal(schema)
+
+	idempotency := "ask-" + fmt.Sprint(time.Now().UnixNano())
+	create := map[string]interface{}{
+		"taskId":          taskID,
+		"runtimeId":       "worker",
+		"adapterKind":     "roambench-agent",
+		"vendorRequestId": idempotency,
+		"requestKind":     "question",
+		"riskClass":       "low",
+		"sessionID":       "worker",
+		"title":           firstLine(question),
+		"summary":         question,
+		"preview":         firstLine(question),
+		"allowedActions":  options,
+		"responseSchema":  json.RawMessage(schemaJSON),
+		"inputHash":       "sha256:" + fmt.Sprintf("%x", sha256.Sum256([]byte(question)))[:16],
+		"expiresAt":       time.Now().UTC().Add(wait + time.Minute).Format(time.RFC3339),
+	}
+	payload, _ := json.Marshal(create)
+	req, err := http.NewRequest(http.MethodPost, claimBaseURL(o)+"/api/agent/v1/interactions", bytes.NewReader(payload))
+	if err != nil {
+		fatal(err.Error())
+	}
+	req.Header.Set("Authorization", "Bearer "+claimToken(o))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", idempotency)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		fatal(err.Error())
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		fatal(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+	}
+	var created struct {
+		RequestID string `json:"requestId"`
+	}
+	_ = json.Unmarshal(body, &created)
+	if created.RequestID == "" {
+		fatal("interaction create returned no requestId")
+	}
+	fmt.Printf("question registered: %s (waiting up to %s)\n", created.RequestID, wait)
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	req, err = http.NewRequestWithContext(waitCtx, http.MethodGet,
+		claimBaseURL(o)+"/api/agent/v1/interactions/"+created.RequestID+"/wait", nil)
+	if err != nil {
+		fatal(err.Error())
+	}
+	req.Header.Set("Authorization", "Bearer "+claimToken(o))
+	resp, err = (&http.Client{}).Do(req)
+	if err != nil {
+		fatal(err.Error())
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fatal(fmt.Sprintf("wait HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+	}
+	fmt.Println(string(body))
 }
 
 // cmdProgress reports one execution progress event for a running task.

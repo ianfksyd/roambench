@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -402,8 +403,9 @@ func (s *Server) resolveControlPlaneCheckpointDecision(w http.ResponseWriter, r 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "checkpoint is not pending"})
 		return true
 	}
-	action := mapLegacyDecisionAction(interaction.AllowedActions, strings.TrimSpace(strings.ToLower(legacyAction)))
+	action := mapLegacyDecisionAction(interaction.AllowedActions, strings.TrimSpace(legacyAction))
 	if action == "" {
+		log.Printf("decision action rejected: allowed=%v legacy=%q", interaction.AllowedActions, legacyAction)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action not allowed for interaction"})
 		return true
 	}
@@ -411,10 +413,18 @@ func (s *Server) resolveControlPlaneCheckpointDecision(w http.ResponseWriter, r 
 	if idempotencyKey == "" {
 		idempotencyKey = "legacy-web-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	}
-	_, _, err = s.controlPlane.Respond(r.Context(), username, requestID, controlplane.RespondInput{
+	respondInput := controlplane.RespondInput{
 		Action: action, Actor: username, DeviceID: "web", ExpectedRowVersion: interaction.RowVersion,
 		IdempotencyKey: idempotencyKey, InputHash: interaction.InputHash,
-	})
+	}
+	// A single-choice question interaction is answered through the legacy
+	// action field: map the chosen option into the structured selection the
+	// interaction schema requires.
+	if interaction.ResponseSchema.Type == "single_choice" {
+		respondInput.Action = "answer"
+		respondInput.SelectedOptionIDs = []string{action}
+	}
+	_, _, err = s.controlPlane.Respond(r.Context(), username, requestID, respondInput)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrConflict) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
@@ -434,6 +444,14 @@ func (s *Server) resolveControlPlaneCheckpointDecision(w http.ResponseWriter, r 
 }
 
 func mapLegacyDecisionAction(allowed []string, legacy string) string {
+	// Custom question options pass through verbatim: a question registered
+	// with its own allowed actions (e.g. "yes"/"no"/"option_a") is answered
+	// with exactly those actions.
+	for _, action := range allowed {
+		if action == legacy {
+			return legacy
+		}
+	}
 	candidates := map[string][]string{
 		"approve": {"approve_once", "approve"},
 		"reject":  {"reject", "reject_with_feedback"},
