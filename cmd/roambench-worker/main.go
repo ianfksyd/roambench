@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -42,6 +43,7 @@ type options struct {
 	permissionMode string
 	poll           time.Duration
 	maxRuntime     time.Duration
+	maxConcurrent  int
 }
 
 func main() {
@@ -56,6 +58,7 @@ func main() {
 	flag.StringVar(&o.model, "model", env("ROAMBENCH_WORKER_MODEL", ""), "Optional model override passed as --model")
 	poll := flag.Duration("poll", 15*time.Second, "Poll interval between claims")
 	maxRuntime := flag.Duration("max-runtime", 2*time.Hour, "Per-task runtime bound (0 = unlimited)")
+	maxConcurrent := flag.Int("max-concurrent", envInt("ROAMBENCH_WORKER_MAX_CONCURRENT", 1), "Max tasks executed simultaneously (worker claims serially until this many are running)")
 	var execArgsRaw string
 	flag.StringVar(&execArgsRaw, "executor-args", env("ROAMBENCH_WORKER_EXECUTOR_ARGS", ""), "Extra executor flags, space separated (e.g. permission flags — operator's choice)")
 	flag.Parse()
@@ -64,6 +67,10 @@ func main() {
 	o.execArgs = splitArgs(execArgsRaw)
 	o.poll = *poll
 	o.maxRuntime = *maxRuntime
+	o.maxConcurrent = *maxConcurrent
+	if o.maxConcurrent < 1 {
+		o.maxConcurrent = 1
+	}
 	if o.token == "" {
 		fatal("no agent token: set ROAMBENCH_TOKEN or pass -token")
 	}
@@ -71,21 +78,54 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	fmt.Printf("worker %s on %s (executor: %s, poll: %s)\n", o.runtimeID, o.server, o.executor, o.poll)
-	for {
+	fmt.Printf("worker %s on %s (executor: %s, poll: %s, concurrent: %d)\n", o.runtimeID, o.server, o.executor, o.poll, o.maxConcurrent)
+	slots := make(chan struct{}, o.maxConcurrent)
+	var wg sync.WaitGroup
+	shutdown := false
+	for !shutdown {
 		select {
 		case <-stop:
-			fmt.Println("shutting down")
-			return
+			shutdown = true
+			continue
 		default:
+		}
+		// Full capacity: wait for a slot or shutdown instead of hot-polling.
+		if len(slots) == cap(slots) {
+			sleepUntil(o.poll, stop)
+			continue
 		}
 		claimed := tryClaim(o)
 		if claimed == nil {
 			sleepUntil(o.poll, stop)
 			continue
 		}
-		runTask(o, claimed)
+		slots <- struct{}{}
+		wg.Add(1)
+		go func(task *claimedTask) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("runTask panic: %v\n", r)
+				}
+			}()
+			runTask(o, task)
+		}(claimed)
 	}
+	wg.Wait()
+	fmt.Println("all executions settled")
+}
+
+func envInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 1 {
+		return fallback
+	}
+	return v
 }
 
 // claimedTask is the subset of the claim response the worker acts on.

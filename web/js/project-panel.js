@@ -1595,6 +1595,75 @@
             + '</div></div>';
     }
 
+    // renderBoardGraph: 依赖图自动布局——按最长依赖链分层，层内横向排列。
+    // 边 = DependsOn（执行依赖）。只读渲染；形状由真实任务数据涌现。
+    function renderBoardGraph(rows, visible) {
+        if (!visible) {
+            return '<section class="board-panel" id="board-panel-graph" role="tabpanel" aria-labelledby="board-tab-graph" hidden></section>';
+        }
+        var byId = {};
+        rows.forEach(function(row) { byId[row.task.id] = row; });
+        var ids = rows.map(function(row) { return row.task.id; });
+        var inSet = function(id) { return !!byId[id]; };
+
+        // 分层：level = 1 + max(level(deps))，仅统计看板内的依赖；未知依赖按层 0。
+        var levels = {};
+        var visiting = {};
+        function levelOf(id, stack) {
+            if (levels[id] !== undefined) return levels[id];
+            if (stack[id]) return 0; // 循环保护（正常不应出现）
+            stack[id] = true;
+            var task = byId[id] ? byId[id].task : null;
+            var deps = task && Array.isArray(task.dependsOn) ? task.dependsOn.filter(inSet) : [];
+            var level = 0;
+            deps.forEach(function(dep) {
+                var l = levelOf(dep, stack) + 1;
+                if (l > level) level = l;
+            });
+            stack[id] = false;
+            levels[id] = level;
+            return level;
+        }
+        ids.forEach(function(id) { levelOf(id, {}); });
+
+        var maxLevel = 0;
+        var columns = {};
+        ids.forEach(function(id) {
+            var level = levels[id] || 0;
+            if (level > maxLevel) maxLevel = level;
+            (columns[level] = columns[level] || []).push(id);
+        });
+
+        var html = '<section class="board-panel" id="board-panel-graph" role="tabpanel" aria-labelledby="board-tab-graph">';
+        html += '<div class="board-panel-heading"><h2>' + escapeHTML(tr('project.graphTitle', 'Task flow')) + '</h2>';
+        html += '<p class="board-panel-note">' + escapeHTML(tr('project.graphNote', 'Left → right: dependencies must finish first. Click a node to open it.')) + '</p></div>';
+        if (!ids.length) {
+            html += '<div class="board-empty-note">' + escapeHTML(tr('project.boardEmpty', 'No tasks yet')) + '</div></section>';
+            return html;
+        }
+        html += '<div class="board-graph-scroll" role="region" tabindex="0"><div class="board-graph">';
+        for (var level = 0; level <= maxLevel; level++) {
+            var column = columns[level] || [];
+            html += '<div class="board-graph-col" data-level="' + level + '">';
+            html += '<div class="board-graph-level">' + escapeHTML(tr('project.graphLevel', 'Step {n}', { n: level + 1 })) + '</div>';
+            (column.length ? column : []).forEach(function(id) {
+                var row = byId[id];
+                var cls = boardStatusClass(row.status);
+                html += '<button type="button" class="board-graph-node" data-task-id="' + escapeHTML(id) + '"'
+                    + ' title="' + escapeHTML(row.label + ' · ' + boardRelative(row.stamp)) + '">'
+                    + '<span class="board-task-dot ' + cls + '" aria-hidden="true"></span>'
+                    + '<span class="board-graph-name">' + escapeHTML(row.task.title || id) + '</span>'
+                    + '</button>';
+            });
+            html += '</div>';
+            if (level < maxLevel) {
+                html += '<div class="board-graph-arrow" aria-hidden="true">→</div>';
+            }
+        }
+        html += '</div></div></section>';
+        return html;
+    }
+
     function renderApprovals() {
         var all = checkpoints();
         var pending = all.filter(function(item) {
@@ -1826,7 +1895,7 @@
             var interval = taskInterval(row.task, row.stamp || dataEnd);
             return interval.end >= timelineWindow.start && interval.start <= timelineWindow.end;
         }).length;
-        var tab = state.boardTab === 'gantt' ? 'gantt' : 'wall';
+        var tab = state.boardTab === 'gantt' ? 'gantt' : state.boardTab === 'graph' ? 'graph' : 'wall';
         return '<section class="project-main-section project-board-view board-v3">'
             + '<div class="page-heading"><div><h1>' + escapeHTML(tr('project.boardTitle', 'Task board')) + '</h1>'
             + '<p class="page-meta">' + escapeHTML(countProjectsText(filter === 'all' ? projects().length : 1)) + ' · ' + escapeHTML(itemCountText(rows.length)) + '</p></div>'
@@ -1846,6 +1915,7 @@
             + '<div class="view-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.boardTitle', 'Task board')) + '">'
             + '<button type="button" class="view-tab" id="board-tab-wall" data-board-tab="wall" role="tab" aria-selected="' + (tab === 'wall') + '" aria-controls="board-panel-wall" tabindex="' + (tab === 'wall' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabWall', 'Status wall')) + '</button>'
             + '<button type="button" class="view-tab" id="board-tab-gantt" data-board-tab="gantt" role="tab" aria-selected="' + (tab === 'gantt') + '" aria-controls="board-panel-gantt" tabindex="' + (tab === 'gantt' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabTimeline', 'Timeline')) + '</button>'
+            + '<button type="button" class="view-tab" id="board-tab-graph" data-board-tab="graph" role="tab" aria-selected="' + (tab === 'graph') + '" aria-controls="board-panel-graph" tabindex="' + (tab === 'graph' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabGraph', 'Flow')) + '</button>'
             + '</div>'
             + (counts.length ? '<ul class="board-legend">' + counts.map(function(entry) {
                 return '<li><span class="board-task-dot ' + entry.cls + '" aria-hidden="true"></span>' + escapeHTML(tr('project.taskStatus.' + entry.status, entry.status))
@@ -1882,6 +1952,7 @@
             }).join('') : '')
             + (!rows.length && filter === 'all' && !state.boardLoading && !state.boardError ? '<div class="board-empty-note">' + escapeHTML(tr('project.boardEmpty', 'No tasks yet')) + '</div>' : '')
             + '</section>'
+            + renderBoardGraph(visible, tab === 'graph')
             + renderBoardGantt(visible, timelineWindow, dataEnd)
             + (rows.length ? '<footer class="board-footer"><p>' + escapeHTML(itemCountText(tab === 'wall' ? visible.length : timelineCount)) + '</p></footer>' : '')
             + '</section>';

@@ -5127,6 +5127,15 @@ button.tab-action:focus-visible {
 .board-v3 .board-task-quick-btn:hover { background: var(--hover); border-color: var(--muted); }
 .board-v3 .board-task-quick-btn:last-child:hover { color: #f48771; border-color: #f48771; }
 .board-v3 .task-terminal-link { margin: 10px 0 4px; }
+.board-graph-scroll { overflow-x: auto; scrollbar-width: none; }
+.board-graph-scroll::-webkit-scrollbar { display: none; }
+.board-graph { display: flex; align-items: flex-start; gap: 18px; padding: 6px 2px 12px; min-width: max-content; }
+.board-graph-col { display: flex; flex-direction: column; gap: 8px; min-width: 180px; }
+.board-graph-level { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+.board-graph-node { display: flex; align-items: flex-start; gap: 6px; width: 100%; text-align: left; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); padding: 8px 10px; cursor: pointer; }
+.board-graph-node:hover { border-color: var(--muted); }
+.board-graph-name { font-size: 12px; overflow-wrap: anywhere; }
+.board-graph-arrow { align-self: center; color: var(--muted); font-size: 16px; }
 .progress-card .progress-text { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 40vh; overflow-y: auto; scrollbar-width: none; }
 .progress-card .progress-text::-webkit-scrollbar { display: none; }
 .progress-card .progress-meta { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
