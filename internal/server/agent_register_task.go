@@ -56,24 +56,24 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	// Origin "agent": the task waits for a human decision in the approvals
+	// inbox instead of entering the worker queue — registering work observed
+	// in a terminal must not silently start another executor on it.
+	// The created task id is taken from the dedicated task record (matching
+	// by title would return a pre-existing task of the same name).
 	createReq := projectControlTaskCreateRequest{
 		ProjectID:    projectID,
 		WorkstreamID: workstreamID,
 		Title:        title,
 		Goal:         strings.TrimSpace(req.Goal),
-		Origin:       "human",
+		Origin:       "agent",
 	}
 	snapshot, err := s.projectControl.createTask(username, createReq, s.terminals)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	createdID := ""
-	for _, task := range snapshot.Tasks {
-		if task.Title == title && createdID == "" {
-			createdID = task.ID
-		}
-	}
+	createdID := snapshot.CreatedTaskID
 
 	// Bind the tmux session when provided: it must exist and be owned by the
 	// same user, so a caller cannot hijack another session's identity.

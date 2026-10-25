@@ -63,24 +63,27 @@ const (
 var projectControlProcessStartedAt = time.Now().UTC().Truncate(time.Second)
 
 type projectControlSnapshot struct {
-	GeneratedAt     string                       `json:"generatedAt"`
-	ActiveProjectID string                       `json:"activeProjectId"`
-	ApprovalsCount  int                          `json:"approvalsCount"`
-	Projects        []projectControlProject      `json:"projects"`
-	Workstreams     []projectControlWorkstream   `json:"workstreams"`
-	Tasks           []projectControlTask         `json:"tasks"`
-	Sessions        []projectControlSession      `json:"sessions"`
-	Runtimes        []projectControlRuntime      `json:"runtimes"`
-	Skills          []projectControlSkill        `json:"skills"`
-	Runbooks        []projectControlRunbook      `json:"runbooks"`
-	Tools           []projectControlToolDef      `json:"tools"`
-	PhaseAttempts   []projectControlPhaseAttempt `json:"phaseAttempts"`
-	ToolRuns        []projectControlToolRun      `json:"toolRuns,omitempty"`
-	Artifacts       []projectControlArtifact     `json:"artifacts"`
-	Checkpoints     []projectControlCheckpoint   `json:"checkpoints"`
-	Decisions       []projectControlDecision     `json:"decisions,omitempty"`
-	Memories        []projectControlTaskMemory   `json:"memories,omitempty"`
-	Dashboard       projectControlDashboard      `json:"dashboard"`
+	GeneratedAt     string `json:"generatedAt"`
+	ActiveProjectID string `json:"activeProjectId"`
+	// CreatedTaskID is set by createTask with the id of the task it just
+	// created; empty on every other read path.
+	CreatedTaskID  string                       `json:"createdTaskId,omitempty"`
+	ApprovalsCount int                          `json:"approvalsCount"`
+	Projects       []projectControlProject      `json:"projects"`
+	Workstreams    []projectControlWorkstream   `json:"workstreams"`
+	Tasks          []projectControlTask         `json:"tasks"`
+	Sessions       []projectControlSession      `json:"sessions"`
+	Runtimes       []projectControlRuntime      `json:"runtimes"`
+	Skills         []projectControlSkill        `json:"skills"`
+	Runbooks       []projectControlRunbook      `json:"runbooks"`
+	Tools          []projectControlToolDef      `json:"tools"`
+	PhaseAttempts  []projectControlPhaseAttempt `json:"phaseAttempts"`
+	ToolRuns       []projectControlToolRun      `json:"toolRuns,omitempty"`
+	Artifacts      []projectControlArtifact     `json:"artifacts"`
+	Checkpoints    []projectControlCheckpoint   `json:"checkpoints"`
+	Decisions      []projectControlDecision     `json:"decisions,omitempty"`
+	Memories       []projectControlTaskMemory   `json:"memories,omitempty"`
+	Dashboard      projectControlDashboard      `json:"dashboard"`
 }
 
 type projectControlProject struct {
@@ -2999,15 +3002,20 @@ func (s *projectControlStore) createTaskBranches(username string, parentID strin
 			if title == "" {
 				return fmt.Errorf("branch %d: title is required", i+1)
 			}
-			if _, taskErr := s.createTaskInState(username, state, projectControlTaskCreateRequest{
+			branchReq := projectControlTaskCreateRequest{
 				ProjectID:    parent.ProjectID,
 				WorkstreamID: parent.WorkstreamID,
 				Title:        title,
 				Goal:         strings.TrimSpace(branch.Goal),
 				Origin:       "human",
 				Priority:     parent.Priority,
-				DependsOn:    []string{parentID},
-			}, terminals); taskErr != nil {
+			}
+			// Parallel when the parent is actively executing (lanes run
+			// alongside); after-completion otherwise.
+			if parent.DispatchState != "claimed" && parent.State != "running" {
+				branchReq.DependsOn = []string{parentID}
+			}
+			if _, taskErr := s.createTaskInState(username, state, branchReq, terminals); taskErr != nil {
 				return fmt.Errorf("branch %d (%s): %w", i+1, title, taskErr)
 			}
 		}
@@ -3060,14 +3068,21 @@ func (s *projectControlStore) createComposedTask(username string, sourceIDs []st
 }
 
 func (s *projectControlStore) createTask(username string, req projectControlTaskCreateRequest, terminals *terminal.Manager) (projectControlSnapshot, error) {
+	var createdID string
 	state, err := s.withStateLocked(username, func(state *projectControlState) error {
-		_, taskErr := s.createTaskInState(username, state, req, terminals)
-		return taskErr
+		task, taskErr := s.createTaskInState(username, state, req, terminals)
+		if taskErr != nil {
+			return taskErr
+		}
+		createdID = task.ID
+		return nil
 	})
 	if err != nil {
 		return projectControlSnapshot{}, err
 	}
-	return buildProjectControlSnapshot(state, username, terminals), nil
+	snapshot := buildProjectControlSnapshot(state, username, terminals)
+	snapshot.CreatedTaskID = createdID
+	return snapshot, nil
 }
 
 // createTaskInState creates a task inside an already-locked state. The
@@ -5322,6 +5337,7 @@ func buildProjectControlSnapshot(state projectControlState, username string, ter
 	return projectControlSnapshot{
 		GeneratedAt:     now.Format(time.RFC3339),
 		ActiveProjectID: state.ActiveProjectID,
+		CreatedTaskID:   "",
 		ApprovalsCount:  countPendingProjectControlCheckpoints(checkpoints),
 		Projects:        projects,
 		Workstreams:     workstreams,

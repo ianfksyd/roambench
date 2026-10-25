@@ -774,7 +774,7 @@
         var dialog = showBoardDialog(tr('project.deriveTitle', 'Derive branches'), '<form data-branches-form><fieldset>'
             + '<label class="field"><span>' + escapeHTML(tr('project.deriveTitles', 'Branch titles (one per line)')) + '</span>'
             + '<textarea name="titles" rows="4" required></textarea></label>'
-            + '<p class="form-hint">' + escapeHTML(task.state === 'running' || task.state === 'claimed'
+            + '<p class="form-hint">' + escapeHTML(task.dispatchState === 'claimed' || task.state === 'running'
                 ? tr('project.deriveHint.parallel', 'Branches start immediately and run alongside this task.')
                 : tr('project.deriveHint.after', 'Branches start after this task finishes.')) + '</p>'
             + '</fieldset><p class="form-error" role="alert"></p>'
@@ -1556,7 +1556,10 @@
         var terminalLink = terminalIds.length && app() && app().attachTerminal
             ? '<div class="task-terminal-link"><button type="button" class="project-inline-btn primary" data-task-open-terminal="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.watchTerminal', '▶ Watch in terminal')) + '</button></div>'
             : '';
-        var branchLink = task.state === 'running' || task.state === 'claimed'
+        // Non-terminal tasks can derive branches; the server decides
+        // parallel vs after-completion from the dispatch state.
+        var terminalState = task.state === 'execution_complete' || task.state === 'archived' || task.state === 'cancelled';
+        var branchLink = !terminalState
             ? '<div class="task-terminal-link"><button type="button" class="project-inline-btn" data-task-branches="' + escapeHTML(task.id) + '">' + escapeHTML(tr('project.deriveBranches', 'Derive branches')) + '</button></div>'
             : '';
         var progressCard = '<section class="info-card progress-card"><h3>' + escapeHTML(tr('project.progressTitle', 'Latest progress')) + '</h3>'

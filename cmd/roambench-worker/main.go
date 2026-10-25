@@ -194,7 +194,7 @@ func runTask(o options, task *claimedTask) {
 
 	// Progress reporting: executor events go to the server's task progress
 	// feed (best-effort, batched, never blocks the executor reader).
-	progress := newProgressReporter(task.TaskID)
+	progress := newProgressReporter(task.TaskID, task.LeaseID)
 
 	// Observation window: model output is written to a 0600 log file and the
 	// terminal runs a FIXED tail command on it (composed by the worker, no
@@ -202,8 +202,11 @@ func runTask(o options, task *claimedTask) {
 	// where displayed text was executed as commands in the pane shell.
 	logPath := filepath.Join(task.Workspace, ".roambench-execution.log")
 	_ = os.WriteFile(logPath, []byte(""), 0600)
-	_ = exec.Command("tmux", "send-keys", "-t", terminalID,
-		"-l", "tail -n 40 -f "+shellQuote(logPath), "Enter").Run()
+	// -l takes ONLY the literal text; Enter must be a separate send-keys
+	// call, otherwise "Enter" is typed as literal text and the tail command
+	// never starts.
+	tmuxLiteral(terminalID, "tail -n 40 -f "+shellQuote(logPath))
+	tmuxEnter(terminalID)
 	time.Sleep(300 * time.Millisecond)
 	observer := localruntime.ObserverFunc(func(line string) {
 		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
@@ -262,12 +265,17 @@ func runTask(o options, task *claimedTask) {
 	select {
 	case <-execDone:
 	case <-lostLease:
+		// Lease gone: kill the whole process group, wait for the exit to be
+		// recorded, then report failure.
 		handle.Stop()
 		<-handle.Done()
-	case <-runCtx.Done():
-		// Runtime bound hit (max-runtime timeout): the context kill has been
-		// requested; wait for the real exit then report failure.
 		timedOut = true
+	case <-runCtx.Done():
+		// Runtime bound hit: kill the process group (children of the
+		// executor would otherwise hold the pipe and stall the wait), then
+		// record the real exit before reporting.
+		timedOut = true
+		handle.Stop()
 		<-handle.Done()
 	}
 
@@ -295,17 +303,18 @@ func runTask(o options, task *claimedTask) {
 // progress feed. Reports are best-effort: failures are counted, never
 // propagated, and the reporter never blocks the executor reader.
 type progressReporter struct {
-	taskID string
-	seq    int
-	mu     sync.Mutex
-	flush  func(seq int, kind, text string)
+	taskID  string
+	leaseID string
+	seq     int
+	mu      sync.Mutex
+	flush   func(seq int, kind, text, leaseID string)
 }
 
-func newProgressReporter(taskID string) *progressReporter {
-	p := &progressReporter{taskID: taskID}
-	p.flush = func(seq int, kind, text string) {
+func newProgressReporter(taskID, leaseID string) *progressReporter {
+	p := &progressReporter{taskID: taskID, leaseID: leaseID}
+	p.flush = func(seq int, kind, text, leaseID string) {
 		_ = cli("progress", "--task", p.taskID, "--seq", fmt.Sprint(seq),
-			"--kind", kind, "--text", text)
+			"--kind", kind, "--text", text, "--lease-id", leaseID)
 	}
 	return p
 }
@@ -321,7 +330,7 @@ func (p *progressReporter) add(line string) {
 	seq := p.seq
 	text := line
 	p.mu.Unlock()
-	go p.flush(seq, "assistant", text)
+	go p.flush(seq, "assistant", text, p.leaseID)
 }
 
 // summarizeEvents renders the last assistant/result text as the artifact value.
@@ -472,6 +481,16 @@ func hostname() string {
 		return "local"
 	}
 	return strings.ReplaceAll(strings.ToLower(h), ".", "-")
+}
+
+// tmuxLiteral types literal text into a tmux session.
+func tmuxLiteral(terminalID, text string) {
+	_ = exec.Command("tmux", "send-keys", "-t", terminalID, "-l", text).Run()
+}
+
+// tmuxEnter presses Enter in a tmux session.
+func tmuxEnter(terminalID string) {
+	_ = exec.Command("tmux", "send-keys", "-t", terminalID, "Enter").Run()
 }
 
 func shellQuote(s string) string {

@@ -348,30 +348,33 @@ func cmdAsk(args []string) {
 	if resp.StatusCode != http.StatusOK {
 		fatal(fmt.Sprintf("wait HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
-	var answer struct {
-		Status   string   `json:"status"`
-		Answered bool     `json:"answered"`
-		Action   string   `json:"action"`
-		Feedback string   `json:"feedback"`
-		Options  []string `json:"selectedOptionIds"`
+	// The wait endpoint returns the interaction with an optional embedded
+	// response. A pending/expired question is NOT a success: the caller must
+	// distinguish "human said yes" from "nobody answered".
+	var result struct {
+		Status   string `json:"status"`
+		Response *struct {
+			Action            string   `json:"action"`
+			Feedback          string   `json:"feedback"`
+			SelectedOptionIDs []string `json:"selectedOptionIds"`
+		} `json:"response"`
 	}
-	if err := json.Unmarshal(body, &answer); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		fatal(fmt.Sprintf("invalid answer JSON: %v (%s)", err, strings.TrimSpace(string(body))))
 	}
-	// An unanswered question (timeout or expiry) is NOT a success: the caller
-	// must be able to distinguish "human said yes" from "nobody answered".
-	if !answer.Answered {
-		fatal(fmt.Sprintf("question was not answered (status=%s)", answer.Status))
+	if result.Status != "resolved" || result.Response == nil {
+		fatal(fmt.Sprintf("question was not answered (status=%s)", result.Status))
 	}
 	out := map[string]interface{}{
-		"action":   answer.Action,
-		"feedback": answer.Feedback,
+		"status":   result.Status,
+		"action":   result.Response.Action,
+		"feedback": result.Response.Feedback,
 	}
-	if len(answer.Options) > 0 {
-		out["selectedOptionIds"] = answer.Options
+	if len(result.Response.SelectedOptionIDs) > 0 {
+		out["selectedOptionIds"] = result.Response.SelectedOptionIDs
 	}
-	result, _ := json.Marshal(out)
-	fmt.Println(string(result))
+	answerJSON, _ := json.Marshal(out)
+	fmt.Println(string(answerJSON))
 }
 
 // cmdRegisterTask creates a task card on the board, optionally bound to the

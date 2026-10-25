@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/ianf339/roambench/internal/controlplane"
 )
@@ -58,22 +59,18 @@ func (s *Server) handleAgentTaskProgress(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
 		return
 	}
-	if strings.TrimSpace(req.LeaseID) != "" {
-		claims := s.projectControl.claimStoreFor()
-		if claims == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "claim store unavailable"})
-			return
-		}
-		claim, cErr := claims.GetClaim(r.Context(), username, strings.TrimSpace(req.LeaseID))
-		if cErr != nil || claim.Status != "active" || claim.TaskID != req.TaskID {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "lease is not active for this task"})
-			return
-		}
-	} else if !projectControlTaskNeedsDispatchApproval(task) {
-		// Human-raised tasks have no lease requirement, but a missing leaseId
-		// from an agent-token caller is still rejected: callers must identify
-		// the execution they report for.
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "leaseId is required"})
+	// Execution telemetry requires an ACTIVE lease matching the task: a
+	// stale worker whose lease expired or was revoked must not write into a
+	// task it no longer owns. This is the same bar the release path applies.
+	claims := s.projectControl.claimStoreFor()
+	if claims == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "claim store unavailable"})
+		return
+	}
+	leaseID := strings.TrimSpace(req.LeaseID)
+	claim, cErr := claims.GetClaim(r.Context(), username, leaseID)
+	if cErr != nil || claim.Status != "active" || !claim.LeaseExpiresAt.After(time.Now()) || claim.TaskID != req.TaskID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "active lease for this task is required"})
 		return
 	}
 	_ = task
