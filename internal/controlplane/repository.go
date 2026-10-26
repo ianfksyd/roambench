@@ -325,17 +325,30 @@ CREATE TABLE IF NOT EXISTS pending_handoffs (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS pending_handoffs_target_idx ON pending_handoffs(username, target_terminal, promoted_task_id);
--- One active pending handoff per (user, target terminal, content): a
--- repeated paste never multiplies the provenance. Promoted rows keep their
--- history, so the constraint only covers not-yet-promoted rows.
+-- One active pending handoff per paste event (the matched copy): a
+-- retransmitted paste collapses, but the same text copied from two
+-- different sources is two real events and both survive. Promoted rows
+-- keep their history, so the constraint only covers not-yet-promoted rows.
+DROP INDEX IF EXISTS pending_handoffs_active_uniq;
 DELETE FROM pending_handoffs WHERE promoted_task_id='' AND id NOT IN (
   SELECT id FROM (
-    SELECT id, ROW_NUMBER() OVER (PARTITION BY username, target_terminal, fingerprint ORDER BY created_at DESC) AS rn
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY username, target_terminal, copy_id ORDER BY created_at DESC) AS rn
     FROM pending_handoffs WHERE promoted_task_id=''
   ) WHERE rn = 1
 );
 CREATE UNIQUE INDEX IF NOT EXISTS pending_handoffs_active_uniq
-  ON pending_handoffs(username, target_terminal, fingerprint) WHERE promoted_task_id='';
+  ON pending_handoffs(username, target_terminal, copy_id) WHERE promoted_task_id='';
+CREATE TABLE IF NOT EXISTS terminal_agent_executions (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  terminal_id TEXT NOT NULL,
+  agent_sig TEXT NOT NULL,
+  agent_name TEXT NOT NULL DEFAULT '',
+  task_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS terminal_agent_executions_uniq
+  ON terminal_agent_executions(username, terminal_id, agent_sig);
 -- The (target, source, relation) pair must be unique; drop historical
 -- duplicates (newest wins) before the unique index can be created.
 DELETE FROM task_source_refs WHERE id NOT IN (
@@ -390,17 +403,32 @@ func Open(path string) (*Repository, error) {
 // migrateHandoffColumns adds columns that cannot live in the idempotent
 // schema blob because ALTER TABLE has no IF NOT EXISTS form.
 func migrateHandoffColumns(db *sql.DB) error {
-	var count int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM pragma_table_info('task_source_refs') WHERE name='copy_id'`).Scan(&count); err != nil {
-		return err
+	type columnMigration struct {
+		table, column, ddl string
 	}
-	if count == 0 {
-		if _, err := db.Exec(`ALTER TABLE task_source_refs ADD COLUMN copy_id TEXT NOT NULL DEFAULT ''`); err != nil {
+	for _, m := range []columnMigration{
+		{table: "task_source_refs", column: "copy_id", ddl: `ALTER TABLE task_source_refs ADD COLUMN copy_id TEXT NOT NULL DEFAULT ''`},
+		{table: "pending_handoffs", column: "intended_task_id", ddl: `ALTER TABLE pending_handoffs ADD COLUMN intended_task_id TEXT NOT NULL DEFAULT ''`},
+	} {
+		var count int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, m.table, m.column).Scan(&count); err != nil {
 			return err
+		}
+		if count == 0 {
+			if _, err := db.Exec(m.ddl); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// ExecAdmin runs an arbitrary administrative statement (migrations,
+// operational fixes, test harnesses). It is not used by request paths.
+func (r *Repository) ExecAdmin(ctx context.Context, query string, args ...any) error {
+	_, err := r.db.ExecContext(ctx, query, args...)
+	return err
 }
 
 func (r *Repository) Close() error {

@@ -56,8 +56,25 @@ type PendingHandoff struct {
 	Fingerprint    string `json:"fingerprint"`
 	Snapshot       string `json:"snapshot,omitempty"`
 	CopyID         string `json:"copyId,omitempty"`
+	// IntendedTaskID pins a pending to the one submission it belongs to:
+	// a failed promotion is retried against this task, never handed to the
+	// next unrelated goal on the same terminal.
+	IntendedTaskID string `json:"intendedTaskId,omitempty"`
 	PromotedTaskID string `json:"promotedTaskId,omitempty"`
 	CreatedAt      string `json:"createdAt"`
+}
+
+// AgentExecution binds one agent process generation in one terminal to
+// the task whose execution it carries: pastes delivered while that exact
+// process runs are inputs to that task, not new goals.
+type AgentExecution struct {
+	ID         string `json:"id"`
+	Username   string `json:"-"`
+	TerminalID string `json:"terminalId"`
+	AgentSig   string `json:"agentSig"`
+	AgentName  string `json:"agentName,omitempty"`
+	TaskID     string `json:"taskId"`
+	CreatedAt  string `json:"createdAt"`
 }
 
 // fingerprintText hashes text for paste matching.
@@ -268,34 +285,83 @@ func (r *Repository) RecordPendingHandoff(ctx context.Context, username string, 
 	h.ID = newRandomID("pend")
 	h.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO pending_handoffs(id, username, source_task_id, source_terminal, target_terminal, fingerprint, snapshot, copy_id, promoted_task_id, created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT OR IGNORE INTO pending_handoffs(id, username, source_task_id, source_terminal, target_terminal, fingerprint, snapshot, copy_id, intended_task_id, promoted_task_id, created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		h.ID, username, h.SourceTaskID, h.SourceTerminal, h.TargetTerminal,
-		h.Fingerprint, h.Snapshot, h.CopyID, "", h.CreatedAt)
+		h.Fingerprint, h.Snapshot, h.CopyID, h.IntendedTaskID, "", h.CreatedAt)
 	if err != nil {
 		return PendingHandoff{}, err
 	}
-	// Concurrent duplicates keep the first row for the same target+content.
+	// Deduplication is by paste-event identity (the matched copy), not by
+	// content: the same text copied from two different sources is two real
+	// events and both survive. A retransmitted paste matches the same copy
+	// record and collapses onto the first pending row.
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, source_task_id, snapshot, copy_id, created_at FROM pending_handoffs
-		 WHERE username=? AND target_terminal=? AND fingerprint=? AND promoted_task_id=''
-		 ORDER BY created_at DESC LIMIT 1`, username, h.TargetTerminal, h.Fingerprint)
+		`SELECT id, source_task_id, source_terminal, snapshot, copy_id, created_at FROM pending_handoffs
+		 WHERE username=? AND target_terminal=? AND copy_id=? AND promoted_task_id=''
+		 ORDER BY created_at DESC LIMIT 1`, username, h.TargetTerminal, h.CopyID)
 	var out PendingHandoff
-	if err := row.Scan(&out.ID, &out.SourceTaskID, &out.Snapshot, &out.CopyID, &out.CreatedAt); err != nil {
+	if err := row.Scan(&out.ID, &out.SourceTaskID, &out.SourceTerminal, &out.Snapshot, &out.CopyID, &out.CreatedAt); err != nil {
 		return PendingHandoff{}, err
 	}
 	out.Username = username
-	out.SourceTerminal = h.SourceTerminal
 	out.TargetTerminal = h.TargetTerminal
 	out.Fingerprint = h.Fingerprint
 	return out, nil
+}
+
+// RecordAgentExecution binds an agent process generation to a task.
+// Identical (user, terminal, signature) repeats collapse onto the first
+// row so concurrent pastes agree on the execution owner.
+func (r *Repository) RecordAgentExecution(ctx context.Context, username string, e AgentExecution) (AgentExecution, error) {
+	username = strings.TrimSpace(username)
+	e.Username = username
+	e.TerminalID = strings.TrimSpace(e.TerminalID)
+	e.AgentSig = strings.TrimSpace(e.AgentSig)
+	if username == "" || e.TerminalID == "" || e.AgentSig == "" {
+		return AgentExecution{}, fmt.Errorf("%w: username, terminal and agent signature are required", ErrValidation)
+	}
+	e.ID = newRandomID("exec")
+	e.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := r.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO terminal_agent_executions(id, username, terminal_id, agent_sig, agent_name, task_id, created_at)
+		 VALUES(?,?,?,?,?,?,?)`,
+		e.ID, username, e.TerminalID, e.AgentSig, e.AgentName, e.TaskID, e.CreatedAt)
+	if err != nil {
+		return AgentExecution{}, err
+	}
+	var out AgentExecution
+	err = r.db.QueryRowContext(ctx,
+		`SELECT id, terminal_id, agent_sig, agent_name, task_id, created_at FROM terminal_agent_executions
+		 WHERE username=? AND terminal_id=? AND agent_sig=?`, username, e.TerminalID, e.AgentSig).
+		Scan(&out.ID, &out.TerminalID, &out.AgentSig, &out.AgentName, &out.TaskID, &out.CreatedAt)
+	if err != nil {
+		return AgentExecution{}, err
+	}
+	out.Username = username
+	return out, nil
+}
+
+// AgentExecutionBySig resolves the execution owning an agent generation.
+func (r *Repository) AgentExecutionBySig(ctx context.Context, username, terminalID, agentSig string) (AgentExecution, bool, error) {
+	var out AgentExecution
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, terminal_id, agent_sig, agent_name, task_id, created_at FROM terminal_agent_executions
+		 WHERE username=? AND terminal_id=? AND agent_sig=?`,
+		username, strings.TrimSpace(terminalID), strings.TrimSpace(agentSig)).
+		Scan(&out.ID, &out.TerminalID, &out.AgentSig, &out.AgentName, &out.TaskID, &out.CreatedAt)
+	if err != nil {
+		return AgentExecution{}, false, nil
+	}
+	out.Username = username
+	return out, true, nil
 }
 
 // ListPendingHandoffs returns the not-yet-promoted handoffs waiting on a
 // target terminal, oldest first.
 func (r *Repository) ListPendingHandoffs(ctx context.Context, username, targetTerminal string) ([]PendingHandoff, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, source_task_id, source_terminal, target_terminal, fingerprint, snapshot, copy_id, created_at
+		`SELECT id, source_task_id, source_terminal, target_terminal, fingerprint, snapshot, copy_id, intended_task_id, created_at
 		 FROM pending_handoffs
 		 WHERE username=? AND target_terminal=? AND promoted_task_id='' ORDER BY created_at ASC`,
 		username, strings.TrimSpace(targetTerminal))
@@ -307,13 +373,25 @@ func (r *Repository) ListPendingHandoffs(ctx context.Context, username, targetTe
 	for rows.Next() {
 		var h PendingHandoff
 		if err := rows.Scan(&h.ID, &h.SourceTaskID, &h.SourceTerminal, &h.TargetTerminal,
-			&h.Fingerprint, &h.Snapshot, &h.CopyID, &h.CreatedAt); err != nil {
+			&h.Fingerprint, &h.Snapshot, &h.CopyID, &h.IntendedTaskID, &h.CreatedAt); err != nil {
 			return nil, err
 		}
 		h.Username = username
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// SetPendingIntendedTask pins unpromoted handoffs to one submission's task
+// before promotion is attempted, so a failure is recoverable against the
+// same submission and never leaks to a later goal.
+func (r *Repository) SetPendingIntendedTask(ctx context.Context, username, targetTerminal, taskID string) error {
+	// Only unpinned rows: a pending pinned to an earlier failed submission
+	// keeps its owner, so recovery reattaches to the original task.
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE pending_handoffs SET intended_task_id=? WHERE username=? AND target_terminal=? AND promoted_task_id='' AND intended_task_id=''`,
+		strings.TrimSpace(taskID), username, strings.TrimSpace(targetTerminal))
+	return err
 }
 
 // MarkHandoffPromoted records the target task a pending handoff became a

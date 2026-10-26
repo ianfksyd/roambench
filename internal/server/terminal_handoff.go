@@ -165,34 +165,20 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Target already has a task → supplement the source reference with the
-	// newest referenced content; never create a duplicate card per paste.
-	if targetTaskID := taskIDForTerminalInState(state, live.ID); targetTaskID != "" {
-		ref, refErr := s.controlPlane.AddSourceRef(r.Context(), username, controlplane.SourceRef{
-			TargetTaskID:   targetTaskID,
-			SourceTaskID:   sourceTaskID,
-			Relation:       "reviews",
-			Snapshot:       match.Snapshot,
-			SourceTerminal: match.TerminalID,
-			TargetTerminal: live.ID,
-			CopyID:         match.ID,
-		})
-		if refErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": refErr.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"matched":      true,
-			"taskId":       targetTaskID,
-			"sourceTaskId": sourceTaskID,
-			"relation":     "supplemented",
-			"refId":        ref.ID,
-		})
+	// Validated submission boundary: an agent CLI is running in the target
+	// pane, so the paste is that agent's input by construction — not a
+	// half-composed draft. This is what connects a bare Codex/Claude
+	// session without any in-agent adapter.
+	if agent, hasAgent := s.terminals.AgentProcessInSession(live.ID); hasAgent {
+		s.handleAgentPaste(w, r, username, live, agent, match, sourceTaskID)
 		return
 	}
 
-	// No task on the target terminal yet: record the pending handoff. It
-	// becomes a source relationship when the goal is actually submitted.
+	// No agent running: the paste alone commits nothing visible. It is
+	// recorded as a pending handoff and becomes a source relationship when
+	// the goal is actually submitted (agent CLI started and fed, or an
+	// explicit register-task). Repeats collapse by paste-event identity;
+	// the same text from a different source stays a separate event.
 	pending, err := s.controlPlane.RecordPendingHandoff(r.Context(), username, controlplane.PendingHandoff{
 		SourceTaskID:   sourceTaskID,
 		SourceTerminal: match.TerminalID,
@@ -213,25 +199,200 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAgentPaste routes a paste delivered into a live agent session.
+// The running process generation owns the terminal's current execution:
+// pastes feed that task; a new generation starts a new goal.
+func (s *Server) handleAgentPaste(w http.ResponseWriter, r *http.Request, username string, live terminal.SessionInfo, agent terminal.AgentProcess, match controlplane.TerminalCopy, sourceTaskID string) {
+	ctx := r.Context()
+
+	// Known generation → this paste feeds the task it carries.
+	if exec, found, _ := s.controlPlane.AgentExecutionBySig(ctx, username, live.ID, agent.Signature()); found && exec.TaskID != "" {
+		state, err := s.projectControl.loadOrSeed(username)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if _, ok := controlTask(state, exec.TaskID); ok {
+			s.supplementSourceRef(w, r, username, exec.TaskID, match, sourceTaskID, live.ID)
+			return
+		}
+	}
+
+	// A worker/agent-terminal created for a specific task carries the task
+	// in its session metadata: adopt that task for this generation.
+	if live.TaskID != "" {
+		state, err := s.projectControl.loadOrSeed(username)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if _, ok := controlTask(state, live.TaskID); ok {
+			_, _ = s.controlPlane.RecordAgentExecution(ctx, username, controlplane.AgentExecution{
+				TerminalID: live.ID, AgentSig: agent.Signature(), AgentName: agent.Name, TaskID: live.TaskID,
+			})
+			s.supplementSourceRef(w, r, username, live.TaskID, match, sourceTaskID, live.ID)
+			return
+		}
+	}
+
+	// Unknown generation, unbound terminal: the submission starts a new
+	// goal. Create the card, consume every waiting handoff of this
+	// terminal, and record the generation as its executor.
+	pendings, _ := s.controlPlane.ListPendingHandoffs(ctx, username, live.ID)
+	created := projectControlTask{}
+	_, err := s.projectControl.withStateLocked(username, func(state *projectControlState) error {
+		projectID, workstreamID := handoffProjectFromState(state, pendings, sourceTaskID)
+		if projectID == "" {
+			liveCopy := live
+			pID, wID, ctxErr := registrationContext(*state, &liveCopy)
+			if ctxErr != nil {
+				return ctxErr
+			}
+			projectID, workstreamID = pID, wID
+		}
+		sourceTitle := ""
+		if task, ok := controlTask(*state, sourceTaskID); ok {
+			sourceTitle = task.Title
+		}
+		var createErr error
+		created, createErr = s.projectControl.createTaskInState(username, state, projectControlTaskCreateRequest{
+			ProjectID:    projectID,
+			WorkstreamID: workstreamID,
+			Title:        "审查: " + firstNonEmpty(sourceTitle, sourceTaskID),
+			Goal:         "审查来自 " + firstNonEmpty(sourceTitle, sourceTaskID) + " 的内容快照",
+			Origin:       "agent",
+		}, s.terminals)
+		if createErr != nil {
+			return createErr
+		}
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == created.ID {
+				state.Tasks[i].SessionIDs = appendUniqueString(state.Tasks[i].SessionIDs, "session-live-"+live.ID)
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	_, _ = s.controlPlane.RecordAgentExecution(ctx, username, controlplane.AgentExecution{
+		TerminalID: live.ID, AgentSig: agent.Signature(), AgentName: agent.Name, TaskID: created.ID,
+	})
+	_ = s.controlPlane.SetPendingIntendedTask(ctx, username, live.ID, created.ID)
+	promotion := s.promotePendingHandoffs(ctx, username, live.ID, created.ID)
+	ref, refErr := s.controlPlane.AddSourceRef(ctx, username, controlplane.SourceRef{
+		TargetTaskID:   created.ID,
+		SourceTaskID:   sourceTaskID,
+		Relation:       "reviews",
+		Snapshot:       match.Snapshot,
+		SourceTerminal: match.TerminalID,
+		TargetTerminal: live.ID,
+		CopyID:         match.ID,
+	})
+	body := map[string]interface{}{
+		"matched":      true,
+		"taskId":       created.ID,
+		"sourceTaskId": sourceTaskID,
+		"relation":     "reviews",
+		"auto":         true,
+		"promotion":    promotion,
+	}
+	if refErr == nil {
+		body["refId"] = ref.ID
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// supplementSourceRef writes one reviews reference onto an existing task
+// and answers with the supplemented payload.
+func (s *Server) supplementSourceRef(w http.ResponseWriter, r *http.Request, username, targetTaskID string, match controlplane.TerminalCopy, sourceTaskID, targetTerminal string) {
+	ref, refErr := s.controlPlane.AddSourceRef(r.Context(), username, controlplane.SourceRef{
+		TargetTaskID:   targetTaskID,
+		SourceTaskID:   sourceTaskID,
+		Relation:       "reviews",
+		Snapshot:       match.Snapshot,
+		SourceTerminal: match.TerminalID,
+		TargetTerminal: targetTerminal,
+		CopyID:         match.ID,
+	})
+	if refErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": refErr.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"matched":      true,
+		"taskId":       targetTaskID,
+		"sourceTaskId": sourceTaskID,
+		"relation":     "supplemented",
+		"refId":        ref.ID,
+	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// handoffProjectFromState picks the project an unbound handoff target
+// belongs to: the oldest waiting handoff's source project, else the
+// current paste's source project. The UI's currently-browsed project is
+// never used as a fallback for handoff work.
+func handoffProjectFromState(state *projectControlState, pendings []controlplane.PendingHandoff, sourceTaskID string) (string, string) {
+	for _, pending := range pendings {
+		if pending.IntendedTaskID != "" || pending.SourceTaskID == "" {
+			continue
+		}
+		if task, ok := controlTask(*state, pending.SourceTaskID); ok && task.ProjectID != "" {
+			return task.ProjectID, task.WorkstreamID
+		}
+	}
+	if task, ok := controlTask(*state, sourceTaskID); ok && task.ProjectID != "" {
+		return task.ProjectID, task.WorkstreamID
+	}
+	return "", ""
+}
+
+// promotionSummary reports what a submission did with the handoffs that
+// were waiting on its terminal. Failures are explicit: the caller must
+// not answer a submission with an unqualified success when its provenance
+// was not persisted.
+type promotionSummary struct {
+	Promoted int      `json:"promoted"`
+	Failed   int      `json:"failed"`
+	Errors   []string `json:"errors,omitempty"`
+}
+
 // promotePendingHandoffs attaches every waiting handoff of a target
 // terminal to the task a validated submission event just confirmed, as
-// reviews source relationships. Best-effort: ref insertion is idempotent
-// and promotion is resumable, so a crash between the two writes retries
-// cleanly at the next submission.
-func (s *Server) promotePendingHandoffs(ctx context.Context, username, targetTerminal, targetTaskID string) {
+// reviews source relationships.
+//
+// Handoffs pinned to an earlier task of the same terminal (a promotion
+// that failed back then) are retried against that original task first —
+// a new submission never inherits another goal's provenance.
+func (s *Server) promotePendingHandoffs(ctx context.Context, username, targetTerminal, targetTaskID string) promotionSummary {
+	summary := promotionSummary{}
 	if username == "" || targetTerminal == "" || targetTaskID == "" {
-		return
+		summary.Failed = 1
+		summary.Errors = append(summary.Errors, "missing username, terminal or task")
+		return summary
 	}
 	pendings, err := s.controlPlane.ListPendingHandoffs(ctx, username, targetTerminal)
 	if err != nil {
-		return
+		summary.Failed = 1
+		summary.Errors = append(summary.Errors, err.Error())
+		return summary
 	}
-	for _, pending := range pendings {
-		if pending.SourceTaskID == "" {
-			continue
-		}
+	state, stateErr := s.projectControl.loadOrSeed(username)
+	attach := func(pending controlplane.PendingHandoff, taskID string) {
 		if _, err := s.controlPlane.AddSourceRef(ctx, username, controlplane.SourceRef{
-			TargetTaskID:   targetTaskID,
+			TargetTaskID:   taskID,
 			SourceTaskID:   pending.SourceTaskID,
 			Relation:       "reviews",
 			Snapshot:       pending.Snapshot,
@@ -239,10 +400,42 @@ func (s *Server) promotePendingHandoffs(ctx context.Context, username, targetTer
 			TargetTerminal: pending.TargetTerminal,
 			CopyID:         pending.CopyID,
 		}); err != nil {
+			summary.Failed++
+			summary.Errors = append(summary.Errors, err.Error())
+			return
+		}
+		if err := s.controlPlane.MarkHandoffPromoted(ctx, username, pending.ID, taskID); err != nil {
+			summary.Failed++
+			summary.Errors = append(summary.Errors, err.Error())
+			return
+		}
+		summary.Promoted++
+	}
+	for _, pending := range pendings {
+		if pending.SourceTaskID == "" || pending.IntendedTaskID == "" || pending.IntendedTaskID == targetTaskID {
 			continue
 		}
-		_ = s.controlPlane.MarkHandoffPromoted(ctx, username, pending.ID, targetTaskID)
+		// Recovery of an earlier failed submission: reattach to its own
+		// task, which must still exist in the persisted state.
+		if stateErr != nil {
+			summary.Failed++
+			summary.Errors = append(summary.Errors, stateErr.Error())
+			continue
+		}
+		if _, ok := controlTask(state, pending.IntendedTaskID); !ok {
+			summary.Failed++
+			summary.Errors = append(summary.Errors, "intended task "+pending.IntendedTaskID+" no longer exists")
+			continue
+		}
+		attach(pending, pending.IntendedTaskID)
 	}
+	for _, pending := range pendings {
+		if pending.SourceTaskID == "" || (pending.IntendedTaskID != "" && pending.IntendedTaskID != targetTaskID) {
+			continue
+		}
+		attach(pending, targetTaskID)
+	}
+	return summary
 }
 
 // registerTaskForTerminalPersisted registers a live terminal as a planned

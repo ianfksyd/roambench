@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ianf339/roambench/internal/auth"
 	"github.com/ianf339/roambench/internal/controlplane"
@@ -89,6 +90,23 @@ func (f *handoffFixture) paste(t *testing.T, terminalID, text string) *httptest.
 	t.Helper()
 	return f.post(t, "/api/terminal-handoff/paste",
 		fmt.Sprintf(`{"terminalId":%q,"text":%q}`, terminalID, text))
+}
+
+// startFakeAgent runs a process whose argv[0] is a known agent CLI inside
+// the pane, then waits until the server-side pane inspection sees it.
+func (f *handoffFixture) startFakeAgent(t *testing.T, terminalID, name string) {
+	t.Helper()
+	if err := f.mgr.SendKeys("ian", terminalID, "exec -a "+name+" sleep 60", true); err != nil {
+		t.Fatalf("send keys: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := f.mgr.AgentProcessInSession(terminalID); ok {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("fake agent not detected in pane")
 }
 
 func (f *handoffFixture) taskCountForTerminal(t *testing.T, terminalID string) int {
@@ -347,63 +365,382 @@ func TestHandoffUnmatchedPasteCreatesNothing(t *testing.T) {
 	}
 }
 
-// 目标已有任务：补充来源引用；同来源的新选区覆盖旧快照，不丢内容。
-func TestHandoffSupplementUpdatesSnapshot(t *testing.T) {
+// 同一目标的两次粘贴是独立事件：都入账、提交时都被消费；同来源的选区
+// 按 (target,source,relation) 收敛为一条关系、快照为最新一段（既有验收
+// 语义；完整输入版本历史是已知边界，本轮不做）。
+func TestHandoffDistinctSelectionsAllPreserved(t *testing.T) {
 	f := newHandoffFixture(t)
-	// 目标 t2 绑定到已有任务 B。
-	if _, err := f.srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
-		state.Tasks = append(state.Tasks, projectControlTask{
-			ID: "task-dst-b", ProjectID: "project-handoff",
-			WorkstreamID: "ws-handoff",
-			Title:        "目标任务 B", State: "running",
-			SessionIDs: []string{"session-live-" + f.t2.ID},
-			Timeline:   []projectControlEvent{}, Audit: []projectControlAuditItem{},
-		})
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
 	if rec := f.copy(t, f.t1.ID, "第一段选区内容"); rec.Code != http.StatusOK {
 		t.Fatalf("copy 1 = %d", rec.Code)
 	}
-	rec := f.paste(t, f.t2.ID, "第一段选区内容")
+	if rec := f.paste(t, f.t2.ID, "第一段选区内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste 1 = %d", rec.Code)
+	}
+	if rec := f.copy(t, f.t1.ID, "第二段不同的选区内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy 2 = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "第二段不同的选区内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste 2 = %d", rec.Code)
+	}
+
+	agentToken := agentTokenFor(t, f.srv, f.token)
+	regBody, _ := json.Marshal(registerTaskRequest{Title: "多选区目标", TerminalID: f.t2.ID})
+	rec := agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register-task = %d: %s", rec.Code, rec.Body.String())
+	}
+	var reg struct {
+		Promotion struct {
+			Promoted int `json:"promoted"`
+			Failed   int `json:"failed"`
+		} `json:"promotion"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &reg); err != nil {
+		t.Fatal(err)
+	}
+	if reg.Promotion.Promoted != 2 || reg.Promotion.Failed != 0 {
+		t.Fatalf("promotion = %+v, want both pastes consumed", reg.Promotion)
+	}
+	state, err := f.srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := tasksForTerminalInState(state, f.t2.ID)
+	if len(bound) != 1 {
+		t.Fatalf("terminal bound to %d tasks", len(bound))
+	}
+	refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", bound[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || refs[0].Snapshot != "第二段不同的选区内容" {
+		t.Fatalf("refs = %+v, want one ref with the newest selection", refs)
+	}
+}
+
+// 原始需求：裸 agent（无可适配器 CLI）在终端里收到粘贴即完成提交 —— 卡与
+// 来源关系自动出现，无需 register-task、无需确认。
+func TestHandoffAgentPasteAutoCreatesCard(t *testing.T) {
+	f := newHandoffFixture(t)
+	if rec := f.copy(t, f.t1.ID, "裸 Codex 审查请求"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	// 目标终端尚无任务；先粘贴（pending），启动 agent 后粘贴即提交。
+	if rec := f.paste(t, f.t2.ID, "裸 Codex 审查请求"); rec.Code != http.StatusOK {
+		t.Fatalf("paste before agent = %d", rec.Code)
+	}
+	if n := f.taskCountForTerminal(t, f.t2.ID); n != 0 {
+		t.Fatalf("plain paste created %d tasks", n)
+	}
+	f.startFakeAgent(t, f.t2.ID, "codex")
+	rec := f.paste(t, f.t2.ID, "裸 Codex 审查请求")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("paste with agent = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+		Auto   bool   `json:"auto"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Auto || body.TaskID == "" {
+		t.Fatalf("agent paste = %+v, want auto-created card", body)
+	}
+	state, err := f.srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, ok := controlTask(state, body.TaskID)
+	if !ok {
+		t.Fatal("auto card not persisted")
+	}
+	if task.ProjectID != "project-handoff" {
+		t.Fatalf("auto card project = %q, want source project", task.ProjectID)
+	}
+	refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", body.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ref := range refs {
+		if ref.SourceTaskID == f.taskA && ref.Snapshot == "裸 Codex 审查请求" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("auto card refs missing source: %+v", refs)
+	}
+}
+
+// 同一终端的第二个目标：新粘贴不得挂到旧任务；新提交（或新 agent 代际）
+// 的来源归新任务。
+func TestHandoffSecondGoalGetsOwnSource(t *testing.T) {
+	f := newHandoffFixture(t)
+	// B1：第一轮粘贴 + 提交。
+	if rec := f.copy(t, f.t1.ID, "第一目标内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy 1 = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "第一目标内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste 1 = %d", rec.Code)
+	}
+	agentToken := agentTokenFor(t, f.srv, f.token)
+	regBody, _ := json.Marshal(registerTaskRequest{Title: "目标 B1", TerminalID: f.t2.ID})
+	if rec := agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody)); rec.Code != http.StatusOK {
+		t.Fatalf("register B1 = %d", rec.Code)
+	}
+	state, err := f.srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b1 := tasksForTerminalInState(state, f.t2.ID)
+	if len(b1) != 1 {
+		t.Fatalf("after B1: %d tasks on terminal", len(b1))
+	}
+	b1ID := b1[0].ID
+
+	// 第二轮：新内容粘贴（终端仍是普通 shell，无 agent）→ 必须 pending，
+	// 不得立刻补到 B1。
+	if rec := f.copy(t, f.t1.ID, "第二目标内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy 2 = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "第二目标内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste 2 = %d", rec.Code)
+	}
+	refs1, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", b1ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range refs1 {
+		if ref.Snapshot == "第二目标内容" {
+			t.Fatal("second goal's paste was attributed to the first task")
+		}
+	}
+
+	// 提交 B2 → 来源归 B2。
+	regBody, _ = json.Marshal(registerTaskRequest{Title: "目标 B2", TerminalID: f.t2.ID})
+	if rec := agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody)); rec.Code != http.StatusOK {
+		t.Fatalf("register B2 = %d", rec.Code)
+	}
+	state, err = f.srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := tasksForTerminalInState(state, f.t2.ID)
+	if len(bound) != 2 {
+		t.Fatalf("terminal bound to %d tasks, want 2", len(bound))
+	}
+	var b1Refs, b2Refs []controlplane.SourceRef
+	for _, task := range bound {
+		refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if task.ID == b1ID {
+			b1Refs = refs
+		} else {
+			b2Refs = refs
+		}
+	}
+	if len(b1Refs) != 1 || b1Refs[0].Snapshot != "第一目标内容" {
+		t.Fatalf("B1 refs changed: %+v", b1Refs)
+	}
+	if len(b2Refs) != 1 || b2Refs[0].Snapshot != "第二目标内容" {
+		t.Fatalf("B2 refs = %+v, want the second selection", b2Refs)
+	}
+}
+
+// 相同文本、不同来源：按粘贴事件身份（copyId）保留两条 pending，提交后两个来源都在。
+func TestHandoffSameTextDifferentSourcesKept(t *testing.T) {
+	f := newHandoffFixture(t)
+	t3, err := f.mgr.CreateSessionWithOptions("ian", terminal.SessionCreateOptions{WorkDir: t.TempDir(), Name: "handoff-src-c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := f.copy(t, f.t1.ID, "完全相同的文本"); rec.Code != http.StatusOK {
+		t.Fatalf("copy A = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "完全相同的文本"); rec.Code != http.StatusOK {
+		t.Fatalf("paste A = %d", rec.Code)
+	}
+	if rec := f.copy(t, t3.ID, "完全相同的文本"); rec.Code != http.StatusOK {
+		t.Fatalf("copy C = %d", rec.Code)
+	}
+	rec := f.paste(t, f.t2.ID, "完全相同的文本")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("paste C = %d", rec.Code)
+	}
+
+	agentToken := agentTokenFor(t, f.srv, f.token)
+	regBody, _ := json.Marshal(registerTaskRequest{Title: "同文目标", TerminalID: f.t2.ID})
+	if rec := agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody)); rec.Code != http.StatusOK {
+		t.Fatalf("register = %d", rec.Code)
+	}
+	state, err := f.srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := tasksForTerminalInState(state, f.t2.ID)
+	refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", bound[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := map[string]bool{}
+	for _, ref := range refs {
+		sources[ref.SourceTaskID] = true
+	}
+	// 来源 A 是已登记任务；来源 C 的终端未登记，粘贴时被持久补登记。
+	if len(sources) != 2 {
+		t.Fatalf("sources = %v, want both real copy events", sources)
+	}
+}
+
+// agent 代际身份：同一 agent 进程持续运行时的后续粘贴补充同一任务；
+// 新选区覆盖同对关系的快照（upsert 语义）。
+func TestHandoffAgentGenerationSupplements(t *testing.T) {
+	f := newHandoffFixture(t)
+	f.startFakeAgent(t, f.t2.ID, "claude")
+	if rec := f.copy(t, f.t1.ID, "代际第一段"); rec.Code != http.StatusOK {
+		t.Fatalf("copy 1 = %d", rec.Code)
+	}
+	rec := f.paste(t, f.t2.ID, "代际第一段")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("paste 1 = %d: %s", rec.Code, rec.Body.String())
 	}
 	var first struct {
-		RefID string `json:"refId"`
+		TaskID string `json:"taskId"`
+		RefID  string `json:"refId"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
 
-	// 同来源第二段内容 → 同一条关系，快照替换为本次实际引用的内容。
-	if rec := f.copy(t, f.t1.ID, "第二段不同的选区内容"); rec.Code != http.StatusOK {
+	// 同一代际的第二段：仍补充同一任务。
+	if rec := f.copy(t, f.t1.ID, "代际第二段"); rec.Code != http.StatusOK {
 		t.Fatalf("copy 2 = %d", rec.Code)
 	}
-	rec = f.paste(t, f.t2.ID, "第二段不同的选区内容")
+	rec = f.paste(t, f.t2.ID, "代际第二段")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("paste 2 = %d: %s", rec.Code, rec.Body.String())
 	}
 	var second struct {
-		RefID string `json:"refId"`
+		TaskID   string `json:"taskId"`
+		RefID    string `json:"refId"`
+		Relation string `json:"relation"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.RefID != first.RefID {
-		t.Fatalf("supplement created a second ref %s (first %s)", second.RefID, first.RefID)
+	if second.TaskID != first.TaskID {
+		t.Fatalf("second paste created another card %s (first %s)", second.TaskID, first.TaskID)
 	}
-	refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", "task-dst-b")
+	if second.RefID != first.RefID || second.Relation != "supplemented" {
+		t.Fatalf("second paste = %+v, want same-ref supplement", second)
+	}
+	refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", first.TaskID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(refs) != 1 {
-		t.Fatalf("refs = %d, want 1", len(refs))
+	if len(refs) != 1 || refs[0].Snapshot != "代际第二段" {
+		t.Fatalf("refs = %+v, want one ref with the newest snapshot", refs)
 	}
-	if refs[0].Snapshot != "第二段不同的选区内容" {
-		t.Fatalf("snapshot = %q, want the newest selection", refs[0].Snapshot)
+}
+
+// 无归属新终端的提交：审查卡继承来源项目，不落当前浏览项目。
+func TestRegisterTaskInheritsSourceProject(t *testing.T) {
+	f := newHandoffFixture(t)
+	// 活动项目是种子默认（project-roambench-control）；来源任务属于
+	// project-handoff。
+	if rec := f.copy(t, f.t1.ID, "跨项目审查内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "跨项目审查内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste = %d", rec.Code)
+	}
+	agentToken := agentTokenFor(t, f.srv, f.token)
+	regBody, _ := json.Marshal(registerTaskRequest{Title: "跨项目审查", TerminalID: f.t2.ID})
+	rec := agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register = %d: %s", rec.Code, rec.Body.String())
+	}
+	var reg struct {
+		TaskID    string `json:"taskId"`
+		ProjectID string `json:"projectId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &reg); err != nil {
+		t.Fatal(err)
+	}
+	if reg.ProjectID != "project-handoff" {
+		t.Fatalf("task landed in %q, want the source project", reg.ProjectID)
+	}
+}
+
+// 提升失败必须显式回报（207），且重试恢复到原提交的任务，不泄漏给下一个目标。
+func TestRegisterTaskPromotionFailureReported(t *testing.T) {
+	f := newHandoffFixture(t)
+	if rec := f.copy(t, f.t1.ID, "失败注入内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "失败注入内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste = %d", rec.Code)
+	}
+	// 隔离库内注入来源关系写入失败。
+	inject := `CREATE TRIGGER fail_reviews_insert BEFORE INSERT ON task_source_refs
+	           WHEN NEW.relation='reviews' AND NEW.source_task_id='task-src-a'
+	           BEGIN SELECT RAISE(ABORT, 'injected failure'); END`
+	if err := f.srv.controlPlane.ExecAdmin(context.Background(), inject); err != nil {
+		t.Fatal(err)
+	}
+	agentToken := agentTokenFor(t, f.srv, f.token)
+	regBody, _ := json.Marshal(registerTaskRequest{Title: "失败目标", TerminalID: f.t2.ID})
+	rec := agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody))
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("register with failed promotion = %d: %s", rec.Code, rec.Body.String())
+	}
+	var first struct {
+		TaskID    string `json:"taskId"`
+		Promotion struct {
+			Failed int `json:"failed"`
+		} `json:"promotion"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	if first.Promotion.Failed == 0 {
+		t.Fatal("promotion failure not reported")
+	}
+
+	// 解除注入，同一终端再次提交：pending 恢复到原任务 B1，
+	// 新任务 B2 不继承这次来源。
+	if err := f.srv.controlPlane.ExecAdmin(context.Background(), `DROP TRIGGER fail_reviews_insert`); err != nil {
+		t.Fatal(err)
+	}
+	regBody, _ = json.Marshal(registerTaskRequest{Title: "下一个目标", TerminalID: f.t2.ID})
+	rec = agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recovery register = %d: %s", rec.Code, rec.Body.String())
+	}
+	state, err := f.srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := tasksForTerminalInState(state, f.t2.ID)
+	if len(bound) != 2 {
+		t.Fatalf("terminal bound to %d tasks", len(bound))
+	}
+	b1Refs, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", first.TaskID)
+	if len(b1Refs) != 1 || b1Refs[0].Snapshot != "失败注入内容" {
+		t.Fatalf("recovery did not reattach to the original task: %+v", b1Refs)
+	}
+	var b2ID string
+	for _, task := range bound {
+		if task.ID != first.TaskID {
+			b2ID = task.ID
+		}
+	}
+	b2Refs, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", b2ID)
+	if len(b2Refs) != 0 {
+		t.Fatalf("new goal inherited recovered provenance: %+v", b2Refs)
 	}
 }
 

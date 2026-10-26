@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ianf339/roambench/internal/controlplane"
 	"github.com/ianf339/roambench/internal/terminal"
 )
 
@@ -67,6 +68,18 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 	var requestErr error
 	_, err := s.projectControl.withStateLocked(username, func(state *projectControlState) error {
 		projectID, workstreamID, contextErr := registrationContext(*state, live)
+		// Handoff project inheritance: an unbound terminal whose pasted
+		// sources live in a known project registers there — not in
+		// whatever project the UI is currently browsing. Explicit target
+		// attribution (session metadata or an existing binding) wins.
+		if live != nil && live.ProjectID == "" && taskIDForTerminalInState(*state, live.ID) == "" {
+			pendings, pendingErr := s.controlPlane.ListPendingHandoffs(r.Context(), username, live.ID)
+			if pendingErr == nil {
+				if pID, wID := handoffProjectFromState(state, pendings, ""); pID != "" {
+					projectID, workstreamID, contextErr = pID, wID, nil
+				}
+			}
+		}
 		if contextErr != nil {
 			requestErr = contextErr
 			return contextErr
@@ -106,17 +119,36 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// A validated submission event: promote handoffs pasted onto this
-	// terminal while it had no task of its own.
+	// A validated submission event: pin the waiting handoffs to THIS task
+	// (a failed promotion must recover against the same submission, never
+	// leak to the next goal), then promote and report the outcome. The
+	// running agent generation, if any, becomes this task's executor so
+	// later pastes feed it.
+	promotion := promotionSummary{}
 	if live != nil {
-		s.promotePendingHandoffs(r.Context(), username, live.ID, created.ID)
+		_ = s.controlPlane.SetPendingIntendedTask(r.Context(), username, live.ID, created.ID)
+		promotion = s.promotePendingHandoffs(r.Context(), username, live.ID, created.ID)
+		if agent, ok := s.terminals.AgentProcessInSession(live.ID); ok {
+			if exec, found, _ := s.controlPlane.AgentExecutionBySig(r.Context(), username, live.ID, agent.Signature()); !found || exec.TaskID == "" {
+				_, _ = s.controlPlane.RecordAgentExecution(r.Context(), username, controlplane.AgentExecution{
+					TerminalID: live.ID, AgentSig: agent.Signature(), AgentName: agent.Name, TaskID: created.ID,
+				})
+			}
+		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	body := map[string]interface{}{
 		"taskId":     created.ID,
 		"projectId":  created.ProjectID,
 		"terminalId": terminalID,
-	})
+		"promotion":  promotion,
+	}
+	status := http.StatusOK
+	if promotion.Failed > 0 {
+		// The card exists but its provenance is incomplete: not a clean 200.
+		status = http.StatusMultiStatus
+	}
+	writeJSON(w, status, body)
 }
 
 // Use the terminal's explicit task/project binding before the active UI
