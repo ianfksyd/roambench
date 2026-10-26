@@ -109,6 +109,12 @@ func (f *handoffFixture) startFakeAgent(t *testing.T, terminalID, name string) {
 	t.Fatal("fake agent not detected in pane")
 }
 
+func (f *handoffFixture) submit(t *testing.T, terminalID, text string) *httptest.ResponseRecorder {
+	t.Helper()
+	return f.post(t, "/api/terminal-handoff/submit",
+		fmt.Sprintf(`{"terminalId":%q,"text":%q}`, terminalID, text))
+}
+
 func (f *handoffFixture) taskCountForTerminal(t *testing.T, terminalID string) int {
 	t.Helper()
 	state, err := f.srv.projectControl.loadOrSeed("ian")
@@ -418,34 +424,47 @@ func TestHandoffDistinctSelectionsAllPreserved(t *testing.T) {
 	}
 }
 
-// 原始需求：裸 agent（无可适配器 CLI）在终端里收到粘贴即完成提交 —— 卡与
-// 来源关系自动出现，无需 register-task、无需确认。
-func TestHandoffAgentPasteAutoCreatesCard(t *testing.T) {
+// 原始需求：裸 agent（无可适配器 CLI）流程。粘贴只是草稿入账（不建卡）；
+// 用户 Enter 提交后，卡与 reviews 来源自动出现，无需 register-task、无需确认。
+func TestHandoffSubmitCreatesCardForBareAgent(t *testing.T) {
 	f := newHandoffFixture(t)
 	if rec := f.copy(t, f.t1.ID, "裸 Codex 审查请求"); rec.Code != http.StatusOK {
 		t.Fatalf("copy = %d", rec.Code)
 	}
-	// 目标终端尚无任务；先粘贴（pending），启动 agent 后粘贴即提交。
-	if rec := f.paste(t, f.t2.ID, "裸 Codex 审查请求"); rec.Code != http.StatusOK {
-		t.Fatalf("paste before agent = %d", rec.Code)
-	}
-	if n := f.taskCountForTerminal(t, f.t2.ID); n != 0 {
-		t.Fatalf("plain paste created %d tasks", n)
-	}
 	f.startFakeAgent(t, f.t2.ID, "codex")
 	rec := f.paste(t, f.t2.ID, "裸 Codex 审查请求")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("paste with agent = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("paste = %d: %s", rec.Code, rec.Body.String())
+	}
+	var pasteBody struct {
+		Pending bool   `json:"pending"`
+		TaskID  string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pasteBody); err != nil {
+		t.Fatal(err)
+	}
+	// 进程存在不等于提交：未提交的草稿不产生任何卡。
+	if !pasteBody.Pending || pasteBody.TaskID != "" {
+		t.Fatalf("paste = %+v, want pending without a card", pasteBody)
+	}
+	if n := f.taskCountForTerminal(t, f.t2.ID); n != 0 {
+		t.Fatalf("unsubmitted draft created %d tasks", n)
+	}
+
+	// 用户 Enter 提交 → 卡与来源自动出现。
+	rec = f.submit(t, f.t2.ID, "裸 Codex 审查请求")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit = %d: %s", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		TaskID string `json:"taskId"`
-		Auto   bool   `json:"auto"`
+		Submitted bool   `json:"submitted"`
+		TaskID    string `json:"taskId"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if !body.Auto || body.TaskID == "" {
-		t.Fatalf("agent paste = %+v, want auto-created card", body)
+	if !body.Submitted || body.TaskID == "" {
+		t.Fatalf("submit = %+v", body)
 	}
 	state, err := f.srv.projectControl.loadOrSeed("ian")
 	if err != nil {
@@ -453,10 +472,10 @@ func TestHandoffAgentPasteAutoCreatesCard(t *testing.T) {
 	}
 	task, ok := controlTask(state, body.TaskID)
 	if !ok {
-		t.Fatal("auto card not persisted")
+		t.Fatal("submitted card not persisted")
 	}
 	if task.ProjectID != "project-handoff" {
-		t.Fatalf("auto card project = %q, want source project", task.ProjectID)
+		t.Fatalf("card project = %q, want source project", task.ProjectID)
 	}
 	refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", body.TaskID)
 	if err != nil {
@@ -469,7 +488,162 @@ func TestHandoffAgentPasteAutoCreatesCard(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("auto card refs missing source: %+v", refs)
+		t.Fatalf("submitted card refs missing source: %+v", refs)
+	}
+}
+
+// 普通 shell 中按 Enter 不是提交：没有 agent 接收，不建卡。
+func TestHandoffSubmitWithoutAgentCreatesNothing(t *testing.T) {
+	f := newHandoffFixture(t)
+	if rec := f.copy(t, f.t1.ID, "shell 里的内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "shell 里的内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste = %d", rec.Code)
+	}
+	rec := f.submit(t, f.t2.ID, "shell 里的内容")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Submitted bool `json:"submitted"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Submitted {
+		t.Fatal("submit succeeded without an agent session")
+	}
+	if n := f.taskCountForTerminal(t, f.t2.ID); n != 0 {
+		t.Fatalf("shell submit created %d tasks", n)
+	}
+}
+
+// 并发提交同一目标：代际决策串行化，恰好一张卡。
+func TestHandoffConcurrentSubmitsSingleCard(t *testing.T) {
+	f := newHandoffFixture(t)
+	if rec := f.copy(t, f.t1.ID, "并发提交内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	f.startFakeAgent(t, f.t2.ID, "codex")
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if rec := f.submit(t, f.t2.ID, "并发提交内容"); rec.Code != http.StatusOK && rec.Code != http.StatusMultiStatus {
+				errs <- fmt.Errorf("submit = %d: %s", rec.Code, rec.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if n := f.taskCountForTerminal(t, f.t2.ID); n != 1 {
+		t.Fatalf("8 concurrent submissions produced %d cards, want 1", n)
+	}
+}
+
+// 目标终端已有显式项目归属：提交卡落在目标项目，不被来源项目覆盖。
+func TestHandoffSubmitKeepsExplicitTargetProject(t *testing.T) {
+	f := newHandoffFixture(t)
+	if _, err := f.srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		state.Projects = append(state.Projects, projectControlProject{ID: "project-target", Name: "Target", Takeover: projectTakeover{Mode: "manual"}})
+		state.Workstreams = append(state.Workstreams, projectControlWorkstream{ID: "ws-target", ProjectID: "project-target", Title: "Target"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	target, err := f.mgr.CreateSessionWithOptions("ian", terminal.SessionCreateOptions{WorkDir: t.TempDir(), Name: "explicit-target", ProjectID: "project-target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.startFakeAgent(t, target.ID, "codex")
+	if rec := f.copy(t, f.t1.ID, "跨项目审查内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	if rec := f.paste(t, target.ID, "跨项目审查内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste = %d", rec.Code)
+	}
+	rec := f.submit(t, target.ID, "跨项目审查内容")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	state, err := f.srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, ok := controlTask(state, body.TaskID)
+	if !ok {
+		t.Fatalf("card missing: %s", rec.Body.String())
+	}
+	if task.ProjectID != "project-target" {
+		t.Fatalf("terminal belongs to project-target but card created in %s", task.ProjectID)
+	}
+}
+
+// 自动关联写入失败：返回 207 且留有钉住原任务的 pending；
+// 解除失败后下一次 register-task 恢复到原提交的卡。
+func TestHandoffSubmitLinkFailureReportedAndRecoverable(t *testing.T) {
+	f := newHandoffFixture(t)
+	if rec := f.copy(t, f.t1.ID, "失败注入的自动来源"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	f.startFakeAgent(t, f.t2.ID, "codex")
+	if rec := f.paste(t, f.t2.ID, "失败注入的自动来源"); rec.Code != http.StatusOK {
+		t.Fatalf("paste = %d", rec.Code)
+	}
+	if err := f.srv.controlPlane.ExecAdmin(context.Background(),
+		`CREATE TRIGGER review_fail_ref BEFORE INSERT ON task_source_refs BEGIN SELECT RAISE(ABORT, 'review injected failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.submit(t, f.t2.ID, "失败注入的自动来源")
+	if rec.Code == http.StatusOK {
+		t.Fatalf("failed provenance write reported as clean 200: %s", rec.Body.String())
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	pendings, err := f.srv.controlPlane.ListPendingHandoffs(context.Background(), "ian", f.t2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := false
+	for _, pending := range pendings {
+		if pending.IntendedTaskID == body.TaskID {
+			pinned = true
+		}
+	}
+	if !pinned {
+		t.Fatalf("no pending pinned to %s: %+v", body.TaskID, pendings)
+	}
+	if err := f.srv.controlPlane.ExecAdmin(context.Background(), `DROP TRIGGER review_fail_ref`); err != nil {
+		t.Fatal(err)
+	}
+	agentToken := agentTokenFor(t, f.srv, f.token)
+	regBody, _ := json.Marshal(registerTaskRequest{Title: "下一个提交", TerminalID: f.t2.ID})
+	rec = agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register after recovery = %d: %s", rec.Code, rec.Body.String())
+	}
+	refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", body.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || refs[0].Snapshot != "失败注入的自动来源" {
+		t.Fatalf("original task refs after recovery = %+v, want 1", refs)
 	}
 }
 
@@ -595,17 +769,17 @@ func TestHandoffSameTextDifferentSourcesKept(t *testing.T) {
 	}
 }
 
-// agent 代际身份：同一 agent 进程持续运行时的后续粘贴补充同一任务；
-// 新选区覆盖同对关系的快照（upsert 语义）。
+// agent 代际身份：提交确立代际的当前目标，同一进程的后续粘贴补充该任务
+// （新选区覆盖同对关系的快照）；同代际显式登记新目标后，粘贴改随新目标。
 func TestHandoffAgentGenerationSupplements(t *testing.T) {
 	f := newHandoffFixture(t)
 	f.startFakeAgent(t, f.t2.ID, "claude")
 	if rec := f.copy(t, f.t1.ID, "代际第一段"); rec.Code != http.StatusOK {
 		t.Fatalf("copy 1 = %d", rec.Code)
 	}
-	rec := f.paste(t, f.t2.ID, "代际第一段")
+	rec := f.submit(t, f.t2.ID, "代际第一段")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("paste 1 = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("submit 1 = %d: %s", rec.Code, rec.Body.String())
 	}
 	var first struct {
 		TaskID string `json:"taskId"`
@@ -643,6 +817,46 @@ func TestHandoffAgentGenerationSupplements(t *testing.T) {
 	}
 	if len(refs) != 1 || refs[0].Snapshot != "代际第二段" {
 		t.Fatalf("refs = %+v, want one ref with the newest snapshot", refs)
+	}
+
+	// 同一代际里显式登记新目标 B2：代际绑定更新为最新提交，之后的粘贴归 B2。
+	agentToken := agentTokenFor(t, f.srv, f.token)
+	regBody, _ := json.Marshal(registerTaskRequest{Title: "同代际第二目标", TerminalID: f.t2.ID})
+	rec = agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register B2 = %d: %s", rec.Code, rec.Body.String())
+	}
+	var reg struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &reg); err != nil {
+		t.Fatal(err)
+	}
+	if rec := f.copy(t, f.t1.ID, "归 B2 的来源"); rec.Code != http.StatusOK {
+		t.Fatalf("copy 3 = %d", rec.Code)
+	}
+	rec = f.paste(t, f.t2.ID, "归 B2 的来源")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("paste 3 = %d: %s", rec.Code, rec.Body.String())
+	}
+	var third struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &third); err != nil {
+		t.Fatal(err)
+	}
+	if third.TaskID != reg.TaskID {
+		t.Fatalf("paste after B2 went to %s, want the latest goal %s", third.TaskID, reg.TaskID)
+	}
+	refs1, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", first.TaskID)
+	for _, ref := range refs1 {
+		if ref.Snapshot == "归 B2 的来源" {
+			t.Fatal("B2's source leaked onto the first goal")
+		}
+	}
+	refs2, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", reg.TaskID)
+	if len(refs2) != 1 {
+		t.Fatalf("B2 refs = %+v, want 1", refs2)
 	}
 }
 

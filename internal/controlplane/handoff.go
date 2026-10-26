@@ -310,10 +310,12 @@ func (r *Repository) RecordPendingHandoff(ctx context.Context, username string, 
 	return out, nil
 }
 
-// RecordAgentExecution binds an agent process generation to a task.
-// Identical (user, terminal, signature) repeats collapse onto the first
-// row so concurrent pastes agree on the execution owner.
-func (r *Repository) RecordAgentExecution(ctx context.Context, username string, e AgentExecution) (AgentExecution, error) {
+// UpsertAgentExecution binds an agent process generation to the task
+// whose goal was accepted LAST for that generation: a fresh submission
+// (register-task or a terminal submit event) re-points the generation to
+// the new task, so later pastes feed the current goal, never an earlier
+// one. One process generation can carry sequential goals.
+func (r *Repository) UpsertAgentExecution(ctx context.Context, username string, e AgentExecution) (AgentExecution, error) {
 	username = strings.TrimSpace(username)
 	e.Username = username
 	e.TerminalID = strings.TrimSpace(e.TerminalID)
@@ -324,8 +326,10 @@ func (r *Repository) RecordAgentExecution(ctx context.Context, username string, 
 	e.ID = newRandomID("exec")
 	e.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO terminal_agent_executions(id, username, terminal_id, agent_sig, agent_name, task_id, created_at)
-		 VALUES(?,?,?,?,?,?,?)`,
+		`INSERT INTO terminal_agent_executions(id, username, terminal_id, agent_sig, agent_name, task_id, created_at)
+		 VALUES(?,?,?,?,?,?,?)
+		 ON CONFLICT(username, terminal_id, agent_sig) DO UPDATE SET
+		   task_id=excluded.task_id, agent_name=excluded.agent_name, created_at=excluded.created_at`,
 		e.ID, username, e.TerminalID, e.AgentSig, e.AgentName, e.TaskID, e.CreatedAt)
 	if err != nil {
 		return AgentExecution{}, err

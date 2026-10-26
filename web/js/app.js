@@ -3344,18 +3344,58 @@
         }).catch(function() { /* best-effort */ });
     }
 
+    // One drafted paste per terminal: the text sent without a trailing
+    // newline, waiting for the user's Enter. Cleared on submit.
+    var terminalDraftPastes = {};
+
+    function reportHandoffSubmit(terminal) {
+        reportHandoffSubmitById(terminalIdOf(terminal, terminal && terminal.term));
+    }
+
     function reportHandoffPaste(terminal, text) {
+        var terminalId = terminalIdOf(terminal, terminal && terminal.term);
+        // A paste ending in a newline carries its own Enter: the goal is
+        // submitted on arrival. Otherwise it is a draft waiting for the
+        // user's Enter (tracked in reportHandoffSubmit).
+        if (/\r\n$|\r$|\n$/.test(text)) {
+            terminalDraftPastes[terminalId] = { text: text };
+            return reportHandoffSubmitById(terminalId);
+        }
+        terminalDraftPastes[terminalId] = { text: text };
         return queueHandoffReport(function() {
             return fetchJSON('/api/terminal-handoff/paste', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ terminalId: terminalIdOf(terminal, terminal && terminal.term), text: text })
+                body: JSON.stringify({ terminalId: terminalId, text: text })
             });
         }).then(function(data) {
             // A paste alone never opens a card: provenance is stored, and the
             // card appears when the goal is actually submitted. A supplement
-            // onto an already-running task is surfaced immediately.
+            // onto an already-running goal is surfaced immediately.
             if (data && data.matched && data.taskId) {
+                document.dispatchEvent(new CustomEvent('roambench:handoff', {
+                    detail: { taskId: data.taskId, sourceTaskId: data.sourceTaskId || '' }
+                }));
+                showHandoffToast(data.taskId, data.sourceTaskId || '');
+            }
+            return data;
+        }).catch(function() { return null; });
+    }
+
+    function reportHandoffSubmitById(terminalId) {
+        var draft = terminalDraftPastes[terminalId];
+        if (!draft || !draft.text) {
+            return Promise.resolve(null);
+        }
+        delete terminalDraftPastes[terminalId];
+        return queueHandoffReport(function() {
+            return fetchJSON('/api/terminal-handoff/submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ terminalId: terminalId, text: draft.text })
+            });
+        }).then(function(data) {
+            if (data && data.submitted && data.taskId) {
                 document.dispatchEvent(new CustomEvent('roambench:handoff', {
                     detail: { taskId: data.taskId, sourceTaskId: data.sourceTaskId || '' }
                 }));
@@ -5082,6 +5122,11 @@
             }
 
             sendTerminalSequence(t, data);
+            // The Enter after a tracked paste is the moment the drafted goal
+            // is actually submitted to the agent — report it once.
+            if (data === '\r') {
+                reportHandoffSubmit(t);
+            }
         });
 
         term.onResize(function(size) {

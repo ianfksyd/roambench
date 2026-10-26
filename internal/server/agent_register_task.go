@@ -129,11 +129,11 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 		_ = s.controlPlane.SetPendingIntendedTask(r.Context(), username, live.ID, created.ID)
 		promotion = s.promotePendingHandoffs(r.Context(), username, live.ID, created.ID)
 		if agent, ok := s.terminals.AgentProcessInSession(live.ID); ok {
-			if exec, found, _ := s.controlPlane.AgentExecutionBySig(r.Context(), username, live.ID, agent.Signature()); !found || exec.TaskID == "" {
-				_, _ = s.controlPlane.RecordAgentExecution(r.Context(), username, controlplane.AgentExecution{
-					TerminalID: live.ID, AgentSig: agent.Signature(), AgentName: agent.Name, TaskID: created.ID,
-				})
-			}
+			// Last submission wins: the generation now carries THIS goal, so
+			// later pastes feed it instead of an earlier task.
+			_, _ = s.controlPlane.UpsertAgentExecution(r.Context(), username, controlplane.AgentExecution{
+				TerminalID: live.ID, AgentSig: agent.Signature(), AgentName: agent.Name, TaskID: created.ID,
+			})
 		}
 	}
 
