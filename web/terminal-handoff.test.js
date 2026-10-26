@@ -37,7 +37,7 @@ function fixture() {
     return {
         reports, bytes, context,
         paste(text) {
-            context.handleDocumentPaste({preventDefault() {}, clipboardData: {getData: () => text}});
+            context.handleDocumentPaste({preventDefault() {}, stopPropagation() {}, clipboardData: {getData: () => text}});
         },
         input: value => context.input(value),
         flush: () => context.handoffReportChain

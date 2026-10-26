@@ -2937,8 +2937,10 @@
 
         document.getElementById('file-upload-input').addEventListener('change', handleFileUploadSelection);
         document.addEventListener('keydown', handleGlobalKeyDown);
-        document.addEventListener('copy', handleDocumentCopy);
-        document.addEventListener('paste', handleDocumentPaste);
+        // xterm handles paste at its textarea and stops propagation. Observe
+        // native clipboard events before that target handler consumes them.
+        document.addEventListener('copy', handleDocumentCopy, true);
+        document.addEventListener('paste', handleDocumentPaste, true);
         if (document.getElementById('app-mode-terminal')) {
             document.getElementById('app-mode-terminal').addEventListener('click', function() {
                 setAppMode('terminal');
@@ -3494,6 +3496,18 @@
         }
     }
 
+    function shouldKeepClipboardForUI(node, terminal) {
+        // xterm's focused input is a textarea, but belongs to the terminal
+        // rather than an editor or ordinary form control.
+        if (terminal && terminal.term && node && (
+            node === terminal.term.textarea ||
+            (terminal.term.element && terminal.term.element.contains(node))
+        )) {
+            return false;
+        }
+        return shouldKeepTabForUI(node);
+    }
+
     function shouldHandleTerminalClipboardEvent() {
         const terminal = getActiveTerminal();
         if (!terminal || !terminal.term || !terminal.ws || terminal.ws.readyState !== WebSocket.OPEN) {
@@ -3502,7 +3516,7 @@
         if (document.getElementById('terminal-view').style.display === 'none') {
             return false;
         }
-        if (shouldKeepTabForUI(document.activeElement)) {
+        if (shouldKeepClipboardForUI(document.activeElement, terminal)) {
             return false;
         }
         return true;
@@ -3517,6 +3531,7 @@
         }
 
         event.preventDefault();
+        event.stopPropagation();
         event.clipboardData.setData('text/plain', selection);
         reportHandoffCopy(terminalIdOf(terminal, terminal.term), selection);
         if (terminal.term && typeof terminal.term.clearSelection === 'function') {
@@ -3545,6 +3560,9 @@
         }
 
         event.preventDefault();
+        // We own the terminal paste now; prevent xterm from forwarding it a
+        // second time after the capture handler has already sent the bytes.
+        event.stopPropagation();
         sendTerminalSequence(terminal, text);
         if (text.trim()) {
             reportHandoffPaste(terminal, text);
@@ -3565,7 +3583,7 @@
             return false;
         }
 
-        if (shouldKeepTabForUI(document.activeElement)) {
+        if (shouldKeepClipboardForUI(document.activeElement, terminal)) {
             return false;
         }
 
