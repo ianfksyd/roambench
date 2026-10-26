@@ -329,15 +329,6 @@ CREATE INDEX IF NOT EXISTS pending_handoffs_target_idx ON pending_handoffs(usern
 -- retransmitted paste collapses, but the same text copied from two
 -- different sources is two real events and both survive. Promoted rows
 -- keep their history, so the constraint only covers not-yet-promoted rows.
-DROP INDEX IF EXISTS pending_handoffs_active_uniq;
-DELETE FROM pending_handoffs WHERE promoted_task_id='' AND id NOT IN (
-  SELECT id FROM (
-    SELECT id, ROW_NUMBER() OVER (PARTITION BY username, target_terminal, copy_id ORDER BY created_at DESC) AS rn
-    FROM pending_handoffs WHERE promoted_task_id=''
-  ) WHERE rn = 1
-);
-CREATE UNIQUE INDEX IF NOT EXISTS pending_handoffs_active_uniq
-  ON pending_handoffs(username, target_terminal, copy_id) WHERE promoted_task_id='';
 CREATE TABLE IF NOT EXISTS terminal_agent_executions (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL,
@@ -409,6 +400,7 @@ func migrateHandoffColumns(db *sql.DB) error {
 	for _, m := range []columnMigration{
 		{table: "task_source_refs", column: "copy_id", ddl: `ALTER TABLE task_source_refs ADD COLUMN copy_id TEXT NOT NULL DEFAULT ''`},
 		{table: "pending_handoffs", column: "intended_task_id", ddl: `ALTER TABLE pending_handoffs ADD COLUMN intended_task_id TEXT NOT NULL DEFAULT ''`},
+		{table: "pending_handoffs", column: "draft_id", ddl: `ALTER TABLE pending_handoffs ADD COLUMN draft_id TEXT NOT NULL DEFAULT ''`},
 	} {
 		var count int
 		if err := db.QueryRow(
@@ -421,7 +413,19 @@ func migrateHandoffColumns(db *sql.DB) error {
 			}
 		}
 	}
-	return nil
+	// Build this index only after column migrations, including upgrades from
+	// databases created before drafts existed. Retransmits deduplicate within
+	// a draft; a later draft can independently contain the same copied text.
+	_, err := db.Exec(`DROP INDEX IF EXISTS pending_handoffs_active_uniq;
+DELETE FROM pending_handoffs WHERE promoted_task_id='' AND id NOT IN (
+ SELECT id FROM (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY username, target_terminal, draft_id, copy_id ORDER BY created_at DESC) AS rn
+  FROM pending_handoffs WHERE promoted_task_id=''
+ ) WHERE rn=1
+);
+CREATE UNIQUE INDEX pending_handoffs_active_uniq
+ ON pending_handoffs(username, target_terminal, draft_id, copy_id) WHERE promoted_task_id='';`)
+	return err
 }
 
 // ExecAdmin runs an arbitrary administrative statement (migrations,

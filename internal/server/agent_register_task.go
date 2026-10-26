@@ -44,6 +44,10 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 	// Validate ownership before creating anything. An invalid terminal must
 	// not leave an unbound task behind or be echoed back as a successful bind.
 	terminalID := strings.TrimSpace(req.TerminalID)
+	if terminalID != "" {
+		handoffSubmitMu.Lock()
+		defer handoffSubmitMu.Unlock()
+	}
 	var live *terminal.SessionInfo
 	if terminalID != "" {
 		if s.terminals == nil {
@@ -123,14 +127,25 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 	// later pastes feed it.
 	promotion := promotionSummary{}
 	if live != nil {
-		_ = s.controlPlane.SetPendingIntendedTask(r.Context(), username, live.ID, created.ID)
-		promotion = s.promotePendingHandoffs(r.Context(), username, live.ID, created.ID)
+		if err := s.controlPlane.SetPendingIntendedTask(r.Context(), username, live.ID, created.ID); err != nil {
+			promotion.Failed++
+			promotion.Errors = append(promotion.Errors, err.Error())
+		} else {
+			promotion = s.promotePendingHandoffs(r.Context(), username, live.ID, created.ID)
+		}
+		if err := s.terminals.BindSessionTask(username, live.ID, created.ID, created.ProjectID); err != nil {
+			promotion.Failed++
+			promotion.Errors = append(promotion.Errors, err.Error())
+		}
 		if agent, ok := s.terminals.AgentProcessInSession(live.ID); ok {
 			// Last submission wins: the generation now carries THIS goal, so
 			// later pastes feed it instead of an earlier task.
-			_, _ = s.controlPlane.UpsertAgentExecution(r.Context(), username, controlplane.AgentExecution{
+			if _, err := s.controlPlane.UpsertAgentExecution(r.Context(), username, controlplane.AgentExecution{
 				TerminalID: live.ID, AgentSig: agent.Signature(), AgentName: agent.Name, TaskID: created.ID,
-			})
+			}); err != nil {
+				promotion.Failed++
+				promotion.Errors = append(promotion.Errors, err.Error())
+			}
 		}
 	}
 

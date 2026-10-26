@@ -51,6 +51,24 @@ func writePersistedSessionWALFile(t *testing.T, mgr *Manager, data persistedSess
 	}
 }
 
+func TestManagerBindSessionTaskPersistsAndChecksOwnership(t *testing.T) {
+	mgr := newTestManager(t, &config.TerminalConfig{Shell: "/bin/sh", IdleTimeout: "1h"})
+	session, err := mgr.CreateSessionWithOptions("ian", SessionCreateOptions{TaskID: "b1", ProjectID: "project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.BindSessionTask("another-user", session.ID, "b2", "project"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("foreign bind: %v", err)
+	}
+	if err := mgr.BindSessionTask("ian", session.ID, "b2", "project"); err != nil {
+		t.Fatal(err)
+	}
+	persisted := readPersistedSessionFile(t, mgr, "ian", session.ID)
+	if persisted.TaskID != "b2" || persisted.ProjectID != "project" {
+		t.Fatalf("binding not durable: %+v", persisted)
+	}
+}
+
 func TestManagerSessionOwnership(t *testing.T) {
 	mgr := newTestManager(t, &config.TerminalConfig{
 		Shell:       "/bin/sh",

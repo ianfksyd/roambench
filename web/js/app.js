@@ -3344,8 +3344,8 @@
         }).catch(function() { /* best-effort */ });
     }
 
-    // One drafted paste per terminal: the text sent without a trailing
-    // newline, waiting for the user's Enter. Cleared on submit.
+    // All copied sources in an editor draft share an identity. Editing and
+    // navigation preserve it; submission or explicit cancellation ends it.
     var terminalDraftPastes = {};
 
     function reportHandoffSubmit(terminal) {
@@ -3357,12 +3357,22 @@
         // A paste is always a draft: real CLIs (e.g. codex) keep pasted
         // text in their editor even with a trailing newline, so only the
         // user's own Enter (tracked in reportHandoffSubmit) submits it.
-        terminalDraftPastes[terminalId] = { text: text };
+        var draft = terminalDraftPastes[terminalId];
+        if (!draft) {
+            draft = {
+                id: typeof crypto !== 'undefined' && crypto.randomUUID
+                    ? crypto.randomUUID()
+                    : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2),
+                text: text
+            };
+            terminalDraftPastes[terminalId] = draft;
+        }
+        draft.text = text;
         return queueHandoffReport(function() {
             return fetchJSON('/api/terminal-handoff/paste', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ terminalId: terminalId, text: text })
+                body: JSON.stringify({ terminalId: terminalId, text: text, draftId: draft.id })
             });
         }).then(function(data) {
             // A paste alone never opens a card: provenance is stored, and the
@@ -3378,6 +3388,28 @@
         }).catch(function() { return null; });
     }
 
+    function cancelHandoffDraft(terminal) {
+        var terminalId = terminalIdOf(terminal, terminal && terminal.term);
+        var draft = terminalDraftPastes[terminalId];
+        if (!draft) return Promise.resolve(null);
+        delete terminalDraftPastes[terminalId];
+        return queueHandoffReport(function() {
+            return fetchJSON('/api/terminal-handoff/cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ terminalId: terminalId, draftId: draft.id })
+            });
+        }).catch(function() { return null; });
+    }
+
+    function trackHandoffInput(terminal, data) {
+        if (data === '\r') {
+            reportHandoffSubmit(terminal);
+        } else if (data === '\x03' || data === '\x15') {
+            cancelHandoffDraft(terminal);
+        }
+    }
+
     function reportHandoffSubmitById(terminalId) {
         var draft = terminalDraftPastes[terminalId];
         if (!draft || !draft.text) {
@@ -3388,22 +3420,26 @@
             return fetchJSON('/api/terminal-handoff/submit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ terminalId: terminalId, text: draft.text })
+                body: JSON.stringify({ terminalId: terminalId, text: draft.text, draftId: draft.id })
             });
         }).then(function(data) {
             if (data && data.submitted && data.taskId) {
                 document.dispatchEvent(new CustomEvent('roambench:handoff', {
                     detail: { taskId: data.taskId, sourceTaskId: data.sourceTaskId || '' }
                 }));
-                showHandoffToast(data.taskId, data.sourceTaskId || '');
+                showHandoffToast(data.taskId, data.sourceTaskId || '', data.promotion && data.promotion.failed > 0);
             }
             return data;
         }).catch(function() { return null; });
     }
 
     // Lightweight non-blocking hint for the automatic review-card handoff.
-    function showHandoffToast(taskId, sourceTaskId) {
-        var labels = {
+    function showHandoffToast(taskId, sourceTaskId, partialFailure) {
+        var labels = partialFailure ? {
+            en: 'Task registered; some sources could not be linked — click to open',
+            'zh-CN': '任务已登记，部分来源关联失败，点击查看',
+            ja: 'タスク登録済み、一部の参照を関連付けできませんでした — クリックで開く'
+        } : {
             en: 'Review task created — click to open',
             'zh-CN': '已创建审查任务，点击打开',
             ja: 'レビュータスクを作成しました — クリックで開く'
@@ -5113,21 +5149,13 @@
                 }
 
                 sendTerminalSequence(t, out);
+                trackHandoffInput(t, out);
                 setCtrlActive(false);
                 return;
             }
 
             sendTerminalSequence(t, data);
-            const draftId = terminalIdOf(t, t.term);
-            if (data === '\r') {
-                // The Enter after a tracked paste is the moment the drafted
-                // goal is actually submitted to the agent — report it once.
-                reportHandoffSubmit(t);
-            } else if (terminalDraftPastes[draftId]) {
-                // Anything the user types or cancels after the paste means
-                // the composed goal no longer equals the recorded draft.
-                delete terminalDraftPastes[draftId];
-            }
+            trackHandoffInput(t, data);
         });
 
         term.onResize(function(size) {

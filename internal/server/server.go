@@ -223,6 +223,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/terminal-handoff/copy", authRequired(s.sessions, s.handleHandoffCopy))
 	s.mux.HandleFunc("/api/terminal-handoff/paste", authRequired(s.sessions, s.handleHandoffPaste))
 	s.mux.HandleFunc("/api/terminal-handoff/submit", authRequired(s.sessions, s.handleHandoffSubmit))
+	s.mux.HandleFunc("/api/terminal-handoff/cancel", authRequired(s.sessions, s.handleHandoffCancel))
 	s.mux.HandleFunc("/api/source-links/", authRequired(s.sessions, s.handleSourceLinkRoutes))
 	s.mux.HandleFunc("/api/source-links", authRequired(s.sessions, s.handleSourceLinksListAll))
 	s.mux.HandleFunc("/api/agent/v1/progress", s.tokenRequired(s.handleAgentTaskProgress))

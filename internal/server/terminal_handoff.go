@@ -42,6 +42,7 @@ type handoffCopyRequest struct {
 type handoffPasteRequest struct {
 	TerminalID string `json:"terminalId"`
 	Text       string `json:"text"`
+	DraftID    string `json:"draftId,omitempty"`
 }
 
 // handoffTerminal resolves a terminal the user actually owns. A missing or
@@ -166,34 +167,17 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A paste is never a submission. When the terminal's current agent
-	// generation already owns a goal (established by a previous accepted
-	// submission), the paste feeds that goal and is supplemented onto it.
-	// Otherwise — bare CLI, draft, reference material — it is recorded as a
-	// pending handoff and stays invisible until the goal is actually
-	// submitted (terminal submit event or register-task).
-	if agent, hasAgent := s.terminals.AgentProcessInSession(live.ID); hasAgent {
-		if exec, found, _ := s.controlPlane.AgentExecutionBySig(r.Context(), username, live.ID, agent.Signature()); found && exec.TaskID != "" {
-			state, err := s.projectControl.loadOrSeed(username)
-			if err != nil {
+	// Tracked pastes remain draft provenance until the input is submitted.
+	// Older clients have no draft lifecycle and keep their supplement API.
+	// A tracked draft always stays pending, even on an active task: cancelling
+	// the editor must not have changed persisted provenance already.
+	if req.DraftID == "" {
+		if agent, hasAgent := s.terminals.AgentProcessInSession(live.ID); hasAgent {
+			if taskID, err := s.handoffTargetTask(r.Context(), username, live, agent); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
-			}
-			if task, ok := controlTask(state, exec.TaskID); ok && !projectControlTaskGoalFinished(task) {
-				s.supplementSourceRef(w, r, username, exec.TaskID, match, sourceTaskID, live.ID)
-				return
-			}
-		}
-		if live.TaskID != "" {
-			// A worker/agent terminal created for a specific task carries the
-			// task in its session metadata: pastes feed that execution.
-			state, err := s.projectControl.loadOrSeed(username)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-				return
-			}
-			if task, ok := controlTask(state, live.TaskID); ok && !projectControlTaskGoalFinished(task) {
-				s.supplementSourceRef(w, r, username, live.TaskID, match, sourceTaskID, live.ID)
+			} else if taskID != "" {
+				s.supplementSourceRef(w, r, username, taskID, match, sourceTaskID, live.ID)
 				return
 			}
 		}
@@ -206,6 +190,7 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 		Fingerprint:    match.Fingerprint,
 		Snapshot:       match.Snapshot,
 		CopyID:         match.ID,
+		DraftID:        strings.TrimSpace(req.DraftID),
 	})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -224,11 +209,40 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 // the same submission must agree on exactly one task.
 var handoffSubmitMu sync.Mutex
 
+// handleHandoffCancel invalidates a particular editor draft, never every
+// pending source in the terminal and never a previously accepted submission.
+func (s *Server) handleHandoffCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req handoffSubmitRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<18)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.DraftID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "draftId is required"})
+		return
+	}
+	username := GetUsername(r)
+	live, status, message := s.handoffTerminal(username, req.TerminalID)
+	if status != http.StatusOK {
+		writeJSON(w, status, map[string]string{"error": message})
+		return
+	}
+	handoffSubmitMu.Lock()
+	defer handoffSubmitMu.Unlock()
+	if err := s.controlPlane.CancelHandoffDraft(r.Context(), username, live.ID, req.DraftID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"cancelled": true})
+}
+
 // handoffSubmitRequest is the payload reporting that the user actually
 // submitted a drafted goal (Enter after a tracked paste) into a terminal.
 type handoffSubmitRequest struct {
 	TerminalID string `json:"terminalId"`
 	Text       string `json:"text"`
+	DraftID    string `json:"draftId,omitempty"`
 }
 
 // handleHandoffSubmit accepts a verified submission event: the user sent
@@ -286,31 +300,22 @@ func (s *Server) handleHandoffSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Submission target, most explicit binding first: a worker/execution
-	// terminal adopted by its session metadata, then the generation's
-	// current goal, then a new card. Finished goals are never reused — an
-	// accepted new goal gets its own identity.
-	targetTaskID := ""
-	if live.TaskID != "" {
-		state, err := s.projectControl.loadOrSeed(username)
-		if err == nil {
-			if task, ok := controlTask(state, live.TaskID); ok && !projectControlTaskGoalFinished(task) {
-				targetTaskID = task.ID
-			}
-		}
-	}
-	if targetTaskID == "" {
-		if exec, found, _ := s.controlPlane.AgentExecutionBySig(ctx, username, live.ID, agent.Signature()); found && exec.TaskID != "" {
-			state, err := s.projectControl.loadOrSeed(username)
-			if err == nil {
-				if task, ok := controlTask(state, exec.TaskID); ok && !projectControlTaskGoalFinished(task) {
-					targetTaskID = task.ID
-				}
-			}
-		}
+	targetTaskID, targetErr := s.handoffTargetTask(ctx, username, live, agent)
+	if targetErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": targetErr.Error()})
+		return
 	}
 	if targetTaskID == "" {
 		pendings, _ := s.controlPlane.ListPendingHandoffs(ctx, username, live.ID)
+		if req.DraftID != "" {
+			filtered := pendings[:0]
+			for _, pending := range pendings {
+				if pending.DraftID == req.DraftID {
+					filtered = append(filtered, pending)
+				}
+			}
+			pendings = filtered
+		}
 		created := projectControlTask{}
 		_, err := s.projectControl.withStateLocked(username, func(state *projectControlState) error {
 			// Explicit target attribution first: session metadata or an
@@ -362,8 +367,17 @@ func (s *Server) handleHandoffSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = s.controlPlane.SetPendingIntendedTask(ctx, username, live.ID, targetTaskID)
-	promotion := s.promotePendingHandoffs(ctx, username, live.ID, targetTaskID)
+	var drafts []string
+	if req.DraftID != "" {
+		drafts = []string{req.DraftID}
+	}
+	promotion := promotionSummary{}
+	if pinErr := s.controlPlane.SetPendingIntendedTask(ctx, username, live.ID, targetTaskID, drafts...); pinErr != nil {
+		promotion.Failed++
+		promotion.Errors = append(promotion.Errors, pinErr.Error())
+	} else {
+		promotion = s.promotePendingHandoffs(ctx, username, live.ID, targetTaskID, drafts...)
+	}
 
 	body := map[string]interface{}{
 		"submitted": true,
@@ -371,7 +385,7 @@ func (s *Server) handleHandoffSubmit(w http.ResponseWriter, r *http.Request) {
 		"promotion": promotion,
 	}
 	if err == nil && match.ID != "" {
-		refID, refErr := s.linkSourceWithRecovery(ctx, username, targetTaskID, live.ID, match, sourceTaskID)
+		refID, refErr := s.linkSourceWithRecovery(ctx, username, targetTaskID, live.ID, match, sourceTaskID, req.DraftID)
 		if refErr != nil {
 			promotion.Failed++
 			promotion.Errors = append(promotion.Errors, refErr.Error())
@@ -388,18 +402,26 @@ func (s *Server) handleHandoffSubmit(w http.ResponseWriter, r *http.Request) {
 	if promotion.Failed > 0 {
 		respStatus = http.StatusMultiStatus
 	}
-	writeJSON(w, respStatus, body)
-
 	// Keep the terminal's session binding pointing at the current goal so
 	// copy-side attribution follows the latest accepted work.
-	if _, err := s.projectControl.withStateLocked(username, func(state *projectControlState) error {
+	boundState, bindErr := s.projectControl.withStateLocked(username, func(state *projectControlState) error {
 		if _, ok := controlTask(*state, targetTaskID); ok {
 			bindTaskSessionExclusive(state, targetTaskID, live.ID)
 		}
 		return nil
-	}); err != nil {
-		_ = err // attribution rebinding is best-effort; the submission is answered
+	})
+	if bindErr == nil {
+		if task, ok := controlTask(boundState, targetTaskID); ok {
+			bindErr = s.terminals.BindSessionTask(username, live.ID, targetTaskID, task.ProjectID)
+		}
 	}
+	if bindErr != nil {
+		promotion.Failed++
+		promotion.Errors = append(promotion.Errors, bindErr.Error())
+		body["promotion"] = promotion
+		respStatus = http.StatusMultiStatus
+	}
+	writeJSON(w, respStatus, body)
 }
 
 // linkSourceWithRecovery persists the provenance of one submitted paste:
@@ -407,7 +429,7 @@ func (s *Server) handleHandoffSubmit(w http.ResponseWriter, r *http.Request) {
 // is attempted, so a failed write leaves a recoverable record instead of
 // vanishing. Returns "" when the paste had no matching copy (source
 // undetermined — the goal is still registered, without invented origin).
-func (s *Server) linkSourceWithRecovery(ctx context.Context, username, targetTaskID, targetTerminal string, match controlplane.TerminalCopy, sourceTaskID string) (string, error) {
+func (s *Server) linkSourceWithRecovery(ctx context.Context, username, targetTaskID, targetTerminal string, match controlplane.TerminalCopy, sourceTaskID, draftID string) (string, error) {
 	if match.ID == "" || sourceTaskID == "" {
 		return "", nil
 	}
@@ -418,6 +440,7 @@ func (s *Server) linkSourceWithRecovery(ctx context.Context, username, targetTas
 		Fingerprint:    match.Fingerprint,
 		Snapshot:       match.Snapshot,
 		CopyID:         match.ID,
+		DraftID:        draftID,
 		IntendedTaskID: targetTaskID,
 	})
 	if err != nil {
@@ -471,10 +494,35 @@ func (s *Server) supplementSourceRef(w http.ResponseWriter, r *http.Request, use
 // reusing (and rewriting the provenance of) a completed one.
 func projectControlTaskGoalFinished(task projectControlTask) bool {
 	switch task.State {
-	case "done", "execution_complete", "cancelled":
+	case "done", "execution_complete", "cancelled", "archived":
 		return true
 	}
 	return strings.TrimSpace(task.ArchiveDecisionID) != ""
+}
+
+// The persisted exclusive binding is updated by every accepted goal. Session
+// metadata is a fallback for worker terminals that have not registered yet;
+// it must never override a newer accepted task or revive a finished one.
+func (s *Server) handoffTargetTask(ctx context.Context, username string, live terminal.SessionInfo, agent terminal.AgentProcess) (string, error) {
+	state, err := s.projectControl.loadOrSeed(username)
+	if err != nil {
+		return "", err
+	}
+	taskID := taskIDForTerminalInState(state, live.ID)
+	if taskID == "" {
+		if execution, found, lookupErr := s.controlPlane.AgentExecutionBySig(ctx, username, live.ID, agent.Signature()); lookupErr != nil {
+			return "", lookupErr
+		} else if found {
+			taskID = execution.TaskID
+		}
+	}
+	if taskID == "" {
+		taskID = live.TaskID
+	}
+	if task, ok := controlTask(state, taskID); ok && !projectControlTaskGoalFinished(task) {
+		return task.ID, nil
+	}
+	return "", nil
 }
 
 // bindTaskSessionExclusive makes terminalID map to exactly taskID: stale
@@ -545,7 +593,7 @@ type promotionSummary struct {
 // Handoffs pinned to an earlier task of the same terminal (a promotion
 // that failed back then) are retried against that original task first —
 // a new submission never inherits another goal's provenance.
-func (s *Server) promotePendingHandoffs(ctx context.Context, username, targetTerminal, targetTaskID string) promotionSummary {
+func (s *Server) promotePendingHandoffs(ctx context.Context, username, targetTerminal, targetTaskID string, draftIDs ...string) promotionSummary {
 	summary := promotionSummary{}
 	if username == "" || targetTerminal == "" || targetTaskID == "" {
 		summary.Failed = 1
@@ -581,7 +629,8 @@ func (s *Server) promotePendingHandoffs(ctx context.Context, username, targetTer
 		summary.Promoted++
 	}
 	for _, pending := range pendings {
-		if pending.SourceTaskID == "" || pending.IntendedTaskID == "" || pending.IntendedTaskID == targetTaskID {
+		currentDraft := len(draftIDs) == 0 || pending.DraftID == draftIDs[0]
+		if pending.SourceTaskID == "" || pending.IntendedTaskID == "" || (pending.IntendedTaskID == targetTaskID && currentDraft) {
 			continue
 		}
 		// Recovery of an earlier failed submission: reattach to its own
@@ -600,6 +649,9 @@ func (s *Server) promotePendingHandoffs(ctx context.Context, username, targetTer
 	}
 	for _, pending := range pendings {
 		if pending.SourceTaskID == "" || (pending.IntendedTaskID != "" && pending.IntendedTaskID != targetTaskID) {
+			continue
+		}
+		if len(draftIDs) > 0 && pending.DraftID != draftIDs[0] {
 			continue
 		}
 		attach(pending, targetTaskID)

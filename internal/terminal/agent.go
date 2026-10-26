@@ -6,11 +6,8 @@ import (
 	"strings"
 )
 
-// Agent CLI process observation: the server-side fact that an interactive
-// agent session (Claude, Codex, …) is running inside a terminal pane. The
-// handoff flow treats "paste delivered into a pane where an agent CLI is
-// running" as a validated submission boundary — the agent consumes every
-// line it is sent, so the paste is its input by construction.
+// Agent CLI process observation identifies a foreground interactive agent.
+// It establishes a possible input recipient, not acceptance of a goal.
 //
 // Detection walks the pane's process tree and matches the first command
 // whose name (basename of argv[0]) is a known agent CLI AND that owns the
@@ -116,6 +113,10 @@ func agentProcessUnder(root string) (AgentProcess, bool) {
 		if !ok {
 			continue
 		}
+		// Parents such as an interactive shell give the foreground process
+		// group to their children. Always visit descendants, even when the
+		// parent itself is not a foreground input recipient.
+		queue = append(queue, children[pid]...)
 		// Foreground only: a background job is not reading the terminal.
 		if !strings.Contains(p.stat, "+") {
 			continue
@@ -123,7 +124,6 @@ func agentProcessUnder(root string) (AgentProcess, bool) {
 		if name := agentNameOfArgs(p.args); name != "" {
 			return AgentProcess{Name: name, PID: p.pid, Start: p.lstart}, true
 		}
-		queue = append(queue, children[pid]...)
 	}
 	return AgentProcess{}, false
 }

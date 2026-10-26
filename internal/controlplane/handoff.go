@@ -13,7 +13,9 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -56,6 +58,7 @@ type PendingHandoff struct {
 	Fingerprint    string `json:"fingerprint"`
 	Snapshot       string `json:"snapshot,omitempty"`
 	CopyID         string `json:"copyId,omitempty"`
+	DraftID        string `json:"draftId,omitempty"`
 	// IntendedTaskID pins a pending to the one submission it belongs to:
 	// a failed promotion is retried against this task, never handed to the
 	// next unrelated goal on the same terminal.
@@ -272,6 +275,7 @@ func (r *Repository) RecordPendingHandoff(ctx context.Context, username string, 
 	h.TargetTerminal = strings.TrimSpace(h.TargetTerminal)
 	h.SourceTaskID = strings.TrimSpace(h.SourceTaskID)
 	h.CopyID = strings.TrimSpace(h.CopyID)
+	h.DraftID = strings.TrimSpace(h.DraftID)
 	if username == "" || h.SourceTerminal == "" || h.TargetTerminal == "" {
 		return PendingHandoff{}, fmt.Errorf("%w: username and terminals are required", ErrValidation)
 	}
@@ -285,10 +289,10 @@ func (r *Repository) RecordPendingHandoff(ctx context.Context, username string, 
 	h.ID = newRandomID("pend")
 	h.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO pending_handoffs(id, username, source_task_id, source_terminal, target_terminal, fingerprint, snapshot, copy_id, intended_task_id, promoted_task_id, created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT OR IGNORE INTO pending_handoffs(id, username, source_task_id, source_terminal, target_terminal, fingerprint, snapshot, copy_id, draft_id, intended_task_id, promoted_task_id, created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		h.ID, username, h.SourceTaskID, h.SourceTerminal, h.TargetTerminal,
-		h.Fingerprint, h.Snapshot, h.CopyID, h.IntendedTaskID, "", h.CreatedAt)
+		h.Fingerprint, h.Snapshot, h.CopyID, h.DraftID, h.IntendedTaskID, "", h.CreatedAt)
 	if err != nil {
 		return PendingHandoff{}, err
 	}
@@ -298,8 +302,8 @@ func (r *Repository) RecordPendingHandoff(ctx context.Context, username string, 
 	// record and collapses onto the first pending row.
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, source_task_id, source_terminal, snapshot, copy_id, created_at FROM pending_handoffs
-		 WHERE username=? AND target_terminal=? AND copy_id=? AND promoted_task_id=''
-		 ORDER BY created_at DESC LIMIT 1`, username, h.TargetTerminal, h.CopyID)
+		 WHERE username=? AND target_terminal=? AND copy_id=? AND draft_id=? AND promoted_task_id=''
+		 ORDER BY created_at DESC LIMIT 1`, username, h.TargetTerminal, h.CopyID, h.DraftID)
 	var out PendingHandoff
 	if err := row.Scan(&out.ID, &out.SourceTaskID, &out.SourceTerminal, &out.Snapshot, &out.CopyID, &out.CreatedAt); err != nil {
 		return PendingHandoff{}, err
@@ -307,6 +311,7 @@ func (r *Repository) RecordPendingHandoff(ctx context.Context, username string, 
 	out.Username = username
 	out.TargetTerminal = h.TargetTerminal
 	out.Fingerprint = h.Fingerprint
+	out.DraftID = h.DraftID
 	return out, nil
 }
 
@@ -354,8 +359,11 @@ func (r *Repository) AgentExecutionBySig(ctx context.Context, username, terminal
 		 WHERE username=? AND terminal_id=? AND agent_sig=?`,
 		username, strings.TrimSpace(terminalID), strings.TrimSpace(agentSig)).
 		Scan(&out.ID, &out.TerminalID, &out.AgentSig, &out.AgentName, &out.TaskID, &out.CreatedAt)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return AgentExecution{}, false, nil
+	}
+	if err != nil {
+		return AgentExecution{}, false, err
 	}
 	out.Username = username
 	return out, true, nil
@@ -365,7 +373,7 @@ func (r *Repository) AgentExecutionBySig(ctx context.Context, username, terminal
 // target terminal, oldest first.
 func (r *Repository) ListPendingHandoffs(ctx context.Context, username, targetTerminal string) ([]PendingHandoff, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, source_task_id, source_terminal, target_terminal, fingerprint, snapshot, copy_id, intended_task_id, created_at
+		`SELECT id, source_task_id, source_terminal, target_terminal, fingerprint, snapshot, copy_id, draft_id, intended_task_id, created_at
 		 FROM pending_handoffs
 		 WHERE username=? AND target_terminal=? AND promoted_task_id='' ORDER BY created_at ASC`,
 		username, strings.TrimSpace(targetTerminal))
@@ -377,7 +385,7 @@ func (r *Repository) ListPendingHandoffs(ctx context.Context, username, targetTe
 	for rows.Next() {
 		var h PendingHandoff
 		if err := rows.Scan(&h.ID, &h.SourceTaskID, &h.SourceTerminal, &h.TargetTerminal,
-			&h.Fingerprint, &h.Snapshot, &h.CopyID, &h.IntendedTaskID, &h.CreatedAt); err != nil {
+			&h.Fingerprint, &h.Snapshot, &h.CopyID, &h.DraftID, &h.IntendedTaskID, &h.CreatedAt); err != nil {
 			return nil, err
 		}
 		h.Username = username
@@ -389,12 +397,25 @@ func (r *Repository) ListPendingHandoffs(ctx context.Context, username, targetTe
 // SetPendingIntendedTask pins unpromoted handoffs to one submission's task
 // before promotion is attempted, so a failure is recoverable against the
 // same submission and never leaks to a later goal.
-func (r *Repository) SetPendingIntendedTask(ctx context.Context, username, targetTerminal, taskID string) error {
+func (r *Repository) SetPendingIntendedTask(ctx context.Context, username, targetTerminal, taskID string, draftIDs ...string) error {
 	// Only unpinned rows: a pending pinned to an earlier failed submission
 	// keeps its owner, so recovery reattaches to the original task.
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE pending_handoffs SET intended_task_id=? WHERE username=? AND target_terminal=? AND promoted_task_id='' AND intended_task_id=''`,
-		strings.TrimSpace(taskID), username, strings.TrimSpace(targetTerminal))
+	query := `UPDATE pending_handoffs SET intended_task_id=? WHERE username=? AND target_terminal=? AND promoted_task_id='' AND intended_task_id=''`
+	args := []any{strings.TrimSpace(taskID), username, strings.TrimSpace(targetTerminal)}
+	if len(draftIDs) > 0 {
+		query += ` AND draft_id=?`
+		args = append(args, draftIDs[0])
+	}
+	_, err := r.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+// CancelHandoffDraft discards only unsubmitted input. Failed submissions stay
+// pinned to their accepted task and remain recoverable after cancellation.
+func (r *Repository) CancelHandoffDraft(ctx context.Context, username, targetTerminal, draftID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM pending_handoffs
+ WHERE username=? AND target_terminal=? AND draft_id=? AND intended_task_id='' AND promoted_task_id=''`,
+		username, strings.TrimSpace(targetTerminal), strings.TrimSpace(draftID))
 	return err
 }
 

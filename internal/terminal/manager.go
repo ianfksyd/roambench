@@ -732,6 +732,26 @@ func (m *Manager) RenameSession(username, sessionID, name string) error {
 	return nil
 }
 
+// BindSessionTask persists the current accepted task, including for terminals
+// that were originally created by a worker for an earlier goal.
+func (m *Manager) BindSessionTask(username, sessionID, taskID, projectID string) error {
+	m.mu.Lock()
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return ErrNotFound
+	}
+	if session.Username != username {
+		m.mu.Unlock()
+		return ErrForbidden
+	}
+	session.Info.TaskID = strings.TrimSpace(taskID)
+	session.Info.ProjectID = strings.TrimSpace(projectID)
+	session.dirty = true
+	m.mu.Unlock()
+	return m.persistSession(sessionID)
+}
+
 func normalizeSessionName(name string) (string, error) {
 	normalized := strings.Join(strings.Fields(name), " ")
 	if normalized == "" {
