@@ -22,6 +22,7 @@ The format is inspired by Keep a Changelog, with a lightweight structure for thi
 
 ### Changed
 
+- Task board opens as an automatically arranged flowchart: review cards follow their source tasks, SVG arrows distinguish execution dependencies from review references, and colored nodes retain task status and terminal controls
 - Browsing is no longer confined to the home directory: the file browser, the folder picker and the project `repoPath` contract accept any absolute path the service account can reach
 - A project `repoPath` only has to be an absolute path to an existing directory; symlinks resolve to the real directory
 

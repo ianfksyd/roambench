@@ -18,7 +18,7 @@
 
         boardEpoch: 0,
         boardProjectFilter: '',
-        boardTab: 'wall',
+        boardTab: 'graph',
         boardRange: 'all',
 
         boardTimer: null,
@@ -1677,90 +1677,74 @@
             + '</div></div>';
     }
 
-    // renderBoardGraph: 依赖图自动布局——按最长依赖链分层，层内横向排列。
-    // 边 = DependsOn（执行依赖）。只读渲染；形状由真实任务数据涌现。
     function renderBoardGraph(rows, visible) {
         if (!visible) {
             return '<section class="board-panel" id="board-panel-graph" role="tabpanel" aria-labelledby="board-tab-graph" hidden></section>';
         }
-        var byId = {};
-        rows.forEach(function(row) { byId[row.task.id] = row; });
-        var ids = rows.map(function(row) { return row.task.id; });
-        var inSet = function(id) { return !!byId[id]; };
-
-        // 分层：level = 1 + max(level(deps))，仅统计看板内的依赖；未知依赖按层 0。
-        var levels = {};
-        var visiting = {};
-        function levelOf(id, stack) {
-            if (levels[id] !== undefined) return levels[id];
-            if (stack[id]) return 0; // 循环保护（正常不应出现）
-            stack[id] = true;
-            var task = byId[id] ? byId[id].task : null;
-            var deps = task && Array.isArray(task.dependsOn) ? task.dependsOn.filter(inSet) : [];
-            var level = 0;
-            deps.forEach(function(dep) {
-                var l = levelOf(dep, stack) + 1;
-                if (l > level) level = l;
-            });
-            stack[id] = false;
-            levels[id] = level;
-            return level;
+        var graph = window.RoamBenchBoardFlow.layout(rows.map(function(row) { return row.task; }), state.sourceRefs);
+        var byId = new Map(rows.map(function(row) { return [row.task.id, row]; }));
+        var kinds = {
+            task: tr('project.flowTask', 'Task'), review: tr('project.flowReview', 'Review'),
+            branch: tr('project.flowBranch', 'Subtask'), synthesis: tr('project.flowSynthesis', 'Synthesis')
+        };
+        function relationLabel(relation) {
+            if (relation === 'reviews') return tr('project.flowReview', 'Review');
+            if (relation === 'depends_on') return tr('project.flowDependency', 'Dependency');
+            return tr('project.flowReference', 'Reference');
         }
-        ids.forEach(function(id) { levelOf(id, {}); });
-
-        var maxLevel = 0;
-        var columns = {};
-        ids.forEach(function(id) {
-            var level = levels[id] || 0;
-            if (level > maxLevel) maxLevel = level;
-            (columns[level] = columns[level] || []).push(id);
+        var html = '<section class="board-panel" id="board-panel-graph" role="tabpanel" aria-labelledby="board-tab-graph">'
+            + '<div class="board-panel-heading"><h2>' + escapeHTML(tr('project.graphTitle', 'Task flow')) + '</h2>'
+            + '<p class="board-panel-note">' + escapeHTML(tr('project.graphNote', 'Automatically arranged by dependencies and review sources. Select a node for details.')) + '</p></div>';
+        if (!graph.nodes.length) {
+            return html + '<div class="board-empty-note">' + escapeHTML(tr('project.boardEmpty', 'No tasks yet')) + '</div></section>';
+        }
+        html += '<div class="board-flow-relations" aria-label="' + escapeHTML(tr('project.flowRelations', 'Connections')) + '">'
+            + '<span><i class="board-flow-line dependency" aria-hidden="true"></i>' + escapeHTML(relationLabel('depends_on')) + '</span>'
+            + '<span><i class="board-flow-line review" aria-hidden="true"></i>' + escapeHTML(tr('project.flowSourceRelations', 'Review / reference')) + '</span></div>'
+            + '<div class="board-flow-scroll" role="region" tabindex="0" aria-label="' + escapeHTML(tr('project.graphTitle', 'Task flow')) + '">'
+            + '<div class="board-flow-canvas" style="width:' + graph.width + 'px;height:' + graph.height + 'px">';
+        graph.lanes.forEach(function(lane) {
+            var project = findById(projects(), lane.projectId);
+            html += '<section class="board-flow-lane" style="top:' + lane.y + 'px;height:' + lane.height + 'px">'
+                + '<h3>' + escapeHTML(project ? (project.name || project.id) : (lane.projectId || '—'))
+                + '<span>' + escapeHTML(itemCountText(lane.count)) + '</span></h3></section>';
         });
-
-        var html = '<section class="board-panel" id="board-panel-graph" role="tabpanel" aria-labelledby="board-tab-graph">';
-        html += '<div class="board-panel-heading"><h2>' + escapeHTML(tr('project.graphTitle', 'Task flow')) + '</h2>';
-        html += '<p class="board-panel-note">' + escapeHTML(tr('project.graphNote', 'Left → right: dependencies must finish first. Click a node to open it.')) + '</p></div>';
-        if (!ids.length) {
-            html += '<div class="board-empty-note">' + escapeHTML(tr('project.boardEmpty', 'No tasks yet')) + '</div></section>';
-            return html;
-        }
-        html += '<div class="board-graph-scroll" role="region" tabindex="0"><div class="board-graph">';
-        for (var level = 0; level <= maxLevel; level++) {
-            var column = columns[level] || [];
-            html += '<div class="board-graph-col" data-level="' + level + '">';
-            html += '<div class="board-graph-level">' + escapeHTML(tr('project.graphLevel', 'Step {n}', { n: level + 1 })) + '</div>';
-            (column.length ? column : []).forEach(function(id) {
-                var row = byId[id];
-                var cls = boardStatusClass(row.status);
-                html += '<button type="button" class="board-graph-node" data-task-id="' + escapeHTML(id) + '"'
-                    + ' title="' + escapeHTML(row.label + ' · ' + boardRelative(row.stamp)) + '">'
-                    + '<span class="board-task-dot ' + cls + '" aria-hidden="true"></span>'
-                    + '<span class="board-graph-name">' + escapeHTML(row.task.title || id) + '</span>'
-                    + '</button>';
-            });
-            html += '</div>';
-            if (level < maxLevel) {
-                html += '<div class="board-graph-arrow" aria-hidden="true">→</div>';
-            }
-        }
-        // P4 handoff: reviews 等来源关系在流程视图中独立于 DependsOn 呈现。
-        var refs = (Array.isArray(state.sourceRefs) ? state.sourceRefs : []).filter(function(ref) {
-            return ref && inSet(ref.targetTaskId) && inSet(ref.sourceTaskId);
+        html += '<svg class="board-flow-edges" width="' + graph.width + '" height="' + graph.height + '" viewBox="0 0 ' + graph.width + ' ' + graph.height + '" aria-hidden="true"><defs>';
+        ['dependency', 'review', 'reference'].forEach(function(kind) {
+            html += '<marker id="board-flow-arrow-' + kind + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="board-flow-arrow-' + kind + '" d="M 0 0 L 10 5 L 0 10 z"/></marker>';
         });
-        if (refs.length) {
-            html += '<ul style="margin:12px 0 0;padding:0;list-style:none;font-size:12px;opacity:.9">';
-            refs.forEach(function(ref) {
-                var target = byId[ref.targetTaskId] ? (byId[ref.targetTaskId].task.title || ref.targetTaskId) : ref.targetTaskId;
-                var source = byId[ref.sourceTaskId] ? (byId[ref.sourceTaskId].task.title || ref.sourceTaskId) : ref.sourceTaskId;
-                html += '<li style="margin-top:4px"><span aria-hidden="true">↗ </span>'
-                    + '<button type="button" data-task-id="' + escapeHTML(ref.targetTaskId) + '">' + escapeHTML(target) + '</button>'
-                    + ' ' + escapeHTML(ref.relation || 'reviews') + ' '
-                    + '<button type="button" data-task-id="' + escapeHTML(ref.sourceTaskId) + '">' + escapeHTML(source) + '</button>'
-                    + '</li>';
-            });
-            html += '</ul>';
-        }
-        html += '</div></div></section>';
-        return html;
+        html += '</defs>';
+        graph.edges.forEach(function(edge) {
+            var label = edge.relations.map(relationLabel).join(' / ');
+            var labelWidth = Math.max(44, Math.min(144, label.length * 6.5 + 16));
+            html += '<g data-flow-source="' + escapeHTML(edge.source) + '" data-flow-target="' + escapeHTML(edge.target) + '">'
+                + '<title>' + escapeHTML(label) + '</title><path class="board-flow-edge ' + edge.kind + '" d="' + edge.path + '" marker-end="url(#board-flow-arrow-' + edge.kind + ')"/>'
+                + '<rect class="board-flow-edge-label-bg" x="' + (edge.labelX - labelWidth / 2) + '" y="' + (edge.labelY - 14) + '" width="' + labelWidth + '" height="22" rx="7"/>'
+                + '<text class="board-flow-edge-label ' + edge.kind + '" x="' + edge.labelX + '" y="' + edge.labelY + '" text-anchor="middle">' + escapeHTML(label) + '</text></g>';
+        });
+        html += '</svg>';
+        graph.nodes.forEach(function(node) {
+            var row = byId.get(node.id), task = row.task;
+            var title = task.title || task.id;
+            if (node.kind === 'review' && /^(终端提交目标|Terminal submission|Terminal task)$/i.test(title)) title = tr('project.flowReviewTask', 'Review task');
+            var sourceTitles = node.parents.map(function(id) { return byId.get(id).task.title || id; }).join(' · ');
+            var sourceHint = sourceTitles ? tr('project.flowFrom', 'From') + ': ' + sourceTitles
+                : node.kind === 'review' ? tr('project.flowOutsideView', 'Source is outside this view') : '';
+            var quick = boardQuickActions(task);
+            html += '<article class="board-flow-node ' + row.cls + ' kind-' + node.kind + '" data-flow-node="' + escapeHTML(node.id) + '" style="left:' + node.x + 'px;top:' + node.y + 'px;width:' + node.width + 'px;height:' + node.height + 'px">'
+                + '<button type="button" class="board-flow-node-open" data-task-id="' + escapeHTML(node.id) + '" title="' + escapeHTML(task.title || title) + '" aria-label="' + escapeHTML(kinds[node.kind] + ': ' + title + ', ' + row.label) + '">'
+                + '<span class="board-flow-kind">' + escapeHTML(kinds[node.kind]) + '</span>'
+                + '<span class="board-flow-title">' + escapeHTML(title) + '</span>'
+                + (sourceHint ? '<span class="board-flow-source" title="' + escapeHTML(sourceHint) + '">' + escapeHTML(sourceHint) + '</span>' : '')
+                + '<span class="board-flow-node-footer"><span class="board-flow-state"><span class="board-task-dot ' + row.cls + '" aria-hidden="true"></span>' + escapeHTML(row.label) + '</span>'
+                + '<span class="board-flow-time">' + escapeHTML(boardRelative(row.stamp)) + '</span></span>'
+                + (node.cyclic ? '<span class="sr-only">' + escapeHTML(tr('project.flowCycle', 'Mutual references')) + '</span>' : '')
+                + '</button><div class="board-flow-actions">' + boardTerminalButton(task)
+                + quick.map(function(action) {
+                    return '<button type="button" class="board-task-quick-btn" data-board-task-action="' + action.action + '" data-board-task-id="' + escapeHTML(task.id) + '" title="' + escapeHTML(action.label) + '" aria-label="' + escapeHTML(action.label) + '">' + escapeHTML(action.icon) + '</button>';
+                }).join('') + '</div></article>';
+        });
+        return html + '</div></div></section>';
     }
 
     function renderApprovals() {
@@ -1805,14 +1789,14 @@
         return new Intl.RelativeTimeFormat((app() && app().getLanguage && app().getLanguage()) || 'en', { numeric: 'auto' }).format(-Math.floor(seconds / divisor), unit);
     }
 
-    var BOARD_STAT_ORDER = ['running', 'approval', 'ready', 'planning', 'paused', 'blocked', 'failed', 'completed'];
+    var BOARD_STAT_ORDER = ['running', 'approval', 'ready', 'planning', 'paused', 'unverified', 'blocked', 'failed', 'completed', 'cancelled'];
 
     // Status color classes follow the v3.3 board prototype's flat VS Code palette.
     function boardStatusClass(status) {
         return {
             planning: 'st-planning', approval: 'st-approval', ready: 'st-ready',
             running: 'st-running', paused: 'st-paused', completed: 'st-completed',
-            blocked: 'st-blocked', failed: 'st-failed'
+            blocked: 'st-blocked', failed: 'st-failed', unverified: 'st-unverified', cancelled: 'st-cancelled'
         }[status] || 'st-planning';
     }
 
@@ -1994,7 +1978,7 @@
             var interval = taskInterval(row.task, row.stamp || dataEnd);
             return interval.end >= timelineWindow.start && interval.start <= timelineWindow.end;
         }).length;
-        var tab = state.boardTab === 'gantt' ? 'gantt' : state.boardTab === 'graph' ? 'graph' : 'wall';
+        var tab = state.boardTab === 'gantt' ? 'gantt' : state.boardTab === 'wall' ? 'wall' : 'graph';
         return '<section class="project-main-section project-board-view board-v3">'
             + '<div class="page-heading"><div><h1>' + escapeHTML(tr('project.boardTitle', 'Task board')) + '</h1>'
             + '<p class="page-meta">' + escapeHTML(countProjectsText(filter === 'all' ? projects().length : 1)) + ' · ' + escapeHTML(itemCountText(rows.length)) + '</p></div>'
@@ -2012,9 +1996,9 @@
             + (state.boardLoading && !state.snapshot ? '<p role="status">' + escapeHTML(tr('project.loading', 'Loading…')) + '</p>' : '')
             + '<div class="view-toolbar">'
             + '<div class="view-tabs" role="tablist" aria-label="' + escapeHTML(tr('project.boardTitle', 'Task board')) + '">'
-            + '<button type="button" class="view-tab" id="board-tab-wall" data-board-tab="wall" role="tab" aria-selected="' + (tab === 'wall') + '" aria-controls="board-panel-wall" tabindex="' + (tab === 'wall' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabWall', 'Status wall')) + '</button>'
-            + '<button type="button" class="view-tab" id="board-tab-gantt" data-board-tab="gantt" role="tab" aria-selected="' + (tab === 'gantt') + '" aria-controls="board-panel-gantt" tabindex="' + (tab === 'gantt' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabTimeline', 'Timeline')) + '</button>'
             + '<button type="button" class="view-tab" id="board-tab-graph" data-board-tab="graph" role="tab" aria-selected="' + (tab === 'graph') + '" aria-controls="board-panel-graph" tabindex="' + (tab === 'graph' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabGraph', 'Flow')) + '</button>'
+            + '<button type="button" class="view-tab" id="board-tab-gantt" data-board-tab="gantt" role="tab" aria-selected="' + (tab === 'gantt') + '" aria-controls="board-panel-gantt" tabindex="' + (tab === 'gantt' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabTimeline', 'Timeline')) + '</button>'
+            + '<button type="button" class="view-tab" id="board-tab-wall" data-board-tab="wall" role="tab" aria-selected="' + (tab === 'wall') + '" aria-controls="board-panel-wall" tabindex="' + (tab === 'wall' ? 0 : -1) + '">' + escapeHTML(tr('project.boardTabWall', 'Status wall')) + '</button>'
             + '</div>'
             + (counts.length ? '<ul class="board-legend">' + counts.map(function(entry) {
                 return '<li><span class="board-task-dot ' + entry.cls + '" aria-hidden="true"></span>' + escapeHTML(tr('project.taskStatus.' + entry.status, entry.status))
@@ -2053,7 +2037,7 @@
             + '</section>'
             + renderBoardGraph(visible, tab === 'graph')
             + renderBoardGantt(visible, timelineWindow, dataEnd)
-            + (rows.length ? '<footer class="board-footer"><p>' + escapeHTML(itemCountText(tab === 'wall' ? visible.length : timelineCount)) + '</p></footer>' : '')
+            + (rows.length ? '<footer class="board-footer"><p>' + escapeHTML(itemCountText(tab === 'gantt' ? timelineCount : visible.length)) + '</p></footer>' : '')
             + '</section>';
     }
     // taskTerminalIds extracts the live terminal ids of a task from its
@@ -2590,7 +2574,8 @@
             var taskId = focused && focused.getAttribute('data-task-id');
             render();
             if (taskId) {
-                var row = getPanel().querySelector('[data-task-id="' + CSS.escape(taskId) + '"]');
+                var row = getPanel().querySelector('[role="tabpanel"]:not([hidden]) [data-task-id="' + CSS.escape(taskId) + '"]')
+                    || getPanel().querySelector('[data-task-id="' + CSS.escape(taskId) + '"]');
                 if (row) row.focus({ preventScroll: true });
             }
             scheduleBoardRefresh();
@@ -2796,7 +2781,7 @@
         });
         panel.querySelectorAll('[data-board-tab]').forEach(function(node) {
             node.addEventListener('click', function() {
-                state.boardTab = node.getAttribute('data-board-tab') === 'gantt' ? 'gantt' : 'wall';
+                state.boardTab = ['graph', 'gantt', 'wall'].indexOf(node.getAttribute('data-board-tab')) >= 0 ? node.getAttribute('data-board-tab') : 'graph';
                 render();
             });
         });
@@ -2811,7 +2796,7 @@
                     if (event.key === 'End') next = tabs[tabs.length - 1];
                     if (!next) return;
                     event.preventDefault();
-                    state.boardTab = next.getAttribute('data-board-tab') === 'gantt' ? 'gantt' : 'wall';
+                    state.boardTab = next.getAttribute('data-board-tab');
                     render();
                     var focusTarget = getPanel().querySelector('[data-board-tab="' + state.boardTab + '"]');
                     if (focusTarget) focusTarget.focus();
@@ -2853,6 +2838,8 @@
     function render() {
         var panel = getPanel();
         if (!panel) return;
+        var previousFlow = panel.querySelector('.board-flow-scroll');
+        var flowScroll = previousFlow ? {left: previousFlow.scrollLeft, top: previousFlow.scrollTop} : null;
         if (state.currentView !== 'board' && state.boardTimer) {
             window.clearTimeout(state.boardTimer);
             state.boardTimer = null;
@@ -2863,6 +2850,11 @@
         panel.innerHTML = (state.error ? '<div class="project-banner error">' + escapeHTML(state.error) + '</div>' : '')
             + '<main class="project-panel-main"><div class="project-breadcrumbs">' + renderBreadcrumbs() + '</div>' + renderMain() + '</main>';
         bindInteractions(panel);
+        var flowViewport = panel.querySelector('.board-flow-scroll');
+        if (flowViewport && flowScroll) {
+            flowViewport.scrollLeft = flowScroll.left;
+            flowViewport.scrollTop = flowScroll.top;
+        }
         if (taskDialog && taskDialog.isConnected && taskDialog.open) {
             renderTaskDialogContent(taskDialog);
         }
@@ -2881,7 +2873,7 @@
             state.boardLoading = false;
             state.boardError = '';
             state.boardProjectFilter = '';
-            state.boardTab = 'wall';
+            state.boardTab = 'graph';
             state.boardRange = 'all';
             window.clearTimeout(state.boardTimer);
             window.clearTimeout(state.toolRunRefreshTimer);
