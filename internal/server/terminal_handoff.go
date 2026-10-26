@@ -179,7 +179,7 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			if _, ok := controlTask(state, exec.TaskID); ok {
+			if task, ok := controlTask(state, exec.TaskID); ok && !projectControlTaskGoalFinished(task) {
 				s.supplementSourceRef(w, r, username, exec.TaskID, match, sourceTaskID, live.ID)
 				return
 			}
@@ -192,7 +192,7 @@ func (s *Server) handleHandoffPaste(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			if _, ok := controlTask(state, live.TaskID); ok {
+			if task, ok := controlTask(state, live.TaskID); ok && !projectControlTaskGoalFinished(task) {
 				s.supplementSourceRef(w, r, username, live.TaskID, match, sourceTaskID, live.ID)
 				return
 			}
@@ -286,13 +286,26 @@ func (s *Server) handleHandoffSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Current goal of this generation, or a new submission card.
+	// Submission target, most explicit binding first: a worker/execution
+	// terminal adopted by its session metadata, then the generation's
+	// current goal, then a new card. Finished goals are never reused — an
+	// accepted new goal gets its own identity.
 	targetTaskID := ""
-	if exec, found, _ := s.controlPlane.AgentExecutionBySig(ctx, username, live.ID, agent.Signature()); found && exec.TaskID != "" {
+	if live.TaskID != "" {
 		state, err := s.projectControl.loadOrSeed(username)
 		if err == nil {
-			if task, ok := controlTask(state, exec.TaskID); ok {
+			if task, ok := controlTask(state, live.TaskID); ok && !projectControlTaskGoalFinished(task) {
 				targetTaskID = task.ID
+			}
+		}
+	}
+	if targetTaskID == "" {
+		if exec, found, _ := s.controlPlane.AgentExecutionBySig(ctx, username, live.ID, agent.Signature()); found && exec.TaskID != "" {
+			state, err := s.projectControl.loadOrSeed(username)
+			if err == nil {
+				if task, ok := controlTask(state, exec.TaskID); ok && !projectControlTaskGoalFinished(task) {
+					targetTaskID = task.ID
+				}
 			}
 		}
 	}
@@ -331,12 +344,7 @@ func (s *Server) handleHandoffSubmit(w http.ResponseWriter, r *http.Request) {
 			if createErr != nil {
 				return createErr
 			}
-			for i := range state.Tasks {
-				if state.Tasks[i].ID == created.ID {
-					state.Tasks[i].SessionIDs = appendUniqueString(state.Tasks[i].SessionIDs, "session-live-"+live.ID)
-					break
-				}
-			}
+			bindTaskSessionExclusive(state, created.ID, live.ID)
 			return nil
 		})
 		if err != nil {
@@ -362,22 +370,36 @@ func (s *Server) handleHandoffSubmit(w http.ResponseWriter, r *http.Request) {
 		"taskId":    targetTaskID,
 		"promotion": promotion,
 	}
-	respStatus := http.StatusOK
 	if err == nil && match.ID != "" {
 		refID, refErr := s.linkSourceWithRecovery(ctx, username, targetTaskID, live.ID, match, sourceTaskID)
 		if refErr != nil {
 			promotion.Failed++
 			promotion.Errors = append(promotion.Errors, refErr.Error())
 			body["promotion"] = promotion
-			respStatus = http.StatusMultiStatus
 		} else if refID != "" {
 			body["refId"] = refID
 			body["sourceTaskId"] = sourceTaskID
 		}
-	} else if promotion.Failed > 0 {
+	}
+	// The response status reflects EVERY provenance outcome of this
+	// submission — a successful current link must not mask an earlier
+	// pending's failed promotion.
+	respStatus := http.StatusOK
+	if promotion.Failed > 0 {
 		respStatus = http.StatusMultiStatus
 	}
 	writeJSON(w, respStatus, body)
+
+	// Keep the terminal's session binding pointing at the current goal so
+	// copy-side attribution follows the latest accepted work.
+	if _, err := s.projectControl.withStateLocked(username, func(state *projectControlState) error {
+		if _, ok := controlTask(*state, targetTaskID); ok {
+			bindTaskSessionExclusive(state, targetTaskID, live.ID)
+		}
+		return nil
+	}); err != nil {
+		_ = err // attribution rebinding is best-effort; the submission is answered
+	}
 }
 
 // linkSourceWithRecovery persists the provenance of one submitted paste:
@@ -442,6 +464,40 @@ func (s *Server) supplementSourceRef(w http.ResponseWriter, r *http.Request, use
 		"relation":     "supplemented",
 		"refId":        ref.ID,
 	})
+}
+
+// projectControlTaskGoalFinished reports whether a task's goal is closed:
+// a later submission on the same terminal must get its own card instead of
+// reusing (and rewriting the provenance of) a completed one.
+func projectControlTaskGoalFinished(task projectControlTask) bool {
+	switch task.State {
+	case "done", "execution_complete", "cancelled":
+		return true
+	}
+	return strings.TrimSpace(task.ArchiveDecisionID) != ""
+}
+
+// bindTaskSessionExclusive makes terminalID map to exactly taskID: stale
+// bindings on earlier tasks are removed, so copy/paste attribution
+// resolves to the terminal's current work, not the first history entry.
+func bindTaskSessionExclusive(state *projectControlState, taskID, terminalID string) {
+	sessionID := "session-live-" + strings.TrimSpace(terminalID)
+	for i := range state.Tasks {
+		kept := state.Tasks[i].SessionIDs[:0]
+		for _, sid := range state.Tasks[i].SessionIDs {
+			if sid == sessionID && state.Tasks[i].ID != taskID {
+				continue
+			}
+			kept = append(kept, sid)
+		}
+		state.Tasks[i].SessionIDs = kept
+	}
+	for i := range state.Tasks {
+		if state.Tasks[i].ID == taskID {
+			state.Tasks[i].SessionIDs = appendUniqueString(state.Tasks[i].SessionIDs, sessionID)
+			break
+		}
+	}
 }
 
 func firstNonEmpty(values ...string) string {

@@ -3354,13 +3354,9 @@
 
     function reportHandoffPaste(terminal, text) {
         var terminalId = terminalIdOf(terminal, terminal && terminal.term);
-        // A paste ending in a newline carries its own Enter: the goal is
-        // submitted on arrival. Otherwise it is a draft waiting for the
-        // user's Enter (tracked in reportHandoffSubmit).
-        if (/\r\n$|\r$|\n$/.test(text)) {
-            terminalDraftPastes[terminalId] = { text: text };
-            return reportHandoffSubmitById(terminalId);
-        }
+        // A paste is always a draft: real CLIs (e.g. codex) keep pasted
+        // text in their editor even with a trailing newline, so only the
+        // user's own Enter (tracked in reportHandoffSubmit) submits it.
         terminalDraftPastes[terminalId] = { text: text };
         return queueHandoffReport(function() {
             return fetchJSON('/api/terminal-handoff/paste', {
@@ -5122,10 +5118,15 @@
             }
 
             sendTerminalSequence(t, data);
-            // The Enter after a tracked paste is the moment the drafted goal
-            // is actually submitted to the agent — report it once.
+            const draftId = terminalIdOf(t, t.term);
             if (data === '\r') {
+                // The Enter after a tracked paste is the moment the drafted
+                // goal is actually submitted to the agent — report it once.
                 reportHandoffSubmit(t);
+            } else if (terminalDraftPastes[draftId]) {
+                // Anything the user types or cancels after the paste means
+                // the composed goal no longer equals the recorded draft.
+                delete terminalDraftPastes[draftId];
             }
         });
 

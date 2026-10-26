@@ -492,6 +492,37 @@ func TestHandoffSubmitCreatesCardForBareAgent(t *testing.T) {
 	}
 }
 
+// 后台伪装进程不构成接收事实：前台仍是 shell 时提交不建卡。
+func TestHandoffBackgroundAgentIsNotReceivingShellEnter(t *testing.T) {
+	f := newHandoffFixture(t)
+	if err := f.mgr.SendKeys("ian", f.t2.ID, "(exec -a codex sleep 60) &", true); err != nil {
+		t.Fatalf("send keys: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if rec := f.copy(t, f.t1.ID, "后台伪装下的内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "后台伪装下的内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste = %d", rec.Code)
+	}
+	rec := f.submit(t, f.t2.ID, "后台伪装下的内容")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Submitted bool `json:"submitted"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Submitted {
+		t.Fatal("background lookalike was treated as a receiving agent")
+	}
+	if n := f.taskCountForTerminal(t, f.t2.ID); n != 0 {
+		t.Fatalf("background lookalike produced %d cards", n)
+	}
+}
+
 // 普通 shell 中按 Enter 不是提交：没有 agent 接收，不建卡。
 func TestHandoffSubmitWithoutAgentCreatesNothing(t *testing.T) {
 	f := newHandoffFixture(t)
@@ -544,6 +575,199 @@ func TestHandoffConcurrentSubmitsSingleCard(t *testing.T) {
 	}
 	if n := f.taskCountForTerminal(t, f.t2.ID); n != 1 {
 		t.Fatalf("8 concurrent submissions produced %d cards, want 1", n)
+	}
+}
+
+// 已完成目标的下一个提交获得独立新卡，不改写旧卡来源；任务内追问仍归当前卡。
+func TestHandoffNextGoalAfterCompletionGetsOwnCard(t *testing.T) {
+	f := newHandoffFixture(t)
+	if rec := f.copy(t, f.t1.ID, "第一目标内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy 1 = %d", rec.Code)
+	}
+	f.startFakeAgent(t, f.t2.ID, "codex")
+	if rec := f.paste(t, f.t2.ID, "第一目标内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste 1 = %d", rec.Code)
+	}
+	rec := f.submit(t, f.t2.ID, "第一目标内容")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit 1 = %d: %s", rec.Code, rec.Body.String())
+	}
+	var first struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+
+	// B1 完成。同进程的下一个被接受目标必须有独立身份。
+	if _, err := f.srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == first.TaskID {
+				state.Tasks[i].State = "execution_complete"
+				state.Tasks[i].DispatchState = "done"
+				state.Tasks[i].AcceptanceStatus = "accepted"
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := f.copy(t, f.t1.ID, "第二目标内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy 2 = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "第二目标内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste 2 = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = f.submit(t, f.t2.ID, "第二目标内容")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit 2 = %d: %s", rec.Code, rec.Body.String())
+	}
+	var second struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.TaskID == "" || second.TaskID == first.TaskID {
+		t.Fatalf("next goal reused the completed card: %s", second.TaskID)
+	}
+	b1Refs, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", first.TaskID)
+	if len(b1Refs) != 1 || b1Refs[0].Snapshot != "第一目标内容" {
+		t.Fatalf("completed card provenance rewritten: %+v", b1Refs)
+	}
+	b2Refs, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", second.TaskID)
+	if len(b2Refs) != 1 || b2Refs[0].Snapshot != "第二目标内容" {
+		t.Fatalf("new card refs = %+v", b2Refs)
+	}
+}
+
+// worker 绑定的执行终端：提交采用既有任务，不重复建卡。
+func TestHandoffSubmitAdoptsWorkerTask(t *testing.T) {
+	f := newHandoffFixture(t)
+	if _, err := f.srv.projectControl.withStateLocked("ian", func(state *projectControlState) error {
+		state.Tasks = append(state.Tasks, projectControlTask{
+			ID: "task-existing-worker", ProjectID: "project-handoff",
+			WorkstreamID: "ws-handoff",
+			Title:        "worker 执行任务", State: "running",
+			SessionIDs: []string{},
+			Timeline:   []projectControlEvent{}, Audit: []projectControlAuditItem{},
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := f.mgr.CreateSessionWithOptions("ian", terminal.SessionCreateOptions{
+		WorkDir: t.TempDir(), Name: "worker-term", TaskID: "task-existing-worker", ProjectID: "project-handoff",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.projectControl.bindTaskTerminal("ian", "task-existing-worker", worker.ID, "project-handoff")
+	f.startFakeAgent(t, worker.ID, "claude")
+
+	if rec := f.copy(t, f.t1.ID, "worker 终端来源"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	if rec := f.paste(t, worker.ID, "worker 终端来源"); rec.Code != http.StatusOK {
+		t.Fatalf("paste = %d", rec.Code)
+	}
+	rec := f.submit(t, worker.ID, "worker 终端来源")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.TaskID != "task-existing-worker" {
+		t.Fatalf("submit created %q instead of adopting the worker task", body.TaskID)
+	}
+	if n := f.taskCountForTerminal(t, worker.ID); n != 1 {
+		t.Fatalf("terminal bound to %d tasks, want 1", n)
+	}
+}
+
+// 复制生产端跟随最新被接受目标：B2 登记后，同终端的复制来源是 B2。
+func TestHandoffCopyUsesLatestAcceptedTask(t *testing.T) {
+	f := newHandoffFixture(t)
+	agentToken := agentTokenFor(t, f.srv, f.token)
+	for _, title := range []string{"历史目标 B1", "最新目标 B2"} {
+		regBody, _ := json.Marshal(registerTaskRequest{Title: title, TerminalID: f.t2.ID})
+		rec := agentAPIPost(t, f.srv, "/api/agent/v1/register-task", agentToken, string(regBody))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("register %s = %d", title, rec.Code)
+		}
+	}
+	if rec := f.copy(t, f.t2.ID, "B2 的新结果"); rec.Code != http.StatusOK {
+		t.Fatalf("copy = %d", rec.Code)
+	}
+	var body struct {
+		SourceTaskID string `json:"sourceTaskId"`
+	}
+	rec := f.copy(t, f.t2.ID, "B2 的新结果")
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	state, err := f.srv.projectControl.loadOrSeed("ian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2 := ""
+	for _, task := range state.Tasks {
+		if task.Title == "最新目标 B2" {
+			b2 = task.ID
+		}
+	}
+	if body.SourceTaskID != b2 {
+		t.Fatalf("copy source = %s, want the latest task %s", body.SourceTaskID, b2)
+	}
+}
+
+// 部分来源提升失败：本次来源成功也不能掩盖，统一返回 207。
+func TestHandoffSubmitReportsPartialPromotionFailure(t *testing.T) {
+	f := newHandoffFixture(t)
+	t3, err := f.mgr.CreateSessionWithOptions("ian", terminal.SessionCreateOptions{WorkDir: t.TempDir(), Name: "handoff-src-c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 来源 A 的 pending 先留下（来源写入稍后被 trigger 拒绝）。
+	if rec := f.copy(t, f.t1.ID, "来源 A 的内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy A = %d", rec.Code)
+	}
+	if rec := f.paste(t, f.t2.ID, "来源 A 的内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste A = %d", rec.Code)
+	}
+	if err := f.srv.controlPlane.ExecAdmin(context.Background(),
+		"CREATE TRIGGER fail_a_ref BEFORE INSERT ON task_source_refs WHEN NEW.source_task_id='task-src-a' BEGIN SELECT RAISE(ABORT, 'injected'); END"); err != nil {
+		t.Fatal(err)
+	}
+	// 当前来源 C 正常提交。
+	if rec := f.copy(t, t3.ID, "来源 C 的内容"); rec.Code != http.StatusOK {
+		t.Fatalf("copy C = %d", rec.Code)
+	}
+	f.startFakeAgent(t, f.t2.ID, "codex")
+	if rec := f.paste(t, f.t2.ID, "来源 C 的内容"); rec.Code != http.StatusOK {
+		t.Fatalf("paste C = %d", rec.Code)
+	}
+	rec := f.submit(t, f.t2.ID, "来源 C 的内容")
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("partial failure returned %d, want 207: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+		RefID  string `json:"refId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.RefID == "" {
+		t.Fatal("current source link should have succeeded")
+	}
+	if err := f.srv.controlPlane.ExecAdmin(context.Background(), `DROP TRIGGER fail_a_ref`); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -700,24 +924,21 @@ func TestHandoffSecondGoalGetsOwnSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 排他绑定：终端只挂在最新目标上，B1 保留历史与来源但失去绑定。
 	bound := tasksForTerminalInState(state, f.t2.ID)
-	if len(bound) != 2 {
-		t.Fatalf("terminal bound to %d tasks, want 2", len(bound))
+	if len(bound) != 1 || bound[0].ID == b1ID {
+		t.Fatalf("terminal binding = %+v, want only the new goal", bound)
 	}
-	var b1Refs, b2Refs []controlplane.SourceRef
-	for _, task := range bound {
-		refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", task.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if task.ID == b1ID {
-			b1Refs = refs
-		} else {
-			b2Refs = refs
-		}
+	b1Refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", b1ID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if len(b1Refs) != 1 || b1Refs[0].Snapshot != "第一目标内容" {
 		t.Fatalf("B1 refs changed: %+v", b1Refs)
+	}
+	b2Refs, err := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", bound[0].ID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if len(b2Refs) != 1 || b2Refs[0].Snapshot != "第二目标内容" {
 		t.Fatalf("B2 refs = %+v, want the second selection", b2Refs)
@@ -934,25 +1155,20 @@ func TestRegisterTaskPromotionFailureReported(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("recovery register = %d: %s", rec.Code, rec.Body.String())
 	}
+	// 排他绑定后终端只挂新目标；恢复按 intended_task_id 归还原卡。
 	state, err := f.srv.projectControl.loadOrSeed("ian")
 	if err != nil {
 		t.Fatal(err)
 	}
 	bound := tasksForTerminalInState(state, f.t2.ID)
-	if len(bound) != 2 {
-		t.Fatalf("terminal bound to %d tasks", len(bound))
+	if len(bound) != 1 || bound[0].ID == first.TaskID {
+		t.Fatalf("terminal binding = %+v, want only the new goal", bound)
 	}
 	b1Refs, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", first.TaskID)
 	if len(b1Refs) != 1 || b1Refs[0].Snapshot != "失败注入内容" {
 		t.Fatalf("recovery did not reattach to the original task: %+v", b1Refs)
 	}
-	var b2ID string
-	for _, task := range bound {
-		if task.ID != first.TaskID {
-			b2ID = task.ID
-		}
-	}
-	b2Refs, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", b2ID)
+	b2Refs, _ := f.srv.controlPlane.ListSourceRefs(context.Background(), "ian", bound[0].ID)
 	if len(b2Refs) != 0 {
 		t.Fatalf("new goal inherited recovered provenance: %+v", b2Refs)
 	}

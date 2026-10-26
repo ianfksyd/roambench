@@ -94,17 +94,14 @@ func (s *Server) handleAgentRegisterTask(w http.ResponseWriter, r *http.Request,
 			return createErr
 		}
 		if live != nil {
-			sessionID := projectControlSessionIDForTerminal(live.ID)
-			for i := range state.Tasks {
-				if state.Tasks[i].ID == created.ID {
-					state.Tasks[i].SessionIDs = appendUniqueString(state.Tasks[i].SessionIDs, sessionID)
-					break
-				}
-			}
+			// The terminal now works on this task: earlier tasks keep their
+			// history but lose the binding, so copy-side attribution follows
+			// the latest accepted goal.
+			bindTaskSessionExclusive(state, created.ID, live.ID)
 			projectControlAppendRecordedEvent(state, projectControlRecordedEvent{
 				ID:        projectControlID("event", "task-terminal-linked"),
 				Timestamp: time.Now().UTC().Format(time.RFC3339), Actor: "agent",
-				Action: "task_terminal_linked", Detail: "Registered terminal " + sessionID + ".",
+				Action: "task_terminal_linked", Detail: "Registered terminal " + projectControlSessionIDForTerminal(live.ID) + ".",
 				ProjectID: projectID, WorkstreamID: workstreamID, TaskID: created.ID,
 			})
 		}

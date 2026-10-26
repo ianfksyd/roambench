@@ -13,7 +13,10 @@ import (
 // line it is sent, so the paste is its input by construction.
 //
 // Detection walks the pane's process tree and matches the first command
-// whose name (basename of argv[0]) is a known agent CLI. npm-style
+// whose name (basename of argv[0]) is a known agent CLI AND that owns the
+// pane's foreground process group (ps stat "+"). A backgrounded
+// lookalike — "(exec -a codex sleep 60) &" under a shell prompt — is not
+// receiving the terminal's input and is never reported. npm-style
 // wrappers that re-exec through node are not detected; that limitation is
 // accepted rather than guessed around.
 
@@ -71,26 +74,27 @@ func (m *Manager) AgentProcessInSession(sessionID string) (AgentProcess, bool) {
 // agentProcessUnder walks the descendants of root breadth-first and
 // reports the first known agent CLI (closer to the pane shell wins).
 func agentProcessUnder(root string) (AgentProcess, bool) {
-	out, err := exec.Command("ps", "-eo", "pid=,ppid=,lstart=,args=").Output()
+	out, err := exec.Command("ps", "-eo", "pid=,ppid=,stat=,lstart=,args=").Output()
 	if err != nil {
 		return AgentProcess{}, false
 	}
 	type proc struct {
-		pid, ppid, lstart, args string
+		pid, ppid, stat, lstart, args string
 	}
 	procs := make(map[string]proc)
 	children := make(map[string][]string)
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
-		// pid ppid lstart(5 tokens: wday mon day hh:mm:ss year) args…
-		if len(fields) < 8 {
+		// pid ppid stat lstart(5 tokens: wday mon day hh:mm:ss year) args…
+		if len(fields) < 9 {
 			continue
 		}
 		p := proc{
 			pid:    fields[0],
 			ppid:   fields[1],
-			lstart: strings.Join(fields[2:7], " "),
-			args:   strings.Join(fields[7:], " "),
+			stat:   fields[2],
+			lstart: strings.Join(fields[3:8], " "),
+			args:   strings.Join(fields[8:], " "),
 		}
 		procs[p.pid] = p
 		children[p.ppid] = append(children[p.ppid], p.pid)
@@ -110,6 +114,10 @@ func agentProcessUnder(root string) (AgentProcess, bool) {
 		visited[pid] = true
 		p, ok := procs[pid]
 		if !ok {
+			continue
+		}
+		// Foreground only: a background job is not reading the terminal.
+		if !strings.Contains(p.stat, "+") {
 			continue
 		}
 		if name := agentNameOfArgs(p.args); name != "" {
