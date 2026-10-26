@@ -3570,6 +3570,9 @@
     }
 
     function handleGlobalTerminalClipboardShortcut(event) {
+        if (event.defaultPrevented) {
+            return false;
+        }
         const terminal = getActiveTerminal();
         if (!terminal || !terminal.term || !terminal.ws || terminal.ws.readyState !== WebSocket.OPEN) {
             return false;
@@ -5127,6 +5130,8 @@
             // Ctrl+C / Cmd+C: copy if text selected, otherwise send SIGINT
             if (key === 'c' && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey) {
                 if (hasTerminalSelection || hasPageSelection) {
+                    event.preventDefault();
+                    event.stopPropagation();
                     copyTerminalSelection(term);
                     return false;
                 }
@@ -5135,6 +5140,8 @@
 
             // Ctrl+Shift+C / Cmd+Shift+C: always copy
             if (key === 'c' && (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey) {
+                event.preventDefault();
+                event.stopPropagation();
                 if (hasTerminalSelection || hasPageSelection) {
                     copyTerminalSelection(term);
                 }
@@ -5143,6 +5150,8 @@
 
             // Ctrl+V / Cmd+V / Ctrl+Shift+V: paste from clipboard
             if ((key === 'v') && (event.ctrlKey || event.metaKey) && !event.altKey) {
+                event.preventDefault();
+                event.stopPropagation();
                 pasteToTerminal(t);
                 return false;
             }

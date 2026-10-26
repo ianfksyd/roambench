@@ -32,6 +32,19 @@ function fixture() {
         vm.runInContext(source.slice(start, stop), context);
     }
     evaluate('    function shouldKeepClipboardForUI(', '    function handleGlobalTerminalClipboardShortcut(');
+    evaluate('    function handleGlobalTerminalClipboardShortcut(', '    window.copyActiveTerminalSelection');
+    context.term = {
+        hasSelection: () => true,
+        attachCustomKeyEventHandler(callback) { context.keyInput = callback; }
+    };
+    context.t = terminal;
+    context.getPageSelectionText = () => '';
+    context.pasteToTerminal = () => bytes.push('keyboard paste');
+    context.copyTerminalSelection = () => reports.push({action: 'keyboard copy'});
+    const keyStart = source.indexOf('        term.attachCustomKeyEventHandler(function(event) {');
+    const keyStop = source.indexOf('        term.onData(function(data) {', keyStart);
+    assert(keyStart >= 0 && keyStop > keyStart);
+    vm.runInContext(source.slice(keyStart, keyStop), context);
     function nativeEvent(type) {
         const event = {
             defaultPrevented: false, propagationStopped: false,
@@ -78,4 +91,22 @@ test('ordinary editor textarea keeps native copy and paste without terminal attr
     f.context.handleDocumentPaste(event);
     assert.deepEqual(f.reports, []);
     assert.deepEqual(f.bytes, []);
+});
+
+test('xterm clipboard shortcuts do not run again as global shortcuts or native default actions', () => {
+    for (const key of ['c', 'v']) {
+        const f = fixture();
+        const event = {
+            type: 'keydown', key, ctrlKey: true,
+            defaultPrevented: false, propagationStopped: false,
+            preventDefault() { this.defaultPrevented = true; },
+            stopPropagation() { this.propagationStopped = true; }
+        };
+        f.context.keyInput(event);
+        if (!event.propagationStopped) f.context.handleGlobalTerminalClipboardShortcut(event);
+        if (!event.defaultPrevented) f.nativeEvent(key === 'v' ? 'paste' : 'copy');
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(event.propagationStopped, true);
+        assert.equal(key === 'v' ? f.bytes.length : f.reports.length, 1);
+    }
 });
